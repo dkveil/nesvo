@@ -806,7 +806,11 @@ export function Workspace({
   const visibleSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const navigationToggle = useRef<HTMLButtonElement | null>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const headerActionsTrigger = useRef<HTMLButtonElement>(null);
+  const [narrowHeader, setNarrowHeader] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const contextFromOverflow = useRef(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const resultsTrigger = useRef<HTMLButtonElement>(null);
   const [cardOpen, setCardOpen] = useState(false);
@@ -1326,12 +1330,21 @@ export function Workspace({
       )
     : [];
   const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
-  const compactViewport = viewportWidth >= 1200 && viewportWidth < 1500;
-  const compactDock = !!visiblePanel && compactViewport;
-  const headerIconSize =
-    compactViewport && (visiblePanel || cardOpen) ? 24 : 32;
   const cardSession = !browsing && !creating && selected ? selected : null;
+  const panelBesideSession =
+    !!cardSession && !!visiblePanel && viewportWidth >= 1200;
+  const compactSessionHeader = panelBesideSession && narrowHeader;
+  const headerIconSize = compactSessionHeader ? 24 : 32;
   const cardRun = cardSession ? selectedRun : undefined;
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const observer = new ResizeObserver(() =>
+      setNarrowHeader(header.clientWidth < 640),
+    );
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (
       store.loading ||
@@ -3164,40 +3177,7 @@ ${text}`
     !!selected?.worktree &&
     !selected.worktree.workerTargetBranch &&
     !!window.nesvo;
-  const panelActions: RowAction[] =
-    compactDock && !browsing && !creating && selected
-      ? [
-          {
-            label: 'Open skills',
-            icon: <BookOpen />,
-            onSelect: () => openSkills(),
-          },
-          { label: 'Open files', icon: <FolderOpen />, onSelect: openFiles },
-          ...(supportsSessionChanges(selectedHostId)
-            ? [
-                {
-                  label: 'Open changes',
-                  icon: <GitCompareArrows />,
-                  onSelect: openChanges,
-                },
-              ]
-            : []),
-          ...(selected.provider === 'Claude Code'
-            ? [
-                {
-                  label: 'Open Claude terminal',
-                  icon: <SquareTerminal />,
-                  onSelect: () => setPanel('terminal'),
-                },
-              ]
-            : []),
-        ]
-      : [];
   const headerOwnActions: RowAction[] = [
-    ...panelActions,
-    ...(panelActions.length && headerThreadActions.length
-      ? ['separator' as const]
-      : []),
     ...headerThreadActions,
     ...(finishWorktreeAvailable
       ? [
@@ -3576,6 +3556,63 @@ ${text}`
     setCardOpen(false);
     setPanel('skills');
   };
+  const toggleClaudeTerminal = () =>
+    setPanel(panel === 'terminal' ? null : 'terminal');
+  const headerMenuActions: RowAction[] = compactSessionHeader
+    ? [
+        ...(!cardRun
+          ? [
+              {
+                label: 'Session details',
+                icon: <Gauge />,
+                onSelect: () => {
+                  const trigger = headerActionsTrigger.current;
+                  if (trigger) toggleCard(trigger);
+                },
+              },
+            ]
+          : []),
+        {
+          label: 'Open skills',
+          icon: <BookOpen />,
+          onSelect: () => {
+            openSkills();
+            diffTrigger.current = headerActionsTrigger.current;
+          },
+        },
+        ...(supportsSessionChanges(selectedHostId)
+          ? [
+              {
+                label: 'Open changes',
+                icon: <GitCompareArrows />,
+                onSelect: () => {
+                  openChanges();
+                  diffTrigger.current = headerActionsTrigger.current;
+                },
+              },
+            ]
+          : []),
+        ...(selected?.provider === 'Claude Code'
+          ? [
+              {
+                label: 'Open Claude terminal',
+                icon: <SquareTerminal />,
+                onSelect: toggleClaudeTerminal,
+              },
+            ]
+          : []),
+        {
+          label: 'Open context',
+          icon: <PanelRight />,
+          onSelect: () => {
+            contextFromOverflow.current = true;
+            setDetailsOpen(true);
+          },
+        },
+        ...(headerActions.length ? ['separator' as const] : []),
+        ...headerActions,
+      ]
+    : headerActions;
   useWorkspaceShortcuts({
     openPalette,
     openHistorySearch: () => openHistorySearch(),
@@ -4002,6 +4039,7 @@ ${text}`
         )}
       >
         <header
+          ref={headerRef}
           className={cn(
             'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))] md:pl-[max(0.5rem,calc(var(--shell-brand-end)-var(--sidebar-extent)))]',
             visiblePanel &&
@@ -4046,7 +4084,10 @@ ${text}`
           )}
           <nav
             aria-label="Breadcrumb"
-            className="@container/breadcrumb min-w-24 flex-1 px-1"
+            className={cn(
+              '@container/breadcrumb flex-1 px-1',
+              panelBesideSession ? 'min-w-48' : 'min-w-24',
+            )}
           >
             <ol className="flex min-w-0 items-center gap-2 text-ui">
               {creating && branch && (
@@ -4058,9 +4099,9 @@ ${text}`
                 <>
                   <li
                     className={cn(
-                      'hidden min-w-0 max-w-[min(20rem,45%)] shrink-0 items-center gap-1.5 text-muted-foreground',
-                      visiblePanel
-                        ? '@min-[24rem]/breadcrumb:flex'
+                      'hidden min-w-0 max-w-[min(20rem,50%)] shrink-0 items-center gap-1.5 text-muted-foreground',
+                      panelBesideSession
+                        ? '@min-[28rem]/breadcrumb:flex'
                         : '@min-[10rem]/breadcrumb:flex',
                     )}
                   >
@@ -4092,8 +4133,8 @@ ${text}`
                     aria-hidden="true"
                     className={cn(
                       'hidden text-muted-foreground/60',
-                      visiblePanel
-                        ? '@min-[24rem]/breadcrumb:block'
+                      panelBesideSession
+                        ? '@min-[28rem]/breadcrumb:block'
                         : '@min-[10rem]/breadcrumb:block',
                     )}
                   >
@@ -4141,7 +4182,10 @@ ${text}`
               >
                 <h1
                   title={!browsing && !creating ? selected?.title : undefined}
-                  className="min-w-12 truncate text-ui font-semibold"
+                  className={cn(
+                    'truncate text-ui font-semibold',
+                    panelBesideSession ? 'min-w-[min(10rem,100%)]' : 'min-w-12',
+                  )}
                 >
                   {costsView
                     ? 'Costs'
@@ -4232,19 +4276,25 @@ ${text}`
           </nav>
           {!browsing && !creating && selectedAccount && (
             <Hint label={`Account: ${selectedAccount}`}>
-              <Chip size="sm" interactive={false} className="max-w-28">
+              <Chip
+                size="sm"
+                interactive={false}
+                className={cn('max-w-28', panelBesideSession && 'shrink')}
+              >
                 <span className="truncate">{selectedAccount}</span>
               </Chip>
             </Hint>
           )}
-          {!browsing && !creating && selected && (
-            <span className="max-w-32 truncate text-2xs text-muted-foreground">
-              {selectedHostId !== 'local'
-                ? (selectedComputer?.name ?? 'Remote')
-                : ''}
-              {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
-            </span>
-          )}
+          {sessionPanels &&
+            (selectedHostId !== 'local' ||
+              !store.hostReady(selectedHostId)) && (
+              <span className="max-w-32 truncate text-2xs text-muted-foreground">
+                {selectedHostId !== 'local'
+                  ? (selectedComputer?.name ?? 'Remote')
+                  : ''}
+                {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
+              </span>
+            )}
           {!browsing &&
             !creating &&
             selected &&
@@ -4301,11 +4351,12 @@ ${text}`
           >
             <Plus />
           </IconButton>
-          {headerActions.length > 0 && (
+          {headerMenuActions.length > 0 && (
             <RowActionsMenu
               headerSize={headerIconSize}
               label="Session actions"
-              actions={headerActions}
+              actions={headerMenuActions}
+              triggerRef={headerActionsTrigger}
             />
           )}
           {cardRun ? (
@@ -4315,22 +4366,23 @@ ${text}`
               onToggle={toggleCard}
             />
           ) : (
-            <IconButton
-              size={headerIconSize}
-              label="Session details"
-              pressed={cardOpen}
-              aria-controls={cardOpen ? 'session-card' : undefined}
-              data-session-card-trigger
-              onClick={event => toggleCard(event.currentTarget)}
-            >
-              <Gauge />
-            </IconButton>
+            !compactSessionHeader && (
+              <IconButton
+                size={headerIconSize}
+                label="Session details"
+                pressed={cardOpen}
+                aria-controls={cardOpen ? 'session-card' : undefined}
+                data-session-card-trigger
+                onClick={event => toggleCard(event.currentTarget)}
+              >
+                <Gauge />
+              </IconButton>
+            )
           )}
-          {!browsing && !creating && selected && (
+          {sessionPanels && !compactSessionHeader && (
             <IconButton
               size={headerIconSize}
               label="Open skills"
-              className={compactDock ? 'hidden' : undefined}
               pressed={panel === 'skills'}
               onClick={openSkills}
             >
@@ -4341,7 +4393,6 @@ ${text}`
             <IconButton
               size={headerIconSize}
               label="Open files"
-              className={compactDock ? 'hidden' : undefined}
               shortcut={shortcutKeys('files')}
               pressed={panel === 'files'}
               onClick={openFiles}
@@ -4352,28 +4403,29 @@ ${text}`
           {!browsing &&
             !creating &&
             selected &&
+            !compactSessionHeader &&
             supportsSessionChanges(selectedHostId) && (
               <IconButton
                 size={headerIconSize}
                 label="Open changes"
-                className={compactDock ? 'hidden' : undefined}
                 pressed={panel === 'changes'}
                 onClick={openChanges}
               >
                 <GitCompareArrows />
               </IconButton>
             )}
-          {!browsing && !creating && selected?.provider === 'Claude Code' && (
-            <IconButton
-              size={headerIconSize}
-              label="Open Claude terminal"
-              className={compactDock ? 'hidden' : undefined}
-              pressed={panel === 'terminal'}
-              onClick={() => setPanel(panel === 'terminal' ? null : 'terminal')}
-            >
-              <SquareTerminal />
-            </IconButton>
-          )}
+          {sessionPanels &&
+            !compactSessionHeader &&
+            selected?.provider === 'Claude Code' && (
+              <IconButton
+                size={headerIconSize}
+                label="Open Claude terminal"
+                pressed={panel === 'terminal'}
+                onClick={toggleClaudeTerminal}
+              >
+                <SquareTerminal />
+              </IconButton>
+            )}
           {!browsing && !creating && selected && selectedReviews.length > 0 && (
             <SessionReviews
               key={selectedKey}
@@ -4404,11 +4456,22 @@ ${text}`
           {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
-                <IconButton size={headerIconSize} label="Open context">
+                <IconButton
+                  size={headerIconSize}
+                  label="Open context"
+                  className={cn(compactSessionHeader && 'hidden')}
+                >
                   <PanelRight />
                 </IconButton>
               </SheetTrigger>
-              <SheetContent>
+              <SheetContent
+                onCloseAutoFocus={event => {
+                  if (!contextFromOverflow.current) return;
+                  contextFromOverflow.current = false;
+                  event.preventDefault();
+                  headerActionsTrigger.current?.focus();
+                }}
+              >
                 <SheetHeader>
                   <SheetTitle>Context</SheetTitle>
                   <SheetDescription>

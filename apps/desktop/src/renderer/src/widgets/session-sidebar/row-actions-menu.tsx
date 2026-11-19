@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import {
   DropdownMenu,
@@ -25,6 +25,7 @@ type Props = {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   headerSize?: 24 | 32;
+  triggerRef?: Ref<HTMLButtonElement>;
 };
 
 export function RowActionsMenu({
@@ -33,12 +34,14 @@ export function RowActionsMenu({
   open,
   onOpenChange,
   headerSize,
+  triggerRef,
 }: Props) {
   const header = headerSize !== undefined;
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
       <DropdownMenuTrigger asChild>
         <IconButton
+          ref={triggerRef}
           label={label}
           size={headerSize ?? 20}
           tone={header ? undefined : 'sidebar'}
