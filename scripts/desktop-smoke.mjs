@@ -1303,10 +1303,17 @@ async function smokeDesktop() {
   await guide
     .getByRole('button', { name: 'Add a computer', exact: true })
     .click();
-  await guide
+  const addComputerDialog = page.getByRole('dialog', {
+    name: 'Add SSH computer',
+    exact: true,
+  });
+  await addComputerDialog
     .getByRole('button', { name: 'Add and connect', exact: true })
     .waitFor();
-  await guide.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await addComputerDialog
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await addComputerDialog.waitFor({ state: 'hidden' });
   const guideContinue = guide.getByRole('button', {
     name: 'Continue',
     exact: true,
