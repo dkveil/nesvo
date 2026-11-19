@@ -244,6 +244,8 @@ async function smokeConfigurationProfile(app, page) {
       {
         name: 'Fixture profile device',
         grants: [
+          { area: 'steps', verbs: ['propose'], global: true, projects: [] },
+          { area: 'lessons', verbs: ['propose'], global: true, projects: [] },
           {
             area: 'appearance',
             verbs: ['read', 'apply'],
@@ -358,6 +360,86 @@ async function smokeConfigurationProfile(app, page) {
     .click();
   await row.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await row.waitFor({ state: 'hidden' });
+  const steps = [
+    {
+      area: 'steps',
+      name: 'review-release',
+      draft: {
+        kind: 'markdown',
+        document:
+          '---\nname: review-release\ntype: agent\nphase: pre-done\n---\nReview the release report.\n',
+      },
+    },
+    {
+      area: 'lessons',
+      name: 'new',
+      draft: {
+        kind: 'entry',
+        value: {
+          description: 'Applies when reviewing a release.',
+          kind: 'instruction',
+          status: 'active',
+          body: {
+            rule: 'Read the release report.',
+            why: 'It records the checks.',
+            check: 'Read the report.',
+          },
+        },
+      },
+    },
+  ];
+  const saved = [];
+  for (const definition of steps) {
+    await writeFile(input, JSON.stringify(definition.draft));
+    const proposed = await cli([
+      'propose',
+      definition.area,
+      definition.name,
+      '--op',
+      'create',
+      '--action-id',
+      randomUUID(),
+      '--base',
+      'absent',
+      '--input-file',
+      input,
+    ]);
+    assert.equal(proposed.receipt.status, 'pending');
+    const name = proposed.change.target.name;
+    const proposalRow = inbox.getByRole('article', {
+      name: `Configuration change ${name}`,
+    });
+    await proposalRow
+      .getByRole('button', { name: `Review diff for ${name}` })
+      .click();
+    if (definition.area === 'lessons')
+      await configurationShot(app, page, 'stage-4-definition-review', () =>
+        proposalRow.locator('[data-line]').first().waitFor(),
+      );
+    await proposalRow
+      .getByRole('button', { name: 'Accept', exact: true })
+      .click();
+    await proposalRow.waitFor({ state: 'hidden' });
+    saved.push(proposed.receipt.id);
+  }
+  for (const id of saved.reverse()) {
+    const undone = await page.evaluate(async changeId => {
+      const listed = await window.nesvo.configuration.history(
+        { status: 'applied' },
+        'local',
+      );
+      const change = listed.page.changes.find(item => item.id === changeId);
+      return window.nesvo.configuration.undo(
+        {
+          id: change.id,
+          revision: change.revision,
+          actionId: crypto.randomUUID(),
+        },
+        'local',
+      );
+    }, id);
+    assert.equal(undone.receipt.status, 'undone');
+  }
   await page.evaluate(
     id => window.nesvo.configuration.revoke(id, 'local'),
     enrollment.device.id,
@@ -365,7 +447,7 @@ async function smokeConfigurationProfile(app, page) {
   console.log(
     JSON.stringify({
       configurationProfile:
-        'direct apply, durable receipt, Undo and CLI proposal verified',
+        'direct apply, durable receipt, Undo and CLI proposals verified',
     }),
   );
 }

@@ -411,8 +411,8 @@ export class InboxRules {
                   },
                 };
               },
-              write: ({ to }) =>
-                write(to.value?.kind === 'markdown' ? to.value.document : null),
+              write: ({ to }, authorize) =>
+                write(to.value?.kind === 'markdown' ? to.value.document : null, authorize),
             });
           },
         );

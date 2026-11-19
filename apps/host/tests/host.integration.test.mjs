@@ -641,6 +641,71 @@ test('configuration reviews bind to live versions and recover completed files', 
       (await request('undo-config-change', undo)).receipt,
       undone,
     );
+    const step = {
+      area: 'steps',
+      scope: { kind: 'global' },
+      name: 'configuration-check',
+    };
+    const stepDocument =
+      '---\nname: configuration-check\ntype: agent\nphase: pre-done\n---\nReview the saved result.\n';
+    const plannedStep = await propose({
+      target: step,
+      actionId: randomUUID(),
+      operation: 'create',
+      baseVersion: { type: 'absent' },
+      draft: { kind: 'markdown', document: stepDocument },
+    });
+    assert.equal(plannedStep.ok, true, JSON.stringify(plannedStep));
+    const stepFile = join(
+      directory,
+      'workflows',
+      'steps',
+      'configuration-check.md',
+    );
+    assert.equal(existsSync(stepFile), false);
+    const savedStep = await decide(accept(plannedStep.receipt));
+    assert.equal(savedStep.receipt.status, 'applied');
+    assert.equal(await readFile(stepFile, 'utf8'), stepDocument);
+    const lesson = await propose({
+      target: { area: 'lessons', scope: { kind: 'global' }, name: 'new' },
+      actionId: randomUUID(),
+      operation: 'create',
+      baseVersion: { type: 'absent' },
+      draft: {
+        kind: 'entry',
+        value: {
+          description: 'Applies when reviewing the release.',
+          body: {
+            rule: 'Review the release report.',
+            why: 'It records the result.',
+            check: 'Read the report.',
+          },
+          kind: 'instruction',
+          status: 'active',
+        },
+      },
+    });
+    assert.equal(lesson.ok, true, JSON.stringify(lesson));
+    assert.match(lesson.change.target.name, /^lesson-\d+$/);
+    const savedLesson = await decide(accept(lesson.receipt));
+    assert.equal(savedLesson.receipt.status, 'applied');
+    const lessonFile = join(
+      directory,
+      'workflows',
+      'lessons',
+      lesson.change.target.name + '.md',
+    );
+    assert.match(await readFile(lessonFile, 'utf8'), /source: manual/);
+    for (const receipt of [savedLesson.receipt, savedStep.receipt]) {
+      const removed = await request('undo-config-change', {
+        id: receipt.id,
+        revision: receipt.revision,
+        actionId: randomUUID(),
+      });
+      assert.equal(removed.receipt.status, 'undone');
+    }
+    assert.equal(existsSync(lessonFile), false);
+    assert.equal(existsSync(stepFile), false);
   } finally {
     if (host.child.exitCode === null && host.child.signalCode === null)
       await host.stop();

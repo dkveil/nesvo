@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { decisionRouteSchema } from './decision-route';
 import { colorSchemeSchema } from './appearance';
 import { providerSchema, sessionModeSchema } from './sessions';
+import { ruleEntrySchema } from './rule-entries';
 import {
   externalInboxDeviceSchema,
   externalInboxTokenSchema,
@@ -9,11 +10,19 @@ import {
 
 export const configurationRevision = 1;
 export const configurationFrameLimit = 416 * 1024;
+export const configurationFileAreas = [
+  'inbox-rules',
+  'workflows',
+  'steps',
+  'lessons',
+  'gate-rules',
+] as const;
+export const configurationFileAreaSchema = z.enum(configurationFileAreas);
 export const configurationAreaSchema = z.enum([
   'settings',
   'defaults',
   'appearance',
-  'inbox-rules',
+  ...configurationFileAreas,
 ]);
 export const configurationVerbSchema = z.enum(['read', 'propose', 'apply']);
 export const configurationLimits = {
@@ -51,7 +60,7 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
     key: z.literal('color-scheme'),
   }),
   z.strictObject({
-    area: z.literal('inbox-rules'),
+    area: configurationFileAreaSchema,
     scope: fileScope,
     name: key,
   }),
@@ -92,6 +101,10 @@ export type ConfigurationProfile = z.infer<typeof configurationProfileSchema>;
 
 export const configurationValueSchema = z.discriminatedUnion('kind', [
   z.strictObject({
+    kind: z.literal('entry'),
+    value: ruleEntrySchema.omit({ id: true, type: true, provenance: true }),
+  }),
+  z.strictObject({
     kind: z.literal('new-session'),
     value: configurationSessionDefaultsSchema,
   }),
@@ -128,8 +141,10 @@ export const configurationMutationSchema = z
       issue('draft', 'Supply a draft for creation or update.');
     const target = input.target;
     const kind =
-      target.area === 'inbox-rules'
-        ? 'markdown'
+      'scope' in target
+        ? target.area === 'lessons' || target.area === 'gate-rules'
+          ? 'entry'
+          : 'markdown'
         : target.area === 'appearance'
           ? 'color-scheme'
           : target.area === 'defaults'
@@ -139,11 +154,11 @@ export const configurationMutationSchema = z
               : 'enabled';
     if (input.draft && input.draft.kind !== kind)
       issue('draft', 'The value does not match the target.');
-    if (kind !== 'markdown' && input.operation !== 'update')
+    if (!('scope' in target) && input.operation !== 'update')
       issue('operation', 'This setting supports updates.');
     if (
       input.baseVersion.type !== 'absent' &&
-      input.baseVersion.type !== (kind === 'markdown' ? 'hash' : 'revision')
+      input.baseVersion.type !== ('scope' in target ? 'hash' : 'revision')
     )
       issue('baseVersion', 'The version does not match the target.');
   });

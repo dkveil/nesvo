@@ -35,8 +35,13 @@ export type ConfigurationSlot<Effect> = {
   prepare: (
     mutation: ConfigurationMutation,
     before: ConfigurationSnapshot,
+    restore?: ConfigurationSnapshot,
   ) => Prepared;
-  write: (intent: ConfigurationIntent) => Effect;
+  verify?: (
+    from: ConfigurationSnapshot,
+    to: ConfigurationSnapshot,
+  ) => Promise<void>;
+  write: (intent: ConfigurationIntent, authorize: () => void) => Effect;
 };
 
 export type ConfigurationWriter =
@@ -51,6 +56,7 @@ export type ConfigurationWriter =
         work: (slot: ConfigurationSlot<Promise<void>>) => Promise<T>,
         recovery?: boolean,
       ) => Promise<T>;
+      allocate?: (target: ConfigurationTarget) => ConfigurationTarget;
     };
 
 export type ConfigurationVerb = 'read' | 'propose' | 'apply';
@@ -136,12 +142,11 @@ function recordText(value: ConfigurationValue | null): string {
     : JSON.stringify(value.value, null, 2);
 }
 
-function preview(
-  before: ConfigurationValue | null,
-  after: ConfigurationValue | null,
-) {
-  const oldText = configurationText(recordText(before));
-  const newText = configurationText(recordText(after));
+function preview(before: ConfigurationSnapshot, after: ConfigurationSnapshot) {
+  const oldText = configurationText(
+    before.document ?? recordText(before.value),
+  );
+  const newText = configurationText(after.document ?? recordText(after.value));
   const lines = (text: string) => (text ? text.split('\n') : []);
   const oldLines = lines(oldText);
   const newLines = lines(newText);
@@ -274,6 +279,10 @@ export class ConfigurationChanges {
     return this.store.list(input);
   }
 
+  latestEntry(area: 'lessons' | 'gate-rules', root: string, name: string) {
+    return this.store.latestEntry(area, root, name);
+  }
+
   draft(input: Pick<ConfigurationDecision, 'id' | 'revision'>) {
     return this.requireProposal(input).mutation.draft;
   }
@@ -302,8 +311,8 @@ export class ConfigurationChanges {
     const writer = this.writer(target);
     const read = (slot: ConfigurationSlot<unknown>) => {
       principal.authorize('read', target);
-      const { version, value } = slot.read();
-      const text = recordText(value);
+      const { version, value, document } = slot.read();
+      const text = document ?? recordText(value);
       const normalized = text.replace(/\r\n?/g, '\n');
       const withheld = configurationText(text) !== normalized;
       const operations: ConfigurationMutation['operation'][] = withheld
@@ -331,14 +340,13 @@ export class ConfigurationChanges {
     verb: 'propose' | 'apply',
     input: ConfigurationMutation,
   ) {
-    const mutation = readMutation(input);
+    const request = readMutation(input);
     return this.serial(async () => {
-      const { target, actionId } = mutation;
-      const authorize = () => principal.authorize(verb, target);
-      authorize();
+      const { actionId } = request;
+      principal.authorize(verb, request.target);
       const action = this.action(principal.source, actionId, {
         verb,
-        mutation,
+        mutation: request,
       });
       const duplicate = this.retry(action);
       if (duplicate)
@@ -346,6 +354,20 @@ export class ConfigurationChanges {
           receipt: duplicate,
           change: this.store.get(duplicate.id)?.change ?? null,
         };
+      const writer = this.writer(request.target);
+      if (verb === 'apply' && writer.kind === 'file')
+        throw new ConfigurationRefusal(
+          'review-required',
+          'Review this file change in Nesvo.',
+        );
+      const target =
+        writer.kind === 'file' &&
+        verb === 'propose' &&
+        request.operation === 'create'
+          ? (writer.allocate?.(request.target) ?? request.target)
+          : request.target;
+      const authorize = () => principal.authorize(verb, target);
+      const mutation = { ...request, target };
       const prepare = (slot: ConfigurationSlot<unknown>) => {
         const before = slot.read();
         const { after, classification } = this.prepare(slot, mutation, before);
@@ -363,10 +385,8 @@ export class ConfigurationChanges {
           verb,
         );
       };
-      const writer = this.writer(target);
       if (verb === 'propose') {
-        const propose = (slot: ConfigurationSlot<unknown>) => {
-          const record = prepare(slot);
+        const propose = (record: StoredConfigurationChange) => {
           authorize();
           const counts = this.store.pending(
             principal.source.kind === 'device'
@@ -385,10 +405,14 @@ export class ConfigurationChanges {
         };
         const result =
           writer.kind === 'database'
-            ? this.store.transaction(() => propose(writer.open(target)))
-            : await writer.locked(target, async slot =>
-                this.store.transaction(() => propose(slot)),
-              );
+            ? this.store.transaction(() =>
+                propose(prepare(writer.open(target))),
+              )
+            : await writer.locked(target, async slot => {
+                const record = prepare(slot);
+                await slot.verify?.(record.before, record.after);
+                return this.store.transaction(() => propose(record));
+              });
         this.publish(result.record.change);
         return { receipt: result.receipt, change: result.record.change };
       }
@@ -431,19 +455,25 @@ export class ConfigurationChanges {
               ...change,
               classification,
               baseVersion: before.version,
-              diff: preview(before.value, after.value),
+              diff: preview(before, after),
             },
           };
-          return { next, receipt: this.store.settle(action, next) };
+          return next;
         };
+        const save = (next: StoredConfigurationChange) => ({
+          next,
+          receipt: this.store.settle(action, next),
+        });
         const result =
           writer.kind === 'database'
             ? this.store.transaction(() =>
-                revise(writer.open(record.change.target)),
+                save(revise(writer.open(record.change.target))),
               )
-            : await writer.locked(record.change.target, async slot =>
-                this.store.transaction(() => revise(slot)),
-              );
+            : await writer.locked(record.change.target, async slot => {
+                const next = revise(slot);
+                await slot.verify?.(next.before, next.after);
+                return this.store.transaction(() => save(next));
+              });
         this.publish(result.next.change);
         return result.receipt;
       }
@@ -525,6 +555,7 @@ export class ConfigurationChanges {
         const before = slot.read();
         if (
           before.identity !== record.after.identity ||
+          before.dependencies !== record.after.dependencies ||
           !same(before.version, record.after.version)
         )
           conflict(
@@ -542,14 +573,21 @@ export class ConfigurationChanges {
                 : 'update',
           draft: record.before.value,
         });
-        const { after, classification } = this.prepare(slot, mutation, before);
+        const { after, classification } = this.prepare(
+          slot,
+          mutation,
+          before,
+          record.before,
+        );
         this.confirmAuthority(classification, input.confirmAuthority);
+        const undone = this.transition(record, 'undone', 'owner');
         return {
-          ...this.transition(record, 'undone', 'owner'),
-          change: {
-            ...this.transition(record, 'undone', 'owner').change,
-            resultingVersion: after.version,
+          record: {
+            ...undone,
+            change: { ...undone.change, resultingVersion: after.version },
           },
+          from: before,
+          to: after,
         };
       };
       return (
@@ -559,7 +597,6 @@ export class ConfigurationChanges {
           action,
           () => undefined,
           restore,
-          record,
         )
       ).receipt;
     });
@@ -612,6 +649,7 @@ export class ConfigurationChanges {
     slot: ConfigurationSlot<unknown>,
     mutation: ConfigurationMutation,
     before: ConfigurationSnapshot,
+    restore?: ConfigurationSnapshot,
   ) {
     if (!same(mutation.baseVersion, before.version))
       conflict('The configuration version changed. Read it again.');
@@ -624,7 +662,7 @@ export class ConfigurationChanges {
         'invalid-request',
         'The draft contains credential-like or unsupported text.',
       );
-    const prepared = slot.prepare(mutation, before);
+    const prepared = slot.prepare(mutation, before, restore);
     if (same(before.value, prepared.after.value))
       throw new ConfigurationRefusal(
         'invalid-request',
@@ -656,7 +694,7 @@ export class ConfigurationChanges {
         baseVersion: before.version,
         classification,
         status: verb === 'propose' ? 'pending' : 'applied',
-        diff: preview(before.value, after.value),
+        diff: preview(before, after),
         createdAt: at,
         updatedAt: at,
         resultingVersion: verb === 'apply' ? after.version : null,
@@ -693,32 +731,22 @@ export class ConfigurationChanges {
     target: ConfigurationTarget,
     action: ConfigurationAction,
     authorize: () => void,
-    prepare: (slot: ConfigurationSlot<unknown>) => StoredConfigurationChange,
-    undo?: StoredConfigurationChange,
+    prepare: (
+      slot: ConfigurationSlot<unknown>,
+    ) => StoredConfigurationChange | Omit<ConfigurationIntent, 'action'>,
   ) {
     const planned = (slot: ConfigurationSlot<unknown>): ConfigurationIntent => {
-      const record = prepare(slot);
+      const result = prepare(slot);
       authorize();
-      if (!undo)
-        return { action, record, from: record.before, to: record.after };
-      const current = slot.read();
-      return {
-        action,
-        record,
-        from: current,
-        to: {
-          ...current,
-          version: record.change.resultingVersion!,
-          value: undo.before.value,
-        },
-      };
+      if ('record' in result) return { action, ...result };
+      return { action, record: result, from: result.before, to: result.after };
     };
     const result =
       writer.kind === 'database'
         ? this.store.transaction(() => {
             const slot = writer.open(target);
             const intent = planned(slot);
-            slot.write(intent);
+            slot.write(intent, authorize);
             return {
               intent,
               receipt: this.store.settle(action, intent.record),
@@ -726,9 +754,11 @@ export class ConfigurationChanges {
           })
         : await writer.locked(target, async slot => {
             const intent = planned(slot);
+            await slot.verify?.(intent.from, intent.to);
+            authorize();
             this.store.intent(intent);
             try {
-              await slot.write(intent);
+              await slot.write(intent, authorize);
             } catch {
               return { intent, receipt: null };
             }

@@ -348,6 +348,7 @@ async function replaceRule(
       encoding: 'utf8',
       flag: 'wx',
       mode: 0o600,
+      flush: true,
     });
     await beforeReplace?.();
     await rename(temporary, path);
@@ -366,7 +367,7 @@ export async function withConfigRuleFile<T>(
   use: (
     file: DefinitionFile | null,
     identity: string,
-    write: (text: string | null) => Promise<void>,
+    write: (text: string | null, authorize: () => void) => Promise<void>,
   ) => Promise<T>,
 ): Promise<T> {
   const confined = relative(anchor, root);
@@ -423,15 +424,19 @@ export async function withConfigRuleFile<T>(
           'The Inbox rule or its root changed on disk.',
         );
     };
-    return use(file, rootIdentity, async text => {
+    return use(file, rootIdentity, async (text, authorize) => {
       await check();
       if (text === null) {
+        authorize();
         await rm(path);
         return;
       }
       await mkdir(root, { recursive: true, mode: 0o700 });
       await check();
-      await replaceRule(root, name, path, text, check);
+      await replaceRule(root, name, path, text, async () => {
+        await check();
+        authorize();
+      });
     });
   });
 }

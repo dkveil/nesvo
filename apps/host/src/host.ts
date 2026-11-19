@@ -88,6 +88,14 @@ import {
 } from './configuration-devices';
 import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
 import { DesktopConfigurationProfile } from './desktop-configuration-profile';
+import { configurationDefinitions } from './workflows/configuration-definitions';
+import {
+  globalWorkflowsRoot,
+  highestRuleEntryNumber,
+  projectWorkflowsRoot,
+  readRuleEntryFolder,
+  RULE_ENTRY_MAX_NUMBER,
+} from './workflows/rule-entry-files';
 import {
   WorkflowAssistant,
   WorkflowAssistantError,
@@ -990,21 +998,73 @@ export const serveHost = ({
           open: target => profile.slot(target),
         });
       configuration.register('inbox-rules', inboxRules.configurationRules());
+      const definitionAreas = [
+        'workflows',
+        'steps',
+        'lessons',
+        'gate-rules',
+      ] as const;
+      const trustedConfigurationProject = async (folder: string) =>
+        (await mcpPolicy
+          .repositoryStatus('Codex', folder, probes.controller.signal)
+          .catch(() => 'unavailable')) === 'trusted' ||
+        (await mcpPolicy
+          .repositoryStatus('Claude Code', folder, probes.controller.signal)
+          .catch(() => 'unavailable')) === 'trusted';
+      for (const area of definitionAreas) {
+        configuration.register(
+          area,
+          configurationDefinitions({
+            area,
+            directory,
+            signal: probes.controller.signal,
+            activeRuns,
+            trusted: trustedConfigurationProject,
+            nextEntry: (type, folder, scope) => {
+              const root =
+                scope === 'global'
+                  ? globalWorkflowsRoot()
+                  : projectWorkflowsRoot(folder);
+              const entries = readRuleEntryFolder(type, {
+                scope,
+                root,
+              }).entries.map(item => item.entry);
+              const minimum = highestRuleEntryNumber(entries) + 1;
+              const number =
+                type === 'lesson'
+                  ? ruleMetrics.claimNumber(minimum, RULE_ENTRY_MAX_NUMBER)
+                  : gateRuleStore.claimNumber(minimum);
+              if (number > RULE_ENTRY_MAX_NUMBER)
+                throw new ConfigurationRefusal(
+                  'unavailable',
+                  'No more entry IDs are available.',
+                );
+              return `${type === 'lesson' ? 'lesson' : 'rule'}-${String(number).padStart(4, '0')}`;
+            },
+          }),
+        );
+      }
       const configurationDevices: ConfigurationDevices =
         new ConfigurationDevices(
           database,
           configuration,
           computerId,
           profile
-            ? ['settings', 'inbox-rules', 'defaults', 'appearance']
-            : ['settings', 'inbox-rules', 'defaults'],
+            ? [
+                'settings',
+                'inbox-rules',
+                'defaults',
+                'appearance',
+                ...definitionAreas,
+              ]
+            : ['settings', 'inbox-rules', 'defaults', ...definitionAreas],
           profile
             ? [
                 { area: 'appearance', key: 'color-scheme' },
                 { area: 'settings', key: 'notifications' },
               ]
             : [],
-          async (area, directory, signal) => {
+          async (area, project, signal) => {
             const desktop = profile?.read();
             if (area === 'settings')
               return [
@@ -1028,10 +1088,45 @@ export const serveHost = ({
                   ? [{ area, key: 'new-session' as const }]
                   : []),
               ];
-            if (area !== 'inbox-rules') return [];
-            const catalog = await inboxRules.catalog(directory, signal);
             if (
-              directory &&
+              area === 'workflows' ||
+              area === 'steps' ||
+              area === 'lessons' ||
+              area === 'gate-rules'
+            ) {
+              if (project && !(await trustedConfigurationProject(project)))
+                throw new ConfigurationRefusal(
+                  'unauthorized',
+                  'Trust this project before reading definitions.',
+                );
+              const scope = project
+                ? { kind: 'project' as const, root: project }
+                : { kind: 'global' as const };
+              if (area === 'lessons' || area === 'gate-rules') {
+                const entries = readRuleEntryFolder(
+                  area === 'lessons' ? 'lesson' : 'gate-rule',
+                  {
+                    scope: scope.kind,
+                    root: project
+                      ? projectWorkflowsRoot(project)
+                      : globalWorkflowsRoot(),
+                  },
+                ).entries;
+                return entries.map(({ entry }) => ({
+                  area,
+                  scope,
+                  name: entry.id,
+                }));
+              }
+              const catalog = await loadCatalog(project ?? directory, signal);
+              return (area === 'workflows' ? catalog.workflows : catalog.steps)
+                .filter(item => item.source.scope === scope.kind)
+                .map(item => ({ area, scope, name: item.name }));
+            }
+            if (area !== 'inbox-rules') return [];
+            const catalog = await inboxRules.catalog(project, signal);
+            if (
+              project &&
               catalog.projectTrust !== 'trusted' &&
               catalog.rules.some(rule => rule.scope === 'project')
             )
@@ -1040,13 +1135,13 @@ export const serveHost = ({
                 'Trust this project before reading Inbox rules.',
               );
             return catalog.rules
-              .filter(rule => rule.scope === (directory ? 'project' : 'global'))
+              .filter(rule => rule.scope === (project ? 'project' : 'global'))
               .filter(rule => /^[a-z0-9][a-z0-9-]{0,79}$/.test(rule.name))
               .map(rule => ({
                 area,
                 name: rule.name,
-                scope: directory
-                  ? { kind: 'project', root: directory }
+                scope: project
+                  ? { kind: 'project', root: project }
                   : { kind: 'global' },
               }));
           },

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   configurationAreaSchema,
+  configurationFileAreaSchema,
   configurationStatusSchema,
   type Computer,
   type ConfigurationArea,
@@ -42,6 +43,10 @@ const areas: Record<ConfigurationArea, string> = {
   defaults: 'Defaults',
   appearance: 'Appearance',
   'inbox-rules': 'Inbox rules',
+  workflows: 'Workflows',
+  steps: 'Workflow steps',
+  lessons: 'Lessons',
+  'gate-rules': 'Gate rules',
 };
 const isOnline = (computer?: Computer) =>
   computer?.status === 'connected' &&
@@ -440,7 +445,8 @@ export function ConfigurationDevicesSettings({
                               {title(verb)}
                             </label>
                           ))}
-                          {area === 'inbox-rules' && (
+                          {configurationFileAreaSchema.safeParse(area)
+                            .success && (
                             <label className="flex items-center gap-1.5">
                               <Checkbox
                                 checked={grant.global}
@@ -456,25 +462,26 @@ export function ConfigurationDevicesSettings({
                           )}
                         </div>
                       )}
-                      {grant && area === 'inbox-rules' && (
-                        <Field
-                          id="config-project-root"
-                          label="Project root"
-                          hint="Optional absolute path on this computer."
-                        >
-                          <Input
-                            id="config-project-root"
-                            value={grant.projects[0] ?? ''}
-                            onChange={event => {
-                              const path = event.target.value;
-                              update(area, current => ({
-                                ...current,
-                                projects: path ? [path] : [],
-                              }));
-                            }}
-                          />
-                        </Field>
-                      )}
+                      {grant &&
+                        configurationFileAreaSchema.safeParse(area).success && (
+                          <Field
+                            id={'config-project-root-' + area}
+                            label="Project root"
+                            hint="Optional absolute path on this computer."
+                          >
+                            <Input
+                              id="config-project-root"
+                              value={grant.projects[0] ?? ''}
+                              onChange={event => {
+                                const path = event.target.value;
+                                update(area, current => ({
+                                  ...current,
+                                  projects: path ? [path] : [],
+                                }));
+                              }}
+                            />
+                          </Field>
+                        )}
                     </div>
                   );
                 })}

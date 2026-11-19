@@ -470,6 +470,11 @@ export class LessonService {
   private isTrusted(stored: StoredRuleEntry): boolean {
     if (stored.root.scope === 'global') return true;
     const latest = this.ports.changes.latest(conversationOf(stored));
+    const configured = this.ports.changes.configuration.latestEntry(
+      'lessons', projectRootOfWorkflowsRoot(stored.root.root), stored.entry.id,
+    );
+    if (configured && (!latest || configured.updatedAt >= latest.at))
+      return configured.resultingVersion?.type === 'hash' && configured.resultingVersion.hash === stored.hash;
     return (
       latest?.createdBy === 'owner' &&
       latest.after?.type === 'hash' &&

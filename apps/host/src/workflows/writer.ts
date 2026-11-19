@@ -94,6 +94,7 @@ export type WriteOptions = {
   guardExternal?: boolean;
   onPrevious?: (file: DefinitionFile | null, root: string) => void;
   expectedRoot?: string;
+  configuration?: { root: string; preview: boolean; authorize: () => void };
 };
 
 type Location = {
@@ -124,6 +125,27 @@ async function exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {
     release();
     if (lockTails.get(key) === queued) lockTails.delete(key);
   }
+}
+
+function withWriteLock<T>(root: string, options: WriteOptions, work: () => Promise<T>) {
+  return options.configuration?.root === root ? work() : exclusive(pathKey(root), work);
+}
+
+export function withDefinitionInspection<T>(
+  target: FolderTarget,
+  roots: WriteRoots,
+  signal: AbortSignal,
+  inspect: (file: DefinitionFile | null, root: string) => Promise<T>,
+): Promise<T> {
+  const root = target.scope === 'global' ? roots.global : roots.project;
+  return exclusive(pathKey(root), async () => {
+    requireName(target.name);
+    const location = await prepareFolder(target, roots, false);
+    if (location && 'type' in location) throw new DefinitionError('invalid', 'The target is not a confined definition file.');
+    const current = location ? await readCurrent(location.path, signal) : { file: null };
+    if (isRefusal(current)) throw new DefinitionError('invalid', 'The target is not a regular definition file.');
+    return inspect(current.file, root);
+  });
 }
 
 function refusal(path: string, message: string): WorkflowDefinitionRefused {
@@ -465,6 +487,7 @@ async function publishFile(
   expectedHash: string | null,
   location: Location,
   signal: AbortSignal,
+  authorize?: () => void,
 ): Promise<'written' | WorkflowDefinitionRefused | Current> {
   const temporary = `${location.path}.${randomUUID()}.tmp`;
   try {
@@ -475,6 +498,7 @@ async function publishFile(
     });
     if (expectedHash === null) {
       try {
+        authorize?.();
         await link(temporary, location.path);
         return 'written';
       } catch (error) {
@@ -485,6 +509,7 @@ async function publishFile(
       const current = await readCurrent(location.path, signal);
       if (isRefusal(current)) return current;
       if (current.file?.contentHash === expectedHash) {
+        authorize?.();
         await rename(temporary, location.path);
         return 'written';
       }
@@ -501,12 +526,14 @@ async function publish(
   target: SaveDefinitionInput,
   location: Location,
   signal: AbortSignal,
+  authorize?: () => void,
 ): Promise<'written' | DefinitionWriteResult> {
   const outcome = await publishFile(
     target.document,
     target.expectedHash,
     location,
     signal,
+    authorize,
   );
   if (outcome === 'written' || isRefusal(outcome)) return outcome;
   return conflict(target, location.path, outcome.file);
@@ -604,7 +631,7 @@ export async function saveDefinition(
     );
   if (issues.some(item => item.severity === 'error'))
     return refusedIssues(issues);
-  return exclusive(pathKey(requested), async () => {
+  return withWriteLock(requested, options, async () => {
     const moved = await movedRoot(requested, options.expectedRoot);
     if (moved) return moved;
     const existing = await prepareFolder(input, roots, false);
@@ -624,6 +651,8 @@ export async function saveDefinition(
       signal,
     );
     if (legacy && 'type' in legacy) return legacy;
+    if (legacy && options.configuration)
+      return refusal(plannedPath, 'Migrate this definition in the workflow editor before proposing a change.');
     if (legacy) current = legacy.current;
     if ((current.file?.contentHash ?? null) !== input.expectedHash)
       return conflict(input, legacy?.path ?? path, current.file);
@@ -659,6 +688,7 @@ export async function saveDefinition(
       );
       if (unguarded.length) return refusedIssues(unguarded);
     }
+    if (options.configuration?.preview) return catalog;
     const location = await prepareFolder(input, roots, true);
     if (!location || 'type' in location)
       return location ?? refusal(requested, 'The folder cannot be created.');
@@ -675,6 +705,7 @@ export async function saveDefinition(
       legacy ? { ...input, expectedHash: null } : input,
       location,
       signal,
+      options.configuration?.authorize,
     );
     if (outcome !== 'written') return outcome;
     await removeLegacy(legacy, signal);
@@ -694,7 +725,7 @@ export async function deleteDefinition(
   requireName(input.name);
   const roots = await resolveWriteRoots(input.directory, signal);
   const requested = input.scope === 'global' ? roots.global : roots.project;
-  return exclusive(pathKey(requested), async () => {
+  return withWriteLock(requested, options, async () => {
     const moved = await movedRoot(requested, options.expectedRoot);
     if (moved) return moved;
     const location = await prepareFolder(input, roots, false);
@@ -715,6 +746,8 @@ export async function deleteDefinition(
       signal,
     );
     if (legacy && 'type' in legacy) return legacy;
+    if (legacy && options.configuration)
+      return refusal(plannedPath, 'Migrate this definition in the workflow editor before proposing a change.');
     if (legacy) {
       path = legacy.path;
       current = legacy.current;
@@ -730,11 +763,13 @@ export async function deleteDefinition(
     if (isRefusal(latest)) return latest;
     if (latest.file?.contentHash !== input.expectedHash)
       return conflict(input, path, latest.file);
+    if (options.configuration?.preview) return catalog;
     options.onPrevious?.(
       latest.file,
       location?.root ?? (await realpath(requested).catch(() => requested)),
     );
     try {
+      options.configuration?.authorize();
       await unlink(path);
     } catch (error) {
       return unavailable(error);
@@ -777,7 +812,7 @@ export async function saveRuleEntryFile(
   const textIssues = checkFileText(input.document, plannedPath);
   if (textIssues.length) return { type: 'refused', issues: textIssues };
   const target = { ...input, kind: input.type };
-  return exclusive(pathKey(requested), async () => {
+  return withWriteLock(requested, options, async () => {
     const invalid = await input.validate(input.document);
     if (invalid.length)
       return {
@@ -797,6 +832,7 @@ export async function saveRuleEntryFile(
       return { type: 'refused' as const, issues: current.issues };
     if ((current.file?.contentHash ?? null) !== input.expectedHash)
       return entryConflict(path, current);
+    if (options.configuration?.preview) return { type: 'written' as const, path, root: requested };
     const location = await prepareFolder(target, roots, true);
     if (!location || 'type' in location)
       return {
@@ -824,6 +860,7 @@ export async function saveRuleEntryFile(
       input.expectedHash,
       location,
       signal,
+      options.configuration?.authorize,
     );
     if (outcome === 'written')
       return { type: 'written' as const, path: location.path, root: location.root };
@@ -844,7 +881,7 @@ export async function deleteRuleEntryFile(
   requireName(input.name);
   const { roots, requested } = await entryRequested(input, signal);
   const target = { ...input, kind: input.type };
-  return exclusive(pathKey(requested), async () => {
+  return withWriteLock(requested, options, async () => {
     const moved = await movedRoot(requested, options.expectedRoot);
     if (moved) return { type: 'refused' as const, issues: moved.issues };
     const location = await prepareFolder(target, roots, false);
@@ -859,11 +896,13 @@ export async function deleteRuleEntryFile(
       return { type: 'refused' as const, issues: latest.issues };
     if (latest.file?.contentHash !== input.expectedHash)
       return entryConflict(path, latest);
+    if (options.configuration?.preview) return { type: 'written' as const, path, root: requested };
     options.onPrevious?.(
       latest.file,
       location?.root ?? (await realpath(requested).catch(() => requested)),
     );
     try {
+      options.configuration?.authorize();
       await unlink(path);
     } catch (error) {
       return unavailable(error);

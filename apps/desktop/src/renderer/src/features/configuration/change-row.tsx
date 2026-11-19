@@ -71,14 +71,12 @@ export function ConfigurationChangeRow({
   const [editPending, setEditPending] = useState(false);
   const { target, source } = change;
   const name =
-    target.area === 'inbox-rules'
-      ? target.name
-      : (settingNames[target.key] ?? target.key);
+    'scope' in target ? target.name : (settingNames[target.key] ?? target.key);
   const scope =
-    target.area === 'inbox-rules'
+    'scope' in target
       ? target.scope.kind === 'project'
-        ? 'Project Inbox rule'
-        : 'Global Inbox rule'
+        ? `Project ${target.area}`
+        : `Global ${target.area}`
       : '';
   const origin =
     source.kind === 'device'

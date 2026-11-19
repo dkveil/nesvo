@@ -17,6 +17,7 @@ export type ConfigurationSnapshot = {
   value: ConfigurationValue | null;
   identity: string;
   dependencies: string;
+  document?: string;
 };
 
 export type StoredConfigurationChange = {
@@ -133,6 +134,27 @@ export class ConfigurationChangeStore {
     return row
       ? (JSON.parse(String(row.document)) as StoredConfigurationChange)
       : null;
+  }
+
+  latestEntry(
+    area: 'lessons' | 'gate-rules',
+    root: string,
+    name: string,
+  ): ConfigurationChange | null {
+    const row = this.database
+      .prepare(
+        `
+      SELECT json_extract(document, '$.change') AS entry
+      FROM configuration_changes
+      WHERE area = ? AND status IN ('applied', 'undone')
+        AND json_extract(document, '$.change.target.scope.root') = ?
+        AND json_extract(document, '$.change.target.name') = ?
+      ORDER BY json_extract(document, '$.change.updatedAt') DESC, sequence DESC
+      LIMIT 1
+    `,
+      )
+      .get(area, root, name);
+    return row ? (JSON.parse(String(row.entry)) as ConfigurationChange) : null;
   }
 
   list(input: ConfigurationHistoryInput) {

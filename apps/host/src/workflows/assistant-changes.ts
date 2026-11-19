@@ -726,7 +726,7 @@ export class AssistantChanges {
           ),
         ],
       };
-    const options: WriteOptions = { expectedRoot: root };
+    const options: WriteOptions = { expectedRoot: root, guardExternal: true };
     const base = {
       directory: change.directory,
       scope: target.root,

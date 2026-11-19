@@ -1,5 +1,6 @@
 import {
   configurationDeviceSchema,
+  configurationFileAreaSchema,
   configurationFrameLimit,
   configurationLimits,
   configurationRequestSchema,
@@ -46,7 +47,7 @@ function fromRow(row: Record<string, unknown>): ConfigurationDevice {
 }
 
 function scopeFor(target: ConfigurationTarget): string | undefined {
-  return target.area === 'inbox-rules' && target.scope.kind === 'project'
+  return 'scope' in target && target.scope.kind === 'project'
     ? target.scope.root
     : undefined;
 }
@@ -125,7 +126,10 @@ export class ConfigurationDevices {
           'This computer does not support the requested area.',
         );
       for (const project of grant.projects) {
-        if (grant.area !== 'inbox-rules' || !isAbsolute(project))
+        if (
+          !configurationFileAreaSchema.safeParse(grant.area).success ||
+          !isAbsolute(project)
+        )
           throw new ConfigurationRefusal(
             'invalid-request',
             'Choose a supported absolute project folder.',
@@ -329,7 +333,7 @@ export class ConfigurationDevices {
   ) {
     const catalog = await this.catalog(input.area, input.project, signal);
     const key = (target: ConfigurationTarget) =>
-      target.area === 'inbox-rules' ? target.name : target.key;
+      'scope' in target ? target.name : target.key;
     const ordered = catalog
       .filter(target => key(target) > (input.cursor ?? ''))
       .sort((left, right) =>

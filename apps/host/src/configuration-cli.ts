@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import {
   configurationCommandSchema,
+  configurationFileAreaSchema,
   configurationFrameLimit,
   configurationTargetSchema,
   type ConfigurationCommand,
@@ -93,9 +94,10 @@ export async function runConfigurationCli(args: string[]) {
         input: { area, project: values.project, cursor: values.cursor },
       });
     else if (operation === 'get' || mutation) {
-      if (area !== 'inbox-rules' && values.project) throw invalid();
+      const file = configurationFileAreaSchema.safeParse(area).success;
+      if (!file && values.project) throw invalid();
       const target = configurationTargetSchema.parse(
-        area === 'inbox-rules'
+        file
           ? {
               area,
               name,

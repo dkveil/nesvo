@@ -574,10 +574,22 @@ void app.whenReady().then(async () => {
     }
   };
   const configProfile = async (input: unknown) => {
+    const requested = configurationProfileInputSchema.parse(input);
+    const request =
+      requested.action === 'save'
+        ? requested
+        : {
+            action: 'seed' as const,
+            values: {
+              colorScheme: nativeTheme.themeSource,
+              keepRunning,
+              ...requested.values,
+            },
+          };
     const profile = configurationProfileSchema.parse(
       await computers.execute(
         'desktop-configuration-profile',
-        configurationProfileInputSchema.parse(input),
+        request,
         'local',
       ),
     );
