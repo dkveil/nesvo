@@ -2,7 +2,8 @@ import type { Provider } from '@/entities/session';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import {
   formatPercent,
-  formatShortReset,
+  resetCountdown,
+  usageWindowLabel,
   remainingPercent,
   type IndicatorState,
   type UsageState,
@@ -41,14 +42,14 @@ export function IndicatorTooltip({ provider, state, indicator, now }: Props) {
           className="flex items-baseline justify-between gap-4 tabular-nums"
         >
           <span className="min-w-0 truncate text-muted-foreground">
-            {window.label}
+            {usageWindowLabel(window.label)}
           </span>
           <span className="shrink-0">
             {formatPercent(remainingPercent(window))} left
             {window.resetsAt && (
               <span className="text-muted-foreground">
-                {' · resets '}
-                {formatShortReset(window.resetsAt)}
+                {' · '}
+                {resetCountdown(window.resetsAt, now)}
               </span>
             )}
           </span>

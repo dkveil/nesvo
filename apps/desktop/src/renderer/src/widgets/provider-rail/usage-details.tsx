@@ -1,8 +1,12 @@
+import { Hint } from '@/shared/ui/tooltip';
+import { formatRelativeTime } from '@/shared/lib/relative-time';
 import type { Provider } from '@/entities/session';
 import { Meter } from '@/shared/ui/progress';
 import {
   formatPercent,
   formatResetTime,
+  resetCountdown,
+  usageWindowLabel,
   isStaleUsage,
   type UsageState,
 } from './usage-state';
@@ -38,6 +42,7 @@ export function UsageDetails({
   now: number;
 }) {
   const { data, loading, error } = state;
+  const checked = data ? formatRelativeTime(data.checkedAt, now) : '';
   const outdated = isStaleUsage(data, connected, now);
   const usable = !!data && data.status === 'ready' && !error;
   const status = !connected
@@ -90,8 +95,6 @@ export function UsageDetails({
       {usable && data.windows.length > 0 ? (
         <ul className="space-y-1.5">
           {data.windows.map(window => {
-            const expired =
-              window.resetsAt !== null && Date.parse(window.resetsAt) <= now;
             return (
               <li
                 key={window.id}
@@ -99,7 +102,9 @@ export function UsageDetails({
                 className="space-y-1"
               >
                 <div className="flex items-baseline justify-between gap-3 text-xs">
-                  <span className="min-w-0 truncate">{window.label}</span>
+                  <span className="min-w-0 truncate">
+                    {usageWindowLabel(window.label)}
+                  </span>
                   <span className="shrink-0 tabular-nums">
                     {formatPercent(Math.max(0, 100 - window.usedPercent))} left
                   </span>
@@ -112,12 +117,15 @@ export function UsageDetails({
                 />
                 <p className="text-2xs text-muted-foreground tabular-nums">
                   {window.resetsAt ? (
-                    <>
-                      {expired ? 'Reported reset passed ' : 'Resets '}
-                      <time dateTime={window.resetsAt}>
-                        {formatResetTime(window.resetsAt)}
+                    <Hint label={formatResetTime(window.resetsAt)}>
+                      <time
+                        tabIndex={0}
+                        className="focus-ring rounded-control"
+                        dateTime={window.resetsAt}
+                      >
+                        {resetCountdown(window.resetsAt, now)}
                       </time>
-                    </>
+                    </Hint>
                   ) : (
                     'Reset time not reported'
                   )}
@@ -145,16 +153,27 @@ export function UsageDetails({
         </p>
       )}
       {data && (
-        <p className="text-2xs text-muted-foreground">
-          Checked{' '}
-          <time dateTime={data.checkedAt}>
-            {formatResetTime(data.checkedAt)}
-          </time>
-          {data.source ? ` · ${sourceLabels[data.source]}` : ''}
-          {outdated
-            ? ' · a passed reset does not confirm a refreshed allowance'
-            : ''}
-        </p>
+        <div className="space-y-1 text-2xs text-muted-foreground">
+          <p className="flex flex-wrap gap-x-1.5">
+            <Hint label={formatResetTime(data.checkedAt)}>
+              <time
+                tabIndex={0}
+                className="focus-ring rounded-control"
+                dateTime={data.checkedAt}
+              >
+                {checked === 'now'
+                  ? 'Checked just now'
+                  : 'Checked ' + checked + ' ago'}
+              </time>
+            </Hint>
+            {data.source && (
+              <span className="whitespace-nowrap">
+                · {sourceLabels[data.source]}
+              </span>
+            )}
+          </p>
+          {outdated && <p>Refresh to verify the current allowance.</p>}
+        </div>
       )}
     </section>
   );

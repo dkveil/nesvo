@@ -3,7 +3,7 @@ import type { McpServer } from '@nesvo/contracts';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { ListRow } from '@/shared/ui/list-row';
-import { StatusDot } from '@/shared/ui/status-dot';
+import { Badge } from '@/shared/ui/badge';
 import { StatusMessage } from '@/shared/ui/status-message';
 import {
   connectionLabels,
@@ -63,59 +63,65 @@ export function McpConnectionRows({
             key={server.key}
             density="two-line"
             size="sm"
-            title={server.name}
-            leading={status && <StatusDot tone={connectionTones[status]} />}
+            title={
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="min-w-0 truncate" title={server.name}>
+                  {server.name}
+                </span>
+                {status &&
+                  !(status === 'unavailable' && connections.list?.notice) && (
+                    <Badge tone={connectionTones[status]} appearance="outline">
+                      {connectionLabels[status]}
+                    </Badge>
+                  )}
+                {(action || observed?.actions.includes('logout')) && (
+                  <>
+                    {action && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        aria-label={
+                          (action === 'authorize'
+                            ? 'Authorize '
+                            : 'Reconnect ') + server.name
+                        }
+                        disabled={!!connections.pending || connections.loading}
+                        onClick={() => void connections.act(action, server.key)}
+                      >
+                        {pending
+                          ? action === 'authorize'
+                            ? 'Authorizing…'
+                            : 'Reconnecting…'
+                          : action === 'authorize'
+                            ? 'Authorize'
+                            : 'Reconnect'}
+                      </Button>
+                    )}
+                    {observed?.actions.includes('logout') && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        aria-label={'Sign out of ' + server.name}
+                        disabled={!!connections.pending || connections.loading}
+                        onClick={() => setLogout(server)}
+                      >
+                        Sign out
+                      </Button>
+                    )}
+                  </>
+                )}
+              </span>
+            }
             description={
               <>
-                {status && <>{connectionLabels[status]} · </>}
-                <span>
-                  {scopeLabels[server.scope]} ·{' '}
-                  {server.transport
-                    ? transportLabels[server.transport]
-                    : 'Unknown transport'}
-                </span>
+                {scopeLabels[server.scope]} ·{' '}
+                {server.transport
+                  ? transportLabels[server.transport]
+                  : 'Unknown transport'}
                 {server.problem && <> · {server.problem}</>}
               </>
-            }
-            actionsPlacement="visible"
-            actions={
-              (action || observed?.actions.includes('logout')) && (
-                <>
-                  {action && (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost"
-                      aria-label={
-                        (action === 'authorize' ? 'Authorize ' : 'Reconnect ') +
-                        server.name
-                      }
-                      disabled={!!connections.pending || connections.loading}
-                      onClick={() => void connections.act(action, server.key)}
-                    >
-                      {pending
-                        ? action === 'authorize'
-                          ? 'Authorizing…'
-                          : 'Reconnecting…'
-                        : action === 'authorize'
-                          ? 'Authorize'
-                          : 'Reconnect'}
-                    </Button>
-                  )}
-                  {observed?.actions.includes('logout') && (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost"
-                      aria-label={'Sign out of ' + server.name}
-                      disabled={!!connections.pending || connections.loading}
-                      onClick={() => setLogout(server)}
-                    >
-                      Sign out
-                    </Button>
-                  )}
-                </>
-              )
             }
           />
         );

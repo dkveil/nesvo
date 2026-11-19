@@ -45,12 +45,12 @@ export const connectionLabels: Record<McpConnectionStatus, string> = {
   unavailable: 'Status unavailable',
 };
 
-export const connectionTones: Record<McpConnectionStatus, StatusDotTone> = {
+export const connectionTones = {
   connected: 'success',
   'needs-authorization': 'warning',
   failed: 'error',
   unavailable: 'neutral',
-};
+} as const satisfies Record<McpConnectionStatus, StatusDotTone>;
 
 export function connectionSummary(list: McpConnectionList | undefined) {
   const statuses = new Set(list?.servers.map(server => server.status));

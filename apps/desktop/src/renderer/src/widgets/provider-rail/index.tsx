@@ -72,7 +72,7 @@ export function ProviderUsage({
                 onOpen={trigger => openFrom(trigger, provider)}
               />
             ))}
-          {layout === 'account' && (
+          {layout !== 'row' && (
             <PopoverTrigger asChild>
               <IconButton
                 label="Account and limits"

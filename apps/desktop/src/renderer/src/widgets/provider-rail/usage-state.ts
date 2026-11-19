@@ -18,18 +18,29 @@ const STALE_AFTER_MS = 300_000;
 export const formatPercent = (value: number) =>
   `${new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format(value)}%`;
 
+const localDateTime = new Intl.DateTimeFormat('en', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
 export const formatResetTime = (value: string) =>
-  new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-    timeStyle: 'long',
-  }).format(new Date(value));
+  localDateTime.format(new Date(value));
+export const usageWindowLabel = (label: string) =>
+  label.replace(/^Codex · /, '');
 
-export const formatShortReset = (value: string) =>
-  new Intl.DateTimeFormat('en', {
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
+export function resetCountdown(value: string, now: number) {
+  const minutes = Math.ceil((Date.parse(value) - now) / 60_000);
+  if (minutes <= 0) return 'Reported reset passed';
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor(minutes / 60) % 24;
+  const remainder = minutes % 60;
+  if (days)
+    return 'Resets in ' + days + ' d' + (hours ? ' ' + hours + ' h' : '');
+  if (hours)
+    return (
+      'Resets in ' + hours + ' h' + (remainder ? ' ' + remainder + ' min' : '')
+    );
+  return 'Resets in ' + remainder + ' min';
+}
 
 export const isStaleUsage = (
   data: ProviderUsage | undefined,
