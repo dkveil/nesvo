@@ -1,8 +1,11 @@
 import {
   checkProjectProfileSchema,
+  checkStackDetectors,
+  checkStackSchema,
   projectCheckOverrideSchema,
   type CheckCandidate,
   type CheckProjectProfile,
+  type CheckStack,
   type ProjectCheckOverride,
   type ResolvedStep,
 } from '@nesvo/contracts';
@@ -21,6 +24,7 @@ import {
   gradleInputs,
   packageInputs,
   universalInputs,
+  type CheckDetector,
   type DetectorContext,
 } from './check-detectors';
 import {
@@ -100,12 +104,31 @@ async function inventoryFile(root: string, name: string, signal: AbortSignal) {
   }
 }
 
+const stackDetectors = {
+  typescript: {
+    matches: (context: DetectorContext) =>
+      context.files.has(posix.join(context.module, 'package.json')),
+    detect: detectPackageScripts,
+  },
+  kotlin: {
+    matches: (context: DetectorContext) =>
+      gradleBuildFile(context) !== undefined,
+    detect: detectGradle,
+  },
+} satisfies Record<
+  CheckStack,
+  {
+    matches: (context: DetectorContext) => boolean;
+    detect: CheckDetector;
+  }
+>;
+
 function stackFor(context: DetectorContext): CheckProjectProfile['stack'] {
   if (context.override.stack) return context.override.stack;
-  const scripts = context.files.has(posix.join(context.module, 'package.json'));
-  const gradle = gradleBuildFile(context) !== undefined;
-  if (scripts && gradle) return 'ambiguous';
-  return scripts ? 'typescript' : gradle ? 'kotlin' : 'unknown';
+  const stacks = checkStackSchema.options.filter(stack =>
+    stackDetectors[stack].matches(context),
+  );
+  return stacks.length > 1 ? 'ambiguous' : (stacks[0] ?? 'unknown');
 }
 
 function mapping(context: DetectorContext): CandidateInput[] {
@@ -159,10 +182,10 @@ export function rankedCandidates(
   scan: ProjectScan,
   definition: ResolvedStep,
 ): CheckCandidate[] {
-  const preferred =
-    scan.profile.stack === 'typescript' || scan.profile.stack === 'kotlin'
-      ? definition.preferred?.[scan.profile.stack]
-      : undefined;
+  const stack = checkStackSchema.safeParse(scan.profile.stack);
+  const preferred = stack.success
+    ? definition.preferred?.[stack.data]
+    : undefined;
   const configured = scan.context.override.checks?.tests;
   const score = (entry: CheckCandidate) =>
     matchesTarget(entry, configured)
@@ -258,8 +281,7 @@ export type ProjectScan = {
 
 const detectors = [
   mapping,
-  detectPackageScripts,
-  detectGradle,
+  ...checkStackSchema.options.map(stack => stackDetectors[stack].detect),
   detectUniversal,
 ];
 
@@ -365,13 +387,13 @@ export class ProjectChecks {
               ]
             : [];
         });
+      const recognized = checkStackSchema.safeParse(stack);
       const allowed = candidates.filter(
         entry =>
           'tool' in entry.target ||
-          (stack !== 'ambiguous' &&
-            (entry.target.runner === 'package-script'
-              ? stack === 'typescript'
-              : stack === 'kotlin')),
+          (recognized.success &&
+            entry.target.runner ===
+              checkStackDetectors[recognized.data].runner),
       );
       cached = {
         inputHash,

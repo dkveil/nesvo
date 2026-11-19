@@ -16,7 +16,6 @@ const source = z.strictObject({
 });
 
 export const checkIntentSchema = z.enum(['tests']);
-export const checkStackSchema = z.enum(['typescript', 'kotlin']);
 const packageScriptSchema = z.strictObject({
   runner: z.literal('package-script'),
   script: target,
@@ -29,6 +28,34 @@ export const checkPreferencesSchema = z.strictObject({
   typescript: packageScriptSchema.optional(),
   kotlin: gradleTargetSchema.optional(),
 });
+export const checkStackSchema = checkPreferencesSchema.keyof();
+export type CheckStack = z.infer<typeof checkStackSchema>;
+export type CheckPreferences = z.infer<typeof checkPreferencesSchema>;
+
+export const checkStackDetectors = {
+  typescript: {
+    label: 'TypeScript',
+    runner: packageScriptSchema.shape.runner.value,
+    preference: preferences => preferences.typescript?.script,
+    withCandidate: script => ({
+      typescript: { runner: 'package-script', script },
+    }),
+  },
+  kotlin: {
+    label: 'Kotlin',
+    runner: gradleTargetSchema.shape.runner.value,
+    preference: preferences => preferences.kotlin?.task,
+    withCandidate: task => ({ kotlin: { runner: 'gradle-wrapper', task } }),
+  },
+} satisfies Record<
+  CheckStack,
+  {
+    label: string;
+    runner: string;
+    preference: (preferences: CheckPreferences) => string | undefined;
+    withCandidate: (candidate: string) => CheckPreferences;
+  }
+>;
 
 const invocation = z.strictObject({
   tool: z.string().min(1).max(120),
@@ -64,7 +91,7 @@ export const checkCandidateSchema = z.strictObject({
   reason: z.string().max(500).nullable(),
 });
 export const checkProjectProfileSchema = z.strictObject({
-  stack: z.enum(['typescript', 'kotlin', 'ambiguous', 'unknown']),
+  stack: z.union([checkStackSchema, z.enum(['ambiguous', 'unknown'])]),
   directory: z.string().min(1).max(160),
   hash,
   overrideHash: hash.nullable(),
