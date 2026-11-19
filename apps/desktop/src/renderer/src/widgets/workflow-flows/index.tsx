@@ -6,15 +6,18 @@ import {
   type Node,
   type NodeProps,
 } from '@xyflow/react';
-import { GitPullRequest, Workflow } from 'lucide-react';
+import { Network, Workflow } from 'lucide-react';
 import type {
   Computer,
+  CoordinatorWakeState,
+  DecisionRoute,
   DesktopSession,
   DesktopWorkflowRun,
   DesktopWorkflowStepRecord,
 } from '@nesvo/contracts';
 import { elapsedLabel } from '@/entities/activity';
-import { pullRequestUrl } from '@/entities/pull-request';
+import type { Review } from '@/entities/review';
+import type { HostedInboxItem } from '@/features/inbox-rules';
 import { directoryLabel } from '@/entities/session';
 import {
   autoLayout,
@@ -27,7 +30,7 @@ import {
 } from '@/entities/workflow-graph';
 import { entityKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
-import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { ListRow } from '@/shared/ui/list-row';
 import { Panel, PanelBody, PanelHeader } from '@/shared/ui/panel';
@@ -50,6 +53,15 @@ import {
   type WorkflowFlow,
 } from './flow-model';
 
+import {
+  orchestrationAnchor,
+  orchestrationTrees,
+  type InboxTarget,
+  type OrchestrationNode,
+} from './orchestration-model';
+import { OrchestrationTrees } from './orchestration-trees';
+import { SessionPullRequest } from './session-pull-request';
+
 const NODE_WIDTH = 280;
 const ROW_HEIGHT = 28;
 const VISIBLE_ROWS = 5;
@@ -60,6 +72,7 @@ const sessionRowsHeight = (count: number) =>
 
 type RowActions = {
   onSession: (session: DesktopSession) => void;
+  orchestrationKeys?: ReadonlySet<string>;
 };
 
 type Props = RowActions & {
@@ -67,6 +80,12 @@ type Props = RowActions & {
   sessions: DesktopSession[];
   runs: DesktopWorkflowRun[];
   steps: DesktopWorkflowStepRecord[];
+  wakeStates: ReadonlyMap<string, CoordinatorWakeState>;
+  reviews: Review[];
+  inboxItems: HostedInboxItem[];
+  routeOf: (session: DesktopSession) => DecisionRoute;
+  onInbox: (target: InboxTarget) => void;
+  onDecisionSession: (key: string) => void;
 };
 
 type FlowStepNode = Node<
@@ -74,7 +93,11 @@ type FlowStepNode = Node<
   'flow-step'
 >;
 
-function SessionRows({ rows, onSession }: RowActions & { rows: FlowRow[] }) {
+function SessionRows({
+  rows,
+  onSession,
+  orchestrationKeys,
+}: RowActions & { rows: FlowRow[] }) {
   const now = useNow(1000);
   return (
     <div
@@ -124,22 +147,24 @@ function SessionRows({ rows, onSession }: RowActions & { rows: FlowRow[] }) {
               onClick={() => onSession(session)}
               actionsPlacement="visible"
               actions={
-                session.pullRequest && (
-                  <Button size="xs" variant="ghost" asChild>
-                    <a
-                      href={pullRequestUrl(session.pullRequest)}
-                      aria-label={`Open PR #${session.pullRequest.number} for ${session.title}`}
-                      onClick={event => {
-                        event.preventDefault();
-                        void window.nesvo
-                          .openExternal(event.currentTarget.href)
-                          .catch(() => undefined);
+                <>
+                  {orchestrationKeys?.has(entityKey(session)) && (
+                    <IconButton
+                      label={`Show orchestration for ${session.title}`}
+                      size={24}
+                      onClick={() => {
+                        const tree = document.getElementById(
+                          orchestrationAnchor(entityKey(session)),
+                        );
+                        tree?.scrollIntoView({ block: 'nearest' });
+                        tree?.focus({ preventScroll: true });
                       }}
                     >
-                      <GitPullRequest /> #{session.pullRequest.number}
-                    </a>
-                  </Button>
-                )
+                      <Network />
+                    </IconButton>
+                  )}
+                  <SessionPullRequest session={session} />
+                </>
               }
             />
           </Hint>
@@ -197,7 +222,11 @@ function graphNodes(flow: WorkflowFlow) {
   });
 }
 
-function FlowGraph({ flow, onSession }: RowActions & { flow: WorkflowFlow }) {
+function FlowGraph({
+  flow,
+  onSession,
+  orchestrationKeys,
+}: RowActions & { flow: WorkflowFlow }) {
   const steps = useMemo(() => graphNodes(flow), [flow]);
   const nodes: FlowStepNode[] = steps.map((editor, index) => {
     const rows = flow.rows.get(index) ?? [];
@@ -213,6 +242,7 @@ function FlowGraph({ flow, onSession }: RowActions & { flow: WorkflowFlow }) {
         editor,
         rows,
         onSession,
+        orchestrationKeys,
         summary: flowCounts(rows),
         width: NODE_WIDTH,
         issues: [],
@@ -289,17 +319,50 @@ export default function WorkflowFlows({
   runs,
   steps,
   onSession,
+  wakeStates,
+  reviews,
+  inboxItems,
+  routeOf,
+  onInbox,
+  onDecisionSession,
 }: Props) {
   const flows = useMemo(
     () => workflowFlows(sessions, runs, steps),
     [sessions, runs, steps],
   );
-  const active = flows.length > 0;
+  const workflowSessions = new Set(
+    flows.flatMap(flow =>
+      [...flow.rows.values()].flat().map(row => entityKey(row.session)),
+    ),
+  );
+  const trees = orchestrationTrees(
+    sessions,
+    wakeStates,
+    reviews,
+    inboxItems,
+    routeOf,
+    workflowSessions,
+  );
+  const orchestrationKeys = new Set<string>();
+  const collect = (tree: OrchestrationNode) => {
+    if (!tree.children.length) return;
+    orchestrationKeys.add(entityKey(tree.session));
+    tree.children.forEach(collect);
+  };
+  trees.forEach(collect);
+  const active = flows.length > 0 || trees.length > 0;
   return (
     <Panel aria-label="Flows" className="flex-1">
       <PanelBody>
         {active ? (
           <div className="mx-auto max-w-6xl space-y-4 p-5 xl:ml-5">
+            {trees.length > 0 && (
+              <OrchestrationTrees
+                computers={computers}
+                trees={trees}
+                actions={{ onSession, onInbox, onDecisionSession }}
+              />
+            )}
             {flows.map(flow => {
               const { run } = flow;
               const rows = [...flow.rows.values()].flat();
@@ -332,16 +395,24 @@ export default function WorkflowFlows({
                       <p className="px-2 py-1 text-ui text-muted-foreground">
                         Between steps
                       </p>
-                      <SessionRows rows={between} onSession={onSession} />
+                      <SessionRows
+                        rows={between}
+                        onSession={onSession}
+                        orchestrationKeys={orchestrationKeys}
+                      />
                     </div>
                   )}
-                  <FlowGraph flow={flow} onSession={onSession} />
+                  <FlowGraph
+                    flow={flow}
+                    onSession={onSession}
+                    orchestrationKeys={orchestrationKeys}
+                  />
                 </Panel>
               );
             })}
           </div>
         ) : (
-          <EmptyState icon={Workflow} title="No live workflows" />
+          <EmptyState icon={Workflow} title="No live flows" />
         )}
       </PanelBody>
     </Panel>

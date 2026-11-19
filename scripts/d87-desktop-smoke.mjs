@@ -91,6 +91,18 @@ const choose = async title => {
     .click();
   await page.getByRole('heading', { name: title, exact: true }).waitFor();
 };
+const openFlows = async () => {
+  const flows = page.getByRole('region', { name: 'Flows', exact: true });
+  if (!(await flows.isVisible())) {
+    await page.getByRole('button', { name: 'Workflows', exact: true }).click();
+    await page
+      .getByRole('region', { name: 'Workflows', exact: true })
+      .getByRole('button', { name: 'Flows', exact: true })
+      .click();
+  }
+  await flows.waitFor();
+  return flows;
+};
 const capture = async name => {
   if (!screenshots) return;
   for (const [width, height] of [
@@ -181,6 +193,9 @@ try {
     0,
   );
   await capture('ordinary');
+  const emptyFlows = await openFlows();
+  await emptyFlows.getByText('No live flows', { exact: true }).waitFor();
+  await choose(coordinator.title);
 
   await api('saveSessionControlPolicy', {
     ...initialPolicy,
@@ -219,10 +234,32 @@ try {
   await page.getByText('Waiting for children', { exact: true }).waitFor();
   await capture('coordinator-waiting');
 
-  await childCard
-    .getByRole('button', { name: new RegExp('^' + child.title) })
-    .first()
+  const flows = await openFlows();
+  const tree = flows.getByRole('region', {
+    name: 'Ad hoc orchestration',
+    exact: true,
+  });
+  const waiting = tree.getByText('Waiting for children', { exact: true });
+  await waiting.waitFor();
+  const setWake = async enabled => {
+    const { revision } = await api('readCoordinatorWake', {
+      sessionId: coordinator.id,
+    });
+    return api('setCoordinatorWake', {
+      sessionId: coordinator.id,
+      enabled,
+      expectedRevision: revision,
+      actionId: randomUUID(),
+    });
+  };
+  await setWake(false);
+  await waiting.waitFor({ state: 'hidden' });
+  await setWake(true);
+  await waiting.waitFor();
+  await tree
+    .getByRole('button', { name: 'Open Draft review, Running', exact: true })
     .click();
+  await page.getByRole('heading', { name: child.title, exact: true }).waitFor();
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await composer.fill('Keep the examples for the next release.');
   await page.getByRole('button', { name: 'Steer', exact: true }).click();
@@ -280,11 +317,25 @@ try {
     .getByRole('region', { name: 'Decisions from child sessions' })
     .getByText('Draft review', { exact: true })
     .waitFor();
-  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await openFlows();
+  await tree
+    .getByRole('button', {
+      name: 'Open Draft review, Waiting for you',
+      exact: true,
+    })
+    .waitFor();
+  await tree
+    .getByRole('button', { name: 'Open Inbox for Draft review', exact: true })
+    .click();
   const inboxResult = page.getByRole('article', {
     name: 'Review result: Draft review, version 1',
     exact: true,
   });
+  await page.waitForFunction(
+    () =>
+      document.activeElement?.getAttribute('aria-label') ===
+      'Review result: Draft review, version 1',
+  );
   await inboxResult
     .getByRole('button', { name: 'Request changes', exact: true })
     .click();
@@ -349,11 +400,30 @@ try {
   await application.close();
   application = null;
   await open();
-  await choose(coordinator.title);
+  const recoveredFlows = await openFlows();
+  const recoveredTree = recoveredFlows.getByRole('region', {
+    name: 'Ad hoc orchestration',
+    exact: true,
+  });
+  await recoveredTree.getByText('Continue required', { exact: true }).waitFor();
+  await recoveredTree
+    .getByRole('button', {
+      name: 'Open Release notes, Continue after restart',
+      exact: true,
+    })
+    .click();
   await page.getByText('Continue after restart', { exact: true }).waitFor();
   const recovered = await session(coordinator.id);
   assert.equal(recovered.runId, hold.runId);
   assert.equal(recovered.status, 'interrupted');
+  const offlineWake = await api('readCoordinatorWake', {
+    sessionId: coordinator.id,
+  });
+  const offlineSessions = (await api('listSessions'))
+    .filter(
+      item => item.id === coordinator.id || item.parentId === coordinator.id,
+    )
+    .map(({ hostId: _hostId, ...item }) => item);
   await capture('continue-after-restart');
   await page
     .locator('[data-coordinator-wake]')
@@ -370,9 +440,92 @@ try {
       .length,
     2,
   );
+
+  await api('saveSessionControlPolicy', {
+    ...initialPolicy,
+    enabled: true,
+    nested: true,
+  });
+  const nested = await api('createSession', {
+    title: 'Release coordination',
+    directory: cwd,
+    provider: 'Claude Code',
+    model: 'default',
+  });
+  const spawnChild = (title, prompt) =>
+    'fixture:nesvo ' +
+    JSON.stringify([{ tool: 'session_create', arguments: { title, prompt } }]);
+  const nestedStart = await send(
+    nested.id,
+    spawnChild('Documentation', spawnChild('Verify examples', 'fixture:hold')),
+  );
+  await settle(nested.id, nestedStart.runId);
+  const nestedFlows = await openFlows();
+  const documentation = nestedFlows.getByRole('list', {
+    name: 'Children of Release coordination',
+    exact: true,
+  });
+  const examples = documentation.getByRole('list', {
+    name: 'Children of Documentation',
+    exact: true,
+  });
+  await examples
+    .getByRole('button', { name: 'Open Verify examples, Running', exact: true })
+    .waitFor();
+  await capture('flows');
+  await application.close();
+  application = null;
+  const computerId = randomUUID();
+  const instanceId = randomUUID();
+  await writeFile(
+    join(env.NESVO_DATA_DIR, 'computers.json'),
+    JSON.stringify({
+      version: 1,
+      computers: [
+        {
+          id: computerId,
+          instanceId,
+          input: {
+            name: 'Offline fixture',
+            hostname: '127.0.0.1',
+            port: 1,
+            entryPath: '/srv/nesvo/main.js',
+            runtimeDirectory: '/srv/nesvo',
+          },
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    join(env.NESVO_DATA_DIR, 'computer-cache.json'),
+    JSON.stringify({
+      version: 2,
+      computers: [
+        {
+          id: computerId,
+          instanceId,
+          lastSyncedAt: new Date().toISOString(),
+          sessions: offlineSessions,
+          recent: [],
+          reviews: [],
+          coordinatorWake: [offlineWake],
+        },
+      ],
+    }),
+  );
+  await open();
+  const offlineFlows = await openFlows();
+  const offlineTree = offlineFlows.getByRole('region', {
+    name: 'Offline fixture orchestration',
+    exact: true,
+  });
+  await offlineTree
+    .getByText('Offline fixture · Offline', { exact: true })
+    .waitFor();
+  await offlineTree.getByText('Continue required', { exact: true }).waitFor();
   assert.deepEqual(failures, []);
   console.log(
-    'D87 desktop fixture passed: ordinary, children, steering, wake, drawer, reload and restart.',
+    'D87 desktop fixture passed: ordinary, children, steering, wake, drawer, reload, restart and live and offline orchestration flows.',
   );
 } finally {
   await application?.close().catch(() => undefined);

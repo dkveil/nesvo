@@ -166,6 +166,7 @@ import {
   CoordinatorWakeSetting,
 } from '@/widgets/delegations/coordinator-wake';
 import { useCoordinatorWake } from '@/widgets/delegations/use-coordinator-wake';
+import { useFlowWake } from '@/widgets/workflow-flows/use-flow-wake';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
@@ -1271,6 +1272,7 @@ export function Workspace({
     : [];
   const wakeControl = useCoordinatorWake(
     orchestration &&
+      workflowPage !== 'flows' &&
       selected &&
       coordinatorChildren.length &&
       store.hostReady(selectedHostId)
@@ -1278,6 +1280,11 @@ export function Workspace({
       : undefined,
     selectedHostId,
     selected?.id ?? null,
+  );
+  const flowWake = useFlowWake(
+    store.computers,
+    store.sessions,
+    workflowPage === 'flows',
   );
   const inspectedChild =
     childWork &&
@@ -4925,7 +4932,16 @@ ${text}`
                 sessions={store.sessions}
                 runs={store.workflowRuns}
                 steps={store.workflowSteps}
+                wakeStates={flowWake}
+                reviews={store.reviews}
+                inboxItems={inboxRules.items}
+                routeOf={routeOf}
                 onSession={session => select(entityKey(session))}
+                onDecisionSession={key => select(key)}
+                onInbox={target => {
+                  setInboxLink(target);
+                  openInboxNow();
+                }}
               />
             </Suspense>
           ) : workflowsView ? (

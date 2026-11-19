@@ -118,7 +118,8 @@ export function workspaceCommands(
       id: 'flows',
       label: 'Open Flows',
       icon: <Workflow />,
-      keywords: 'live workflows step sessions graph',
+      keywords:
+        'live workflows step sessions graph orchestration coordinator children',
       run: actions.flows,
     },
     {

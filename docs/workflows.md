@@ -342,7 +342,11 @@ Open **Flows** from Workflows or choose **Open Flows** in the command palette. E
 
 A row opens its session. It shows the session title, elapsed time and the linked pull request when present. Use the title template on a list-driven step to include a stage ID, such as `Stage {{ item.id }}`. An active run can occupy several parallel steps. Workflow counts count each session once, and agent counts reflect provider turns in progress. Children of a `session` or `fan-out` step appear under the step that started them, including settled children while that step is still current. Hover over or focus a child row to see its workflow and current step. Live child workflows also have their own graphs.
 
-The view follows session and workflow events. A disconnected computer shows its last known state with an Offline label.
+The **Orchestration** section groups live ad hoc coordinators by computer. Each tree shows the coordinator, its direct children and grandchildren when the computer allows nested coordination. Settled children stay visible while work, a decision or a recovery is outstanding elsewhere in their tree. Sessions without children appear only as part of an orchestration tree or workflow graph.
+
+An orchestration row shows the provider, title, status and elapsed time. A linked pull request and an Inbox decision each have their own action. Decisions routed to a parent conversation open that conversation. Coordinators show **Waiting for children**, **Updates waiting** or **Continue required** when applicable. A workflow row with child orchestration can jump to the corresponding branch in Flows.
+
+The view follows session, workflow, Inbox and coordinator wake events. A disconnected computer shows its last known state with an Offline label.
 
 ## The graph editor
 
