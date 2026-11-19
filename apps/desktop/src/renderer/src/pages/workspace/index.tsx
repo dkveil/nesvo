@@ -5295,6 +5295,10 @@ ${text}`
                 <CodeReviewSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
+                  statuses={store.providerStates(settingsHostId)}
+                  onRefreshProvider={provider =>
+                    void store.refreshProvider(provider, settingsHostId)
+                  }
                   api={desktopApi(settingsHostId)}
                 />
               </div>
@@ -5344,6 +5348,10 @@ ${text}`
                 <InboxRulesSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
+                  statuses={store.providerStates(settingsHostId)}
+                  onRefreshProvider={provider =>
+                    void store.refreshProvider(provider, settingsHostId)
+                  }
                   defaultFolder={defaultFolders.folders[settingsHostId] ?? null}
                   api={desktopApi(settingsHostId)}
                 />
@@ -5363,6 +5371,10 @@ ${text}`
                 <LessonsSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
+                  statuses={store.providerStates(settingsHostId)}
+                  onRefreshProvider={provider =>
+                    void store.refreshProvider(provider, settingsHostId)
+                  }
                   api={desktopApi(settingsHostId)}
                 />
               </div>

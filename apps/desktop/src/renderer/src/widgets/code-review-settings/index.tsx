@@ -1,3 +1,5 @@
+import type { Provider } from '@nesvo/contracts';
+import type { ProviderStates } from '@/entities/session';
 import { useState } from 'react';
 import type {
   CodeReviewSettings as Settings,
@@ -36,6 +38,8 @@ type CodeReviewSettingsApi = Pick<
 type CodeReviewSettingsProps = {
   computer: Computer | undefined;
   api: CodeReviewSettingsApi;
+  statuses: ProviderStates;
+  onRefreshProvider: (provider: Provider) => void;
 };
 
 type Editing =
@@ -56,7 +60,12 @@ const profileDescription = (profile: ReviewerProfile) =>
     `${toneLabels[profile.tone]} · ${profile.language}${profile.includeSummary ? ' · summary' : ''}`,
   ].join(' · ');
 
-export function CodeReviewSettings({ computer, api }: CodeReviewSettingsProps) {
+export function CodeReviewSettings({
+  computer,
+  api,
+  statuses,
+  onRefreshProvider,
+}: CodeReviewSettingsProps) {
   const hostId = computer?.id ?? 'local';
   const connected = computer?.status === 'connected';
   const supported = !!computer?.capabilities.includes('pull-request-reviews');
@@ -100,10 +109,8 @@ export function CodeReviewSettings({ computer, api }: CodeReviewSettingsProps) {
   const conventions = settings.settings?.conventions ?? [];
   return (
     <div className="space-y-6">
-      <p className="text-xs leading-5 text-muted-foreground">
-        Profiles and conventions are stored by {computer?.name ?? 'this'}{' '}
-        computer’s host, not in the repository. Reviews read AGENTS.md and
-        CLAUDE.md from the pull request checkout as well.
+      <p className="text-xs text-muted-foreground">
+        Profiles and conventions are stored on the selected computer.
       </p>
       {settings.status === 'error' && (
         <StatusMessage tone="error">{settings.error}</StatusMessage>
@@ -125,6 +132,8 @@ export function CodeReviewSettings({ computer, api }: CodeReviewSettingsProps) {
       >
         {editing?.kind === 'profile' && !editing.profile && (
           <ProfileForm
+            statuses={statuses}
+            onRefreshProvider={onRefreshProvider}
             profile={null}
             pending={pending}
             error={error}
@@ -139,6 +148,8 @@ export function CodeReviewSettings({ computer, api }: CodeReviewSettingsProps) {
         {profiles.map(profile =>
           editing?.kind === 'profile' && editing.profile?.id === profile.id ? (
             <ProfileForm
+              statuses={statuses}
+              onRefreshProvider={onRefreshProvider}
               key={profile.id}
               profile={profile}
               pending={pending}

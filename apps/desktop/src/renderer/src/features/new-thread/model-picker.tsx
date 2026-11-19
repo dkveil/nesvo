@@ -28,6 +28,8 @@ type Props = {
   disabled?: boolean;
   lockedProvider?: boolean;
   claudeEffort?: boolean;
+  showEffort?: boolean;
+  includeDefault?: boolean;
   triggerLabel?: string;
   displayLabel?: string;
   hint?: string;
@@ -44,6 +46,8 @@ export function ModelPicker({
   disabled = false,
   lockedProvider = false,
   claudeEffort = false,
+  showEffort = true,
+  includeDefault = false,
   triggerLabel = 'Choose model',
   displayLabel,
   hint,
@@ -54,7 +58,13 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const state = statuses[provider];
-  const models = state.status?.models ?? [];
+  const modelsFor = (item: Provider) => {
+    const reported = statuses[item].status?.models ?? [];
+    return includeDefault && !reported.some(option => option.id === 'default')
+      ? [{ id: 'default', label: 'Default' }, ...reported]
+      : reported;
+  };
+  const models = modelsFor(provider);
   const labelOf = (id: string) =>
     models.find(option => option.id === id)?.label ?? modelLabel(id);
   const shownLabel = displayLabel ?? (model ? labelOf(model) : 'No model');
@@ -71,7 +81,7 @@ export function ModelPicker({
     setOpen(false);
   };
   const selectProvider = (next: Provider) => {
-    const nextModels = statuses[next].status?.models ?? [];
+    const nextModels = modelsFor(next);
     onChange(next, nextModels[0]?.id ?? '', '');
     setActiveId(null);
   };
@@ -188,15 +198,17 @@ export function ModelPicker({
             </IconButton>
           </div>
         </div>
-        <ReasoningColumn
-          provider={provider}
-          claudeEffort={claudeEffort}
-          state={state}
-          model={previewModel}
-          modelLabel={labelOf(previewModel)}
-          selected={previewModel === model ? effort : ''}
-          onChoose={chooseEffort}
-        />
+        {showEffort && (
+          <ReasoningColumn
+            provider={provider}
+            claudeEffort={claudeEffort}
+            state={state}
+            model={previewModel}
+            modelLabel={labelOf(previewModel)}
+            selected={previewModel === model ? effort : ''}
+            onChoose={chooseEffort}
+          />
+        )}
       </PopoverContent>
     </Popover>
   );

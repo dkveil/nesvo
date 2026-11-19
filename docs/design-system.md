@@ -38,6 +38,8 @@ All colours are CSS variables defined for light on `:root` and for dark on `:roo
 | `send-idle` / `send-idle-foreground`               | `#292929` / `#929393` | `#e4e4e7` / `#71717b` | Disabled send button                           |
 | `--popover-glass`, `--composer-surface`            | 80% glass             | 80% glass             | `glass-popover`, `glass-composer` utilities    |
 
+`subtle-foreground` is the secondary token for field hints and Settings row descriptions (`#909090` in dark, `#74747d` in light).
+
 Status text uses `text-success-foreground`, `text-info-foreground`, `text-warning-foreground` and `text-error-foreground`. `text-destructive` is reserved for destructive actions such as a Delete menu item.
 
 ### Type
@@ -221,7 +223,7 @@ Hovering the dot or, after a short delay, the row, or focusing the row from the 
 
 **AddTile** — `shared/ui/add-tile.tsx`. A dashed tile that starts something new in an empty space: a dashed icon square (`icon`, default Plus), a `text-ui` title and an optional `text-2xs` description. Size it from the caller (the graph editor's empty canvas gives it the step node size). Not for regular commands (use Button) or list rows.
 
-**SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages. SettingsSection heads a bordered card with a SectionLabel (`action` sits on its right); the page title lives in the settings header. SettingsRow is a title, a `text-xs` description and trailing controls; put status lines in the description as StatusMessage.
+**SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages. SettingsSection heads a bordered card with a SectionLabel (`action` sits on its right); the page title lives in the settings header. SettingsRow puts a title and a short `text-2xs` description on the left and controls on the right. Put status lines in the description as StatusMessage. Use Field for stacked settings inputs, with a muted label and subtle hint below the input. Set `resize="none"` on settings textareas to keep content-driven height without a resize handle.
 
 The composer MCP chip opens an inventory Popover with ListRow for server names, scopes and transports, and StatusMessage for availability and configuration errors. Show the hook policy in a separate row. Place the repository trust InlineNotice above the session composer with the definition summary and Trust and Not now actions. The MCP popover can reopen a dismissed notice. The new-session form omits the MCP field.
 

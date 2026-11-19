@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import {
-  claudeModelSchema,
   lessonIsDue,
   localDate,
-  providerSchema,
   type Computer,
   type Lesson,
   type LessonChanges,
   type LessonOverview,
   type LessonSettings,
+  type Provider,
 } from '@nesvo/contracts';
 import {
   LessonEditDialog,
@@ -28,7 +27,8 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
+import type { ProviderStates } from '@/entities/session';
+import { ModelPicker } from '@/features/new-thread/model-picker';
 import {
   Select,
   SelectContent,
@@ -43,6 +43,8 @@ import { Switch } from '@/shared/ui/switch';
 
 type LessonsSettingsProps = {
   computer: Computer | undefined;
+  statuses: ProviderStates;
+  onRefreshProvider: (provider: Provider) => void;
   api: LessonApi;
 };
 
@@ -66,13 +68,17 @@ const proposalText = (overview: LessonOverview) => {
   return waiting;
 };
 
-export function LessonsSettings({ computer, api }: LessonsSettingsProps) {
+export function LessonsSettings({
+  computer,
+  statuses,
+  onRefreshProvider,
+  api,
+}: LessonsSettingsProps) {
   const unavailable = unavailableReason(computer);
   const hostId = computer?.id ?? 'local';
   const lessons = useLessonOverview({ api, hostId, enabled: !unavailable });
   const [filter, setFilter] = useState<ScopeFilter>('all');
   const [editing, setEditing] = useState<Lesson | null>(null);
-  const [model, setModel] = useState<string | null>(null);
   const [norm, setNorm] = useState<string | null>(null);
   const [now] = useState(() => new Date());
   if (unavailable) return <InlineNotice>{unavailable}</InlineNotice>;
@@ -110,17 +116,12 @@ export function LessonsSettings({ computer, api }: LessonsSettingsProps) {
     });
     if (done) setEditing(null);
   };
-  const modelValue = model ?? settings.model;
   const normValue =
     norm ?? (settings.costNormUsd === null ? '' : String(settings.costNormUsd));
   return (
     <div className="space-y-6">
-      <p className="text-xs leading-5 text-muted-foreground">
-        {computer?.name ?? 'This computer'} records incidents from stuck
-        sessions, rejected plans, failed workflow steps, sensitive probe
-        findings, costly turns and stage report remarks. Approved lessons are
-        files in the global or project workflows folder; agents see their
-        descriptions until the review date.
+      <p className="text-xs text-muted-foreground">
+        Approved lessons guide agents until their review date.
       </p>
       {lessons.error && (
         <StatusMessage tone="error">{lessons.error}</StatusMessage>
@@ -130,7 +131,7 @@ export function LessonsSettings({ computer, api }: LessonsSettingsProps) {
           title={
             <label htmlFor="lessons-daily">Propose lessons every day</label>
           }
-          description="Nesvo runs one read-only turn a day when there are new incidents. Nothing is approved without you."
+          description="Review proposals from one read-only turn per day."
         >
           <Switch
             id="lessons-daily"
@@ -143,64 +144,26 @@ export function LessonsSettings({ computer, api }: LessonsSettingsProps) {
           title="Proposal model"
           description="Choose a low-cost model. It reads only the recorded incidents."
         >
-          <Label htmlFor="lessons-provider" className="sr-only">
-            Provider
-          </Label>
-          <Select
-            value={settings.provider}
+          <ModelPicker
+            provider={settings.provider}
+            model={settings.model}
+            effort=""
+            statuses={statuses}
+            showEffort={false}
+            includeDefault
             disabled={busy}
-            onValueChange={value => {
-              const provider = providerSchema.safeParse(value);
-              if (!provider.success) return;
-              setModel(null);
+            triggerLabel="Choose proposal model"
+            onRefreshProvider={onRefreshProvider}
+            onChange={(provider, model) =>
               save({
-                provider: provider.data,
-                model: provider.data === 'Claude Code' ? 'haiku' : 'default',
-              });
-            }}
-          >
-            <SelectTrigger id="lessons-provider" size="md" className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {providerSchema.options.map(provider => (
-                <SelectItem key={provider} value={provider}>
-                  {provider}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {settings.provider === 'Claude Code' ? (
-            <Select
-              value={settings.model}
-              disabled={busy}
-              onValueChange={value => save({ model: value })}
-            >
-              <SelectTrigger aria-label="Model" size="md" className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {claudeModelSchema.options.map(option => (
-                  <SelectItem key={option} value={option}>
-                    {option === 'default' ? 'Default' : option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              aria-label="Model"
-              className="w-36"
-              value={modelValue}
-              disabled={busy}
-              onChange={event => setModel(event.target.value)}
-              onBlur={() => {
-                const next = modelValue.trim();
-                setModel(null);
-                if (next && next !== settings.model) save({ model: next });
-              }}
-            />
-          )}
+                provider,
+                model:
+                  provider !== settings.provider && provider === 'Claude Code'
+                    ? 'haiku'
+                    : model,
+              })
+            }
+          />
         </SettingsRow>
         <SettingsRow
           title={<label htmlFor="lessons-norm">Turn cost norm</label>}

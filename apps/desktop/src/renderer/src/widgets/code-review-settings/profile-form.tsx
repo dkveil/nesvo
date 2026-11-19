@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   REVIEW_SEVERITY_ORDER,
-  claudeModelSchema,
   codeReviewLimits,
   reviewFindingTypeSchema,
   reviewToneSchema,
@@ -17,7 +16,8 @@ import {
   severityLabels,
   toneLabels,
 } from '@/features/code-review';
-import { modelLabel, providers } from '@/entities/session';
+import type { ProviderStates } from '@/entities/session';
+import { ModelPicker } from '@/features/new-thread/model-picker';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
 import { Field } from '@/shared/ui/field';
@@ -36,6 +36,8 @@ import { Switch } from '@/shared/ui/switch';
 type ProfileFormProps = {
   profile: ReviewerProfile | null;
   pending: boolean;
+  statuses: ProviderStates;
+  onRefreshProvider: (provider: Provider) => void;
   error: string;
   onSave: (input: SaveReviewerProfileInput) => void;
   onCancel: () => void;
@@ -51,6 +53,8 @@ const DEFAULT_TYPES: ReviewFindingType[] = [
 export function ProfileForm({
   profile,
   pending,
+  statuses,
+  onRefreshProvider,
   error,
   onSave,
   onCancel,
@@ -86,11 +90,6 @@ export function ProfileForm({
     !!language.trim() &&
     types.length > 0 &&
     limitValid;
-  const changeProvider = (next: Provider) => {
-    setProvider(next);
-    setModel('default');
-    setEffort('');
-  };
   const toggleType = (type: ReviewFindingType, checked: boolean) =>
     setTypes(previous =>
       checked
@@ -133,65 +132,25 @@ export function ProfileForm({
           onChange={event => setName(event.target.value)}
         />
       </Field>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field id="reviewer-profile-provider" label="Provider">
-          <Select
-            value={provider}
-            onValueChange={value => changeProvider(value as Provider)}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field id="reviewer-profile-model" label="Provider and model" as="span">
+          <ModelPicker
+            provider={provider}
+            model={model}
+            effort=""
+            statuses={statuses}
+            showEffort={false}
+            includeDefault
             disabled={pending}
-          >
-            <SelectTrigger
-              id="reviewer-profile-provider"
-              size="md"
-              className="w-full"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent position="popper">
-              {providers.map(item => (
-                <SelectItem key={item} value={item}>
-                  {item}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            triggerLabel="Choose reviewer model"
+            onRefreshProvider={onRefreshProvider}
+            onChange={(nextProvider, nextModel) => {
+              if (nextProvider !== provider) setEffort('');
+              setProvider(nextProvider);
+              setModel(nextModel);
+            }}
+          />
         </Field>
-        {provider === 'Claude Code' ? (
-          <Field id="reviewer-profile-model" label="Model">
-            <Select value={model} onValueChange={setModel} disabled={pending}>
-              <SelectTrigger
-                id="reviewer-profile-model"
-                size="md"
-                className="w-full"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent position="popper">
-                {claudeModelSchema.options.map(option => (
-                  <SelectItem key={option} value={option}>
-                    {modelLabel(option)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        ) : (
-          <Field
-            id="reviewer-profile-model"
-            label="Model"
-            hint="A model ID, or default."
-          >
-            <Input
-              id="reviewer-profile-model"
-              size="md"
-              value={model}
-              maxLength={200}
-              spellCheck={false}
-              disabled={pending}
-              onChange={event => setModel(event.target.value)}
-            />
-          </Field>
-        )}
         <Field
           id="reviewer-profile-effort"
           label="Effort"

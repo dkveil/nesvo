@@ -16,7 +16,9 @@ import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
+import { Field } from '@/shared/ui/field';
+import type { ProviderStates } from '@/entities/session';
+import { ModelPicker } from '@/features/new-thread/model-picker';
 import {
   Select,
   SelectContent,
@@ -45,6 +47,8 @@ type InboxRulesApi = Pick<
 type InboxRulesSettingsProps = {
   computer: Computer | undefined;
   defaultFolder: string | null;
+  statuses: ProviderStates;
+  onRefreshProvider: (provider: Provider) => void;
   api: InboxRulesApi;
 };
 
@@ -98,6 +102,8 @@ function IssueList({ issues }: { issues: InboxRuleIssue[] }) {
 export function InboxRulesSettings({
   computer,
   defaultFolder,
+  statuses,
+  onRefreshProvider,
   api,
 }: InboxRulesSettingsProps) {
   const unavailable = unavailableReason(computer);
@@ -230,11 +236,8 @@ export function InboxRulesSettings({
   const names = new Set(catalog?.rules.map(rule => rule.name) ?? []);
   return (
     <div className="space-y-6" data-settings="inbox-rules">
-      <p className="px-3 text-xs leading-5 text-muted-foreground">
-        A rule says when something should reach your Inbox and whether the agent
-        waits for you. Rules are Markdown files: global ones apply on this
-        computer, project ones only after you trust the repository, and they can
-        only add gates.
+      <p className="text-xs text-muted-foreground">
+        Inbox rules add review gates for this computer or a trusted project.
       </p>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <SettingsSection title="Routing">
@@ -273,7 +276,7 @@ export function InboxRulesSettings({
         action={
           <Button
             size="xs"
-            variant="ghost"
+            variant="secondary"
             disabled={busy}
             onClick={() => {
               setDraft({ scope: 'global', text: NEW_RULE, expectedHash: null });
@@ -285,15 +288,18 @@ export function InboxRulesSettings({
         }
       >
         <div className="flex items-end gap-2 px-3 py-2.5">
-          <div className="min-w-0 flex-1 space-y-1">
-            <Label htmlFor="inbox-rules-folder">Project folder</Label>
+          <Field
+            id="inbox-rules-folder"
+            label="Project folder"
+            className="flex-1"
+          >
             <Input
               id="inbox-rules-folder"
               value={folder}
               placeholder="Folder whose project rules to show"
               onChange={event => setFolder(event.target.value)}
             />
-          </div>
+          </Field>
           <Button variant="secondary" onClick={() => void load()}>
             Show rules
           </Button>
@@ -386,7 +392,7 @@ export function InboxRulesSettings({
                 </Button>
                 <Button
                   size="xs"
-                  variant="ghost"
+                  variant="destructive"
                   onClick={() => setRemoving(entry)}
                 >
                   Delete
@@ -399,8 +405,7 @@ export function InboxRulesSettings({
       {draft && (
         <SettingsSection title="Rule file">
           <div className="space-y-2 p-3">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="inbox-rule-scope">Save to</Label>
+            <Field id="inbox-rule-scope" label="Save to" layout="inline">
               <Select
                 value={draft.scope}
                 disabled={!!draft.expectedHash}
@@ -418,8 +423,9 @@ export function InboxRulesSettings({
                   </SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </Field>
             <Textarea
+              resize="none"
               aria-label="Rule file"
               size="md"
               spellCheck={false}
@@ -431,7 +437,7 @@ export function InboxRulesSettings({
             />
             <IssueList issues={issues} />
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setDraft(null)}>
+              <Button variant="secondary" onClick={() => setDraft(null)}>
                 Cancel
               </Button>
               <Button disabled={busy || !valid} onClick={() => void save()}>
@@ -444,46 +450,36 @@ export function InboxRulesSettings({
       <SettingsSection title="Describe a rule">
         <div className="space-y-2 p-3">
           <Textarea
+            resize="none"
             aria-label="Describe a rule"
             placeholder="Before git push show me the diff and wait"
             value={description}
             onChange={event => setDescription(event.target.value)}
           />
           <div className="flex flex-wrap items-end gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="inbox-rule-provider">Provider</Label>
-              <Select
-                value={provider}
-                onValueChange={value => setProvider(value as Provider)}
-              >
-                <SelectTrigger id="inbox-rule-provider" className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Claude Code">Claude Code</SelectItem>
-                  <SelectItem value="Codex">Codex</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="min-w-0 flex-1 space-y-1">
-              <Label htmlFor="inbox-rule-model">Model</Label>
-              <Input
-                id="inbox-rule-model"
-                value={model}
-                onChange={event => setModel(event.target.value)}
-              />
-            </div>
+            <ModelPicker
+              provider={provider}
+              model={model}
+              effort=""
+              statuses={statuses}
+              showEffort={false}
+              includeDefault
+              triggerLabel="Choose proposal model"
+              onRefreshProvider={onRefreshProvider}
+              onChange={(nextProvider, nextModel) => {
+                setProvider(nextProvider);
+                setModel(nextModel);
+              }}
+            />
             <Button
-              variant="secondary"
-              disabled={proposing || !description.trim()}
+              disabled={proposing || !description.trim() || !model}
               onClick={() => void propose()}
             >
               {proposing ? 'Proposing…' : 'Propose a rule'}
             </Button>
           </div>
           <p className="text-2xs text-muted-foreground">
-            The model only proposes the file. It opens in the editor above and
-            nothing is saved until you choose Save rule.
+            Review the proposed file before saving it.
           </p>
         </div>
       </SettingsSection>

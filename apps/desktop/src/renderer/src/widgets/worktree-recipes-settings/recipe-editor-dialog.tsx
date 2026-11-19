@@ -187,6 +187,7 @@ export function RecipeEditorDialog({
       messages={messages(field)}
     >
       <Textarea
+        resize="none"
         id={`recipe-${field}`}
         size="md"
         value={values[field]}

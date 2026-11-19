@@ -48,7 +48,7 @@ export function SettingsRow({
   return (
     <div
       className={cn(
-        'flex min-h-14 items-center justify-between gap-4 px-3 py-2.5',
+        'flex min-h-12 items-center justify-between gap-4 px-3 py-2',
         className,
       )}
     >
@@ -57,7 +57,7 @@ export function SettingsRow({
           {title}
         </div>
         {description && (
-          <div className="text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+          <div className="text-2xs leading-4 text-subtle-foreground [overflow-wrap:anywhere]">
             {description}
           </div>
         )}
