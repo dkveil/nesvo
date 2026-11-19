@@ -1201,7 +1201,9 @@ test(
   'Cost reports use local calendar dates and budgets gate only new turns',
   { timeout: 45_000 },
   async t => {
-    const directory = await mkdtemp(join(tmpdir(), 'nesvo-costs-'));
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-costs-')),
+    );
     const path = join(directory, 'nesvo.sqlite');
     const claudeHome = join(directory, 'claude-home');
     const codexHome = join(directory, 'codex-home');
