@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -82,19 +82,21 @@ try {
   );
   browser = await chromium.connectOverCDP(endpoint, { timeout: 10_000 });
   const context = browser.contexts()[0];
-  const page =
-    context.pages()[0] ??
-    (await context.waitForEvent('page', { timeout: 10_000 }));
+  const renderer = /^file:\/\/.*\/app\.asar\/dist\/renderer\/index\.html$/;
+  const readyBy = Date.now() + 30_000;
+  let page;
+  while (!page && Date.now() < readyBy) {
+    if (failure) throw failure;
+    page = context.pages().find(candidate => renderer.test(candidate.url()));
+    if (!page) await delay(50);
+  }
+  assert.ok(page, 'The packaged renderer did not load its application page.');
   await page.waitForFunction(
     () => window.nesvo && document.querySelector('#root')?.childElementCount,
     undefined,
-    { timeout: 10_000 },
+    { timeout: Math.max(1, readyBy - Date.now()) },
   );
   assert.equal(await page.title(), 'Nesvo');
-  assert.match(
-    page.url(),
-    /^file:\/\/.*\/app\.asar\/dist\/renderer\/index\.html$/,
-  );
   const health = await page.evaluate(() => window.nesvo.health());
   assert.equal(health.status, 'ready');
   assert.equal(health.protocolVersion, 1);
@@ -107,6 +109,10 @@ try {
   console.log(`Packaged Nesvo started and stopped on ${process.platform}.`);
 } catch (error) {
   if (stderr) console.error(stderr.trim());
+  const log = await readFile(join(directory, 'logs', 'main.log'), 'utf8').catch(
+    () => '',
+  );
+  if (log) console.error(log.trim().split(/\r?\n/).slice(-8).join('\n'));
   throw error;
 } finally {
   await browser?.close();
