@@ -49,6 +49,10 @@ export function GateRuleRow({
   const { proposal } = row;
   const precedent = row.origin === 'precedent';
   const learned = row.origin === 'mapping' || row.origin === 'route';
+  const sourceLabel =
+    row.origin === 'mapping'
+      ? 'Recorded evidence'
+      : `From your ${row.decisionKind === 'accept' ? 'Approve' : row.decisionKind === 'fix' ? 'Fix' : 'Reject'} ${precedent || learned ? 'decision' : 'comment'}`;
   const label = precedent
     ? 'Decision precedent'
     : row.origin === 'mapping'
@@ -144,13 +148,7 @@ export function GateRuleRow({
               {proposal.body.rule}
             </p>
             <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-              From your{' '}
-              {row.decisionKind === 'accept'
-                ? 'Approve'
-                : row.decisionKind === 'fix'
-                  ? 'Fix'
-                  : 'Reject'}{' '}
-              decision: “{proposal.quote}”
+              {sourceLabel}: “{proposal.quote}”
             </p>
             {proposal.kind === 'check' && (
               <div className="space-y-1 text-xs text-muted-foreground">
