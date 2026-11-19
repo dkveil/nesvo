@@ -30,9 +30,11 @@ import {
   readSetupRecipeSource,
   readSetupFragment,
   replaceSetupProfileFile,
+  setupInboxRuleScope,
   writeNewSetupProfile,
   SetupProfileFileError,
   type LoadedSetupProfile,
+  type SetupInboxRule,
 } from './setup-profile-file';
 import { SetupProfileReviewQueue } from './setup-profile-review-queue';
 
@@ -50,11 +52,15 @@ type Selection = {
   profile: LoadedSetupProfile;
   managed: boolean;
   sessionLimits?: SessionLimits;
+  retiredInboxRules?: SetupInboxRule[];
 };
 type RouteEditorState = {
   path: string;
   text: string;
-  selection?: Pick<Selection, 'managed' | 'sessionLimits'>;
+  selection?: Pick<
+    Selection,
+    'managed' | 'sessionLimits' | 'retiredInboxRules'
+  >;
 };
 
 const allowOnlyProfile = (verb: string, requested: ConfigurationTarget) => {
@@ -110,15 +116,39 @@ export function managedSessionLimits(database: DatabaseSync): SessionLimits {
   );
 }
 
-export function managedGlobalInboxRules(database: DatabaseSync) {
-  const profile = activeProfileSelection(database)?.profile;
-  return (profile?.inboxRules ?? []).filter(
-    ({ value }) =>
-      'disabled' in value ||
-      (value.scope.kind === 'global' &&
-        value.definition.action === 'route' &&
-        value.definition.name === value.id),
-  );
+export function managedInboxRules(database: DatabaseSync) {
+  const selection = activeProfileSelection(database);
+  return [
+    ...(selection?.profile.inboxRules ?? []),
+    ...(selection?.retiredInboxRules ?? []),
+  ];
+}
+
+function retainInboxRuleOwnership(
+  previous: Selection | null | undefined,
+  desired: LoadedSetupProfile,
+) {
+  const key = (entry: SetupInboxRule) =>
+    JSON.stringify([entry.value.id, setupInboxRuleScope(entry)]);
+  const active = new Set((desired.inboxRules ?? []).map(key));
+  const retired = new Map<string, SetupInboxRule>();
+  for (const entry of [
+    ...(previous?.profile.inboxRules ?? []),
+    ...(previous?.retiredInboxRules ?? []),
+  ]) {
+    if (active.has(key(entry))) continue;
+    retired.set(key(entry), {
+      ...entry,
+      value: { id: entry.value.id, disabled: true },
+      maskedScope: setupInboxRuleScope(entry),
+    });
+  }
+  if (retired.size > 192)
+    throw new ConfigurationRefusal(
+      'invalid-request',
+      'This profile has reached the limit for retired Inbox rule bindings.',
+    );
+  return [...retired.values()];
 }
 
 export function withProfileUsageWarning(
@@ -598,6 +628,9 @@ export class SetupProfileService {
                         previous?.sessionLimits,
                         loaded.sessionControl,
                       ),
+                  retiredInboxRules: restore
+                    ? oldSelection?.retiredInboxRules
+                    : retainInboxRuleOwnership(previous, loaded),
                 }
               : null;
             return {
@@ -717,6 +750,7 @@ export class SetupProfileService {
                 selection: {
                   managed: current.selection.managed,
                   sessionLimits: current.selection.sessionLimits,
+                  retiredInboxRules: current.selection.retiredInboxRules,
                 },
               }
             : {}),
@@ -789,6 +823,10 @@ export class SetupProfileService {
                   current.selection?.sessionLimits,
                   preview.sessionControl,
                 ),
+                retiredInboxRules: retainInboxRuleOwnership(
+                  current.selection,
+                  preview,
+                ),
               };
             if (
               draft.kind === 'route' &&
@@ -846,6 +884,9 @@ export class SetupProfileService {
               sessionLimits: replacement?.selection
                 ? replacement.selection.sessionLimits
                 : current.selection?.sessionLimits,
+              retiredInboxRules: replacement?.selection
+                ? replacement.selection.retiredInboxRules
+                : current.selection?.retiredInboxRules,
             });
           },
         });

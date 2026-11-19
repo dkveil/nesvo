@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { inboxRuleFieldsSchema, inboxSettingsSchema } from './inbox-rules';
+import { repositoryPatternSchema } from './repository-identity';
 import { providerSchema, SESSION_BRANCH_PATTERN } from './sessions';
 
 const id = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
@@ -166,15 +167,24 @@ const source = z.strictObject({
   destination: z.enum(['session', 'inbox']),
   watcher: command.optional(),
 });
-const inboxRule = z.strictObject({
-  id,
-  scope: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('global') }),
-    z.strictObject({ kind: z.literal('project'), repository: repo }),
-  ]),
-  order: z.number().int().min(0).max(999),
-  definition: inboxRuleFieldsSchema,
-});
+const inboxRuleScope = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('global') }),
+  z.strictObject({
+    kind: z.literal('project'),
+    repository: repositoryPatternSchema,
+  }),
+]);
+const inboxRule = z
+  .strictObject({
+    id,
+    scope: inboxRuleScope,
+    order: z.number().int().min(0).max(999),
+    definition: inboxRuleFieldsSchema,
+  })
+  .refine(rule => rule.id === rule.definition.name, {
+    path: ['definition', 'name'],
+    message: 'Use the same stable ID as the Inbox rule name.',
+  });
 const limit = z.strictObject({
   id,
   provider: providerSchema,

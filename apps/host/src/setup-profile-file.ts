@@ -43,6 +43,16 @@ type Entry = { id: string; disabled?: true; name?: string };
 type InboxRuleEntry = NonNullable<
   NonNullable<SetupProfileDocument['inbox']>['rules']
 >[number];
+export type SetupInboxRuleScope = Exclude<
+  InboxRuleEntry,
+  { disabled: true }
+>['scope'];
+export type SetupInboxRule = {
+  value: InboxRuleEntry;
+  source: string;
+  digest: string;
+  maskedScope?: SetupInboxRuleScope;
+};
 
 export class SetupProfileFileError extends Error {
   constructor(
@@ -239,7 +249,7 @@ export type LoadedSetupProfile = {
   routeSource: string | null;
   routeWritePath: string;
   sessionControl?: SetupProfileDocument['sessionControl'];
-  inboxRules?: Array<{ value: InboxRuleEntry; source: string; digest: string }>;
+  inboxRules?: SetupInboxRule[];
   usageLimits?: SetupProfileDocument['limits'];
   portable?: SetupProfileDocument;
 };
@@ -434,10 +444,7 @@ function mergeProfile(
   let route: Route | null = null;
   let routeSource: string | null = null;
   let sessionControl: SetupProfileDocument['sessionControl'];
-  const inboxRules = new Map<
-    string,
-    { value: InboxRuleEntry; source: string; digest: string }
-  >();
+  const inboxRules = new Map<string, SetupInboxRule>();
   const usageLimits = new Map<
     string,
     NonNullable<SetupProfileDocument['limits']>[number]
@@ -454,12 +461,17 @@ function mergeProfile(
     const value: SetupProfileDocument = layer.value;
     for (const key of setupProfileCollectionKeys) add(layer, key, value[key]);
     add(layer, 'inbox.rules', value.inbox?.rules);
-    for (const rule of value.inbox?.rules ?? [])
+    for (const rule of value.inbox?.rules ?? []) {
+      const previous = inboxRules.get(rule.id);
       inboxRules.set(rule.id, {
         value: rule,
         source: layer.path,
         digest: sha(JSON.stringify(rule)),
+        ...('disabled' in rule && previous
+          ? { maskedScope: setupInboxRuleScope(previous) }
+          : {}),
       });
+    }
     for (const limit of value.limits ?? []) usageLimits.set(limit.id, limit);
     if (value.inbox?.defaultRoute !== undefined) {
       route = value.inbox.defaultRoute;
@@ -530,11 +542,7 @@ function mergeProfile(
         'effect' in value &&
         value.effect === 'warn' &&
         (!('account' in value) || value.account === 'default')) ||
-      (rule &&
-        !('disabled' in rule) &&
-        rule.scope.kind === 'global' &&
-        rule.definition.action === 'route' &&
-        rule.definition.name === rule.id);
+      (rule && !('disabled' in rule));
     overrides.set(key, {
       key,
       source: entry.source,
@@ -590,4 +598,12 @@ function mergeProfile(
       ),
     ),
   };
+}
+
+export function setupInboxRuleScope(
+  entry: SetupInboxRule,
+): SetupInboxRuleScope {
+  return 'disabled' in entry.value
+    ? (entry.maskedScope ?? { kind: 'global' })
+    : entry.value.scope;
 }

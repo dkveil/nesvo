@@ -470,7 +470,7 @@ export function InboxRulesSettings({
                   onClick={onViewProfile}
                   disabled={!onViewProfile}
                 >
-                  View in Your setup
+                  Edit profile setting
                 </Button>
               ) : (
                 <div className="flex items-center gap-1.5">

@@ -24,6 +24,7 @@ import {
   type InboxRuleEntry,
   type InboxRuleIssue,
   type InboxRuleScope,
+  type RepositoryIdentity,
   type InboxRuleSessionKind,
   type InboxRuleTrigger,
   type InboxSettings,
@@ -56,6 +57,11 @@ import type {
 } from '../workflows/runner';
 import { hostResult } from '../workflows/steps/host-result';
 import { hasIsolatedWorkflowsRoot } from '../workflows/definitions';
+import { setupInboxRuleScope, type SetupInboxRule } from '../setup-profile-file';
+import {
+  inspectRepositoryIdentity,
+  matchesRepositoryPattern,
+} from '../repositories/identity';
 import {
   absentConfigurationVersion,
   configurationHash,
@@ -114,6 +120,10 @@ export type InboxRulesPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<string>;
+  profileProjectTrusted: (
+    identity: RepositoryIdentity,
+    provider: Session['provider'] | null,
+  ) => boolean;
   projectRoot: (directory: string, signal: AbortSignal) => Promise<string>;
   changes: (sessionId: string, signal: AbortSignal) => Promise<SessionChanges>;
   group: (groupId: string) => SessionGroup | undefined;
@@ -332,6 +342,7 @@ export class InboxRules {
           );
         const root = project ? projectRulesRoot(anchor) : globalRulesRoot();
         const access = async () => {
+          await this.assertManualRule(target.name, project, signal);
           if (
             !recovery &&
             project &&
@@ -349,7 +360,6 @@ export class InboxRules {
           signal,
           access,
           (file, identity, write) => {
-            if (!project) this.assertManualRule(target.name);
             const current = file?.text ?? null;
             const value: ConfigurationValue | null =
               current === null ? null : { kind: 'markdown', document: current };
@@ -574,18 +584,16 @@ export class InboxRules {
     if (directory) {
       const root = await this.ports.projectRoot(directory, signal);
       projectRoot = projectRulesRoot(root);
-      project = await readRuleRoot(projectRoot, 'project', signal, issues);
-      if (project.length)
-        trust = (await this.projectTrusted(directory, null, signal))
-          ? 'trusted'
-          : 'untrusted';
+      const rules = await this.readProjectRules(root, null, signal, issues);
+      project = rules.files;
+      trust = rules.trust;
     }
     const entry = (file: RuleFile): InboxRuleEntry => {
       const inactiveReason = !file.rule
         ? 'The rule has errors.'
         : !file.rule.enabled
           ? 'Disabled.'
-          : file.scope === 'project' && trust !== 'trusted'
+          : file.scope === 'project' && !file.fromProfile && trust !== 'trusted'
             ? 'Waiting for repository trust. Project rules apply after you trust this repository.'
             : null;
       return {
@@ -632,11 +640,11 @@ export class InboxRules {
   }
 
   async save(input: SaveInboxRuleInput, signal: AbortSignal) {
-    if (input.scope === 'global') {
-      const name = parseRuleText(input.text, '').name;
-      this.assertManualRule(name);
-      if (input.previousName) this.assertManualRule(input.previousName);
-    }
+    const directory = input.scope === 'project' ? input.directory : null;
+    const name = parseRuleText(input.text, '').name;
+    await this.assertManualRule(name, directory, signal);
+    if (input.previousName)
+      await this.assertManualRule(input.previousName, directory, signal);
     const root = await this.rootFor(input.scope, input.directory, signal);
     await writeRuleFile(
       root,
@@ -652,7 +660,11 @@ export class InboxRules {
     input: { scope: InboxRuleScope; directory?: string; name: string; expectedHash: string },
     signal: AbortSignal,
   ) {
-    if (input.scope === 'global') this.assertManualRule(input.name);
+    await this.assertManualRule(
+      input.name,
+      input.scope === 'project' ? input.directory : null,
+      signal,
+    );
     const root = await this.rootFor(input.scope, input.directory, signal);
     await deleteRuleFile(root, input.name, input.expectedHash, signal);
     return this.catalog(input.directory, signal);
@@ -715,23 +727,13 @@ export class InboxRules {
       let project: RuleFile[] = [];
       try {
         const root = await this.ports.projectRoot(session.directory, signal);
-        project = await readRuleRoot(
-          projectRulesRoot(root),
-          'project',
-          signal,
-          issues,
-        );
-        if (
-          project.length &&
-          !(await this.projectTrusted(
-            session.directory,
-            session.provider,
-            signal,
-          ))
-        ) {
-          this.skippedProject.set(key, project.length);
-          project = [];
-        } else this.skippedProject.delete(key);
+        const scoped = await this.readProjectRules(root, session.provider, signal, issues);
+        project = scoped.trust === 'trusted'
+          ? scoped.files
+          : scoped.files.filter(file => file.fromProfile);
+        const skipped = scoped.files.length - project.length + scoped.withheld;
+        if (skipped) this.skippedProject.set(key, skipped);
+        else this.skippedProject.delete(key);
       } catch {
         this.skippedProject.set(key, -1);
         project = [];
@@ -743,23 +745,88 @@ export class InboxRules {
     return rules;
   }
 
-  private assertManualRule(name: string) {
-    if (this.ports.store.profileRules().some(entry => entry.value.id === name))
+  private async assertManualRule(
+    name: string,
+    directory: string | null | undefined,
+    signal: AbortSignal,
+  ) {
+    const candidates = this.ports.store.profileRules().filter(entry => entry.value.id === name);
+    const global = directory === null;
+    const managed = global
+      ? candidates.some(entry => setupInboxRuleScope(entry).kind === 'global')
+      : directory && candidates.length > 0 &&
+        this.matchProjectRules(
+          candidates,
+          await inspectRepositoryIdentity(directory, signal),
+        ).length > 0;
+    if (managed)
       throw new InboxRuleFileError('busy', 'This Inbox rule is managed by the profile. Edit it in Your setup.');
+  }
+
+  private matchProjectRules(profile: SetupInboxRule[], identity: RepositoryIdentity) {
+    if (identity.status !== 'remote') return [];
+    return profile.filter(entry => {
+      const scope = setupInboxRuleScope(entry);
+      return scope.kind === 'project' && matchesRepositoryPattern(scope.repository, identity.remote);
+    });
+  }
+
+  private async readProjectRules(
+    root: string,
+    provider: Session['provider'] | null,
+    signal: AbortSignal,
+    issues: InboxRuleIssue[],
+  ) {
+    const manual = await readRuleRoot(projectRulesRoot(root), 'project', signal, issues);
+    const trust = manual.length === 0
+      ? 'none'
+      : await this.projectTrusted(root, provider, signal)
+        ? 'trusted'
+        : 'untrusted';
+    const candidates = this.ports.store.profileRules().filter(entry => setupInboxRuleScope(entry).kind === 'project');
+    if (!candidates.length) return { files: manual, trust, withheld: 0 } as const;
+    const identity = await inspectRepositoryIdentity(root, signal);
+    const profile = this.matchProjectRules(candidates, identity);
+    if (!profile.length || !this.ports.profileProjectTrusted(identity, provider)) {
+      if (profile.length)
+        issues.push({
+          severity: 'warning',
+          path: profile[0]!.source,
+          line: null,
+          message: 'Review repository identity trust to use its profile Inbox rules.',
+        });
+      return { files: manual, trust, withheld: profile.length } as const;
+    }
+    return {
+      files: this.mergeProfileRules(manual, profile, 'project', trust === 'trusted'),
+      trust,
+      withheld: 0,
+    } as const;
   }
 
   private async readGlobalRules(signal: AbortSignal, issues: InboxRuleIssue[]) {
     const manual = await readRuleRoot(globalRulesRoot(), 'global', signal, issues);
-    const profile = this.ports.store.profileRules();
+    const profile = this.ports.store.profileRules().filter(entry => setupInboxRuleScope(entry).kind === 'global');
+    return this.mergeProfileRules(manual, profile, 'global', true);
+  }
+
+  private mergeProfileRules(
+    manual: RuleFile[],
+    profile: SetupInboxRule[],
+    scope: InboxRuleScope,
+    preserveManualRestrictions: boolean,
+  ) {
     const managedIds = new Set(profile.map(entry => entry.value.id));
-    const restrictiveIds = new Set(manual.filter(file => file.rule?.action !== 'route').map(file => file.name));
+    const restrictiveIds = new Set(preserveManualRestrictions
+      ? manual.filter(file => file.rule?.action !== 'route').map(file => file.name)
+      : []);
     const projected = profile.flatMap(({ value, source, digest }): Array<{ order: number; file: RuleFile }> => {
       if ('disabled' in value || restrictiveIds.has(value.id)) return [];
       const { body, ...frontmatter } = value.definition;
       return [{
         order: value.order,
         file: {
-          scope: 'global',
+          scope,
           name: value.id,
           path: source,
           text: '---\n' + dump(frontmatter, {noRefs: true}) + '---\n' + body,

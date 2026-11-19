@@ -747,6 +747,15 @@ export const serveHost = ({
             },
             repositoryStatus: (provider, folder, signal) =>
               mcpPolicy.repositoryStatus(provider, folder, signal),
+            profileProjectTrusted: (identity, provider) =>
+              (provider
+                ? [provider]
+                : (['Claude Code', 'Codex'] as const)
+              ).some(
+                candidate =>
+                  mcpPolicy.repositoryTrust.resolve(identity, candidate)
+                    .state === 'eligible',
+              ),
             projectRoot: (folder, signal) => findProjectRoot(folder, signal),
             changes: (sessionId, signal) =>
               sessionChanges.read({ sessionId }, signal),

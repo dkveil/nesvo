@@ -2723,6 +2723,138 @@ test('a profile restricts session control and undo restores the manual policy', 
   }
 });
 
+test('profile Inbox rules use verified repository scopes and retire transferred entries', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-rules-')),
+  );
+  const file = join(root, 'profile.yaml');
+  const project = join(root, 'project');
+  const other = join(root, 'other');
+  const data = join(root, 'data');
+  const git = promisify(execFile);
+  const rule = (id, scope, route) => ({
+    id,
+    scope,
+    order: 1,
+    definition: { name: id, trigger: 'external', action: 'route', route },
+  });
+  const document = {
+    version: 1,
+    inbox: {
+      rules: [
+        rule(
+          'project-route',
+          { kind: 'project', repository: 'example.test/team/*' },
+          'parent',
+        ),
+        rule('shared-route', { kind: 'global' }, 'inbox'),
+      ],
+    },
+  };
+  for (const [directory, remote] of [
+    [project, 'team/app'],
+    [other, 'other/app'],
+  ]) {
+    await mkdir(directory);
+    await git('git', ['-C', directory, 'init', '-q']);
+    await git('git', [
+      '-C',
+      directory,
+      'remote',
+      'add',
+      'origin',
+      'https://example.test/' + remote + '.git',
+    ]);
+  }
+  await mkdir(data);
+  await writeFile(file, JSON.stringify(document));
+  const host = launch(data, join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_PROFILE_PATH: file,
+    NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+  });
+  const apply = async () => {
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    const { result } = await host.request('setup-profile', {
+      action: 'apply',
+      file,
+      instanceId: review.instanceId,
+      revision: review.revision,
+      effectiveRevision: review.effectiveRevision,
+      actionId: randomUUID(),
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+  };
+  const catalog = async directory =>
+    (await host.request('list-inbox-rules', { directory })).catalog;
+  try {
+    await apply();
+    const before = await catalog(project);
+    assert.deepEqual(
+      before.rules.map(entry => entry.name),
+      ['shared-route'],
+    );
+    assert.ok(
+      before.issues.some(issue => /identity trust/.test(issue.message)),
+    );
+    const { settings } = await host.request('repository-trust-settings', {
+      action: 'add-pattern',
+      pattern: 'example.test/team/*',
+      actionId: randomUUID(),
+    });
+    const source = (await catalog(project)).rules.find(
+      entry => entry.name === 'project-route',
+    );
+    assert.equal(source?.fromProfile, true);
+    assert.equal(source?.active, true);
+    assert.equal(source?.rule.route, 'parent');
+    assert.deepEqual(
+      (await catalog(other)).rules.map(entry => entry.name),
+      ['shared-route'],
+    );
+    const manual = await host.request('save-inbox-rule', {
+      scope: 'project',
+      directory: project,
+      expectedHash: null,
+      text: source.text,
+    });
+    assert.equal(manual.type, 'error');
+    document.inbox.rules.shift();
+    await writeFile(file, JSON.stringify(document));
+    await apply();
+    assert.deepEqual(
+      (await catalog(project)).rules.map(entry => entry.name),
+      ['shared-route'],
+    );
+    assert.equal(
+      (
+        await host.request('save-inbox-rule', {
+          scope: 'project',
+          directory: project,
+          expectedHash: null,
+          text: source.text,
+        })
+      ).type,
+      'error',
+    );
+    assert.equal(
+      (
+        await host.request('repository-trust-settings', {
+          action: 'revoke',
+          actionId: randomUUID(),
+          ruleId: settings.rules[0].id,
+        })
+      ).type,
+      'repository-trust-settings',
+    );
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('setup profiles expose ordinary Inbox rules, templates and paused desired automation', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-profile-values-')),

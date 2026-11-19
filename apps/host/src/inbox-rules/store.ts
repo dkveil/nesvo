@@ -1,7 +1,7 @@
 import { inboxItemSchema, type InboxItem } from '@nesvo/contracts';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { managedGlobalInboxRules, managedSetupRoute } from '../setup-profile-service';
+import { managedInboxRules, managedSetupRoute } from '../setup-profile-service';
 
 const KEPT_DECIDED_ITEMS = 300;
 
@@ -85,7 +85,7 @@ export class InboxItemStore {
     return managedSetupRoute(this.database);
   }
   profileRules() {
-    return managedGlobalInboxRules(this.database);
+    return managedInboxRules(this.database);
   }
   constructor(private readonly database: DatabaseSync) {}
 

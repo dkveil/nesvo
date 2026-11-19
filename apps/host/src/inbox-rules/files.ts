@@ -426,6 +426,7 @@ export async function withConfigRuleFile<T>(
         );
     };
     return use(file, rootIdentity, async (text, authorize) => {
+      await access();
       await check();
       if (text === null) {
         authorize();
