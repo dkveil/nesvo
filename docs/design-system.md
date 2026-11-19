@@ -12,9 +12,9 @@ The development build lists **Settings → Development → Components**, a catal
 - [ ] Keep headings and hero text modest. Prefer smaller steps on the type scale.
 - [ ] Use `shared/ui` components and design tokens for controls and styling.
 - [ ] Align row controls and icons to the centre line. Align text baselines across columns and use the same height and vertical spacing for equivalent rows.
-- [ ] Lay out flat rows on the canvas with subtle dividers. Keep session groups, details docks and conversation sections free of decorative fills and outer borders. Use `code-background` for code and terminal output.
+- [ ] Lay out flat rows on the canvas with subtle dividers. Keep Settings groups, session groups, details docks and conversation sections free of decorative fills and outer borders. Use the darkest neutral surface token for necessary fills (`info-panel` in dark mode) and `code-background` for code and terminal output.
 - [ ] Use the same solid surface for session popovers and dialogs.
-- [ ] Keep section spacing consistent and align the message, activity and composer column edges.
+- [ ] Keep section spacing consistent and layout anchors stable when moving between steps or pages. Align the message, activity and composer column edges.
 - [ ] Use one button variant per role and the same label for the same action.
 - [ ] Use pickers for known choices and keep prompt fields non-resizable.
 - [ ] Size and align icons consistently.
