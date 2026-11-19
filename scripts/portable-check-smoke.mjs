@@ -74,16 +74,42 @@ export async function smokePortableCheck({
   await saveManifest(typescript, false);
   await write(typescript, 'balance.test.ts', testScript(false));
 
+  const start = async folder => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        return await page.evaluate(
+          directory =>
+            window.nesvo.workflows.runSteps('local', {
+              directory,
+              specPath: 'nesvo-task.md',
+            }),
+          folder,
+        );
+      } catch (error) {
+        if (
+          !String(error).includes(
+            'This computer is offline or still synchronizing. Connect before sending a command.',
+          )
+        )
+          throw error;
+        await delay(200);
+      }
+    }
+    const computers = await page.evaluate(() => window.nesvo.listComputers());
+    assert.fail(
+      'The local host kept refusing to dispatch the portable check. ' +
+        JSON.stringify(
+          computers.map(({ id, status, lastError }) => ({
+            id,
+            status,
+            lastError,
+          })),
+        ),
+    );
+  };
   const run = async (folder, expected) => {
     await write(folder, 'nesvo-task.md', empty);
-    const started = await page.evaluate(
-      directory =>
-        window.nesvo.workflows.runSteps('local', {
-          directory,
-          specPath: 'nesvo-task.md',
-        }),
-      folder,
-    );
+    const started = await start(folder);
     const deadline = Date.now() + 120000;
     do {
       const detail = await page.evaluate(
@@ -184,6 +210,17 @@ export async function smokePortableCheck({
     'test',
   );
   await editor.getByLabel('Acceptance criteria').waitFor();
+  const inspector = editor.getByRole('complementary', { name: 'Inspector' });
+  assert.equal(await inspector.getAttribute('data-slot'), 'side-panel');
+  await inspector
+    .getByRole('button', { name: 'Close inspector', exact: true })
+    .waitFor();
+  assert.equal(
+    await inspector.evaluate(node =>
+      node.style.getPropertyValue('--panel-width'),
+    ),
+    '320px',
+  );
   await editor.getByRole('button', { name: 'Fit graph', exact: true }).click();
   await screenshots('check-step-inspector');
   await lastRun.click();
