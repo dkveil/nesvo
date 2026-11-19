@@ -164,7 +164,7 @@ export function BudgetDialog({
         if (!open && !saving) onClose();
       }}
     >
-      <DialogContent surface="panel" showCloseButton={!saving}>
+      <DialogContent showCloseButton={!saving}>
         <DialogHeader>
           <DialogTitle>
             {removing

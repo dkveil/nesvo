@@ -141,7 +141,6 @@ export function ProfileForm({
             statuses={statuses}
             showEffort={false}
             includeDefault
-            surface="panel"
             disabled={pending}
             triggerLabel="Choose reviewer model"
             onRefreshProvider={onRefreshProvider}

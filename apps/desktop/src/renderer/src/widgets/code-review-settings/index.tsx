@@ -309,7 +309,6 @@ export function CodeReviewSettings({
         )}
       </SettingsSection>
       <ConfirmDialog
-        surface="panel"
         open={!!removing}
         onOpenChange={next => {
           if (!next) setRemoving(null);

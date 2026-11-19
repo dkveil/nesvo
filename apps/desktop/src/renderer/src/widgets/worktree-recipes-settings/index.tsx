@@ -184,7 +184,6 @@ export function WorktreeRecipesSettings({
         />
       )}
       <ConfirmDialog
-        surface="panel"
         open={!!deleting}
         onOpenChange={open => {
           if (!open) setDeleting(null);

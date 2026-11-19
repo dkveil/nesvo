@@ -210,7 +210,6 @@ export function RecipeEditorDialog({
       }}
     >
       <DialogContent
-        surface="panel"
         showCloseButton={!pending}
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
       >

@@ -92,7 +92,7 @@ export function ProviderUsage({
         side={popoverSide}
         align={popoverSide === 'top' ? 'start' : 'end'}
         sideOffset={10}
-        surface="panel"
+        surface="solid"
         size="md"
         scroll
         aria-label="Account and limits"

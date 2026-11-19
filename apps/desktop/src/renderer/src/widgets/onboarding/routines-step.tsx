@@ -341,10 +341,7 @@ export function RoutinesStep({
             if (!open) setPrerequisite(null);
           }}
         >
-          <DialogContent
-            surface="panel"
-            className="max-h-[80dvh] overflow-y-auto"
-          >
+          <DialogContent className="max-h-[80dvh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle size="sm">
                 {prerequisite === 'reviewer'
@@ -372,7 +369,6 @@ export function RoutinesStep({
         open={confirming}
         onOpenChange={setConfirming}
         tone="default"
-        surface="panel"
         title="Add the pre-push gates workflow?"
         description="Save one editable workflow and its four steps to .agents/workflows in the selected project."
         confirmLabel="Write files"

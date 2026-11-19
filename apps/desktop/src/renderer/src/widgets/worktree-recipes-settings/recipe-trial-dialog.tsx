@@ -109,10 +109,7 @@ export function RecipeTrialDialog({
   );
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent
-        surface="panel"
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
-      >
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle size="sm">Test {recipe.name}</DialogTitle>
           <DialogDescription>

@@ -229,7 +229,6 @@ export function MobileAccess({ api }: Props) {
         </>
       )}
       <ConfirmDialog
-        surface="panel"
         open={!!revoking}
         onOpenChange={open => {
           if (!open) setRevoking(null);

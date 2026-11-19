@@ -264,7 +264,6 @@ export function ProviderProfileSettings({
         )}
       </SettingsSection>
       <ConfirmDialog
-        surface="panel"
         open={removing}
         onOpenChange={setRemoving}
         title={`Remove ${selected?.label ?? 'account'}?`}

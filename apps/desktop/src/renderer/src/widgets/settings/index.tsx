@@ -99,7 +99,7 @@ export function Settings({
             search.current?.focus();
           }
         }}
-        className="flex h-[min(54rem,calc(100dvh-2rem))] w-[min(72rem,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden bg-background p-0 sm:max-w-none"
+        className="flex h-[min(54rem,calc(100dvh-2rem))] w-[min(72rem,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden p-0 sm:max-w-none"
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription id="settings-description" className="sr-only">

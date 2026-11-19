@@ -530,7 +530,6 @@ export function InboxRulesSettings({
               statuses={statuses}
               showEffort={false}
               includeDefault
-              surface="panel"
               triggerLabel="Choose proposal model"
               onRefreshProvider={onRefreshProvider}
               onChange={(nextProvider, nextModel) => {
@@ -573,7 +572,6 @@ export function InboxRulesSettings({
         })}
       </SettingsSection>
       <ConfirmDialog
-        surface="panel"
         open={!!removing}
         onOpenChange={open => {
           if (!open) setRemoving(null);

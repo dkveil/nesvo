@@ -368,7 +368,6 @@ export function ManageComputers({
         )}
       </div>
       <ConfirmDialog
-        surface="panel"
         open={!!removing}
         onOpenChange={open => {
           if (!open) setRemoving(null);
