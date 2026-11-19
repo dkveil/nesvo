@@ -6,8 +6,19 @@ export type {
   DecideReviewInput,
 } from '@nesvo/contracts';
 
+export function resultReason(review: Review): string {
+  const count = review.diff.files.length;
+  if (count) return `Changed ${count} ${count === 1 ? 'file' : 'files'}`;
+  if (review.reason === 'worker' || review.role === 'worker')
+    return 'Worker result ready for review';
+  if (review.reason === 'workflow') return 'Workflow result ready for review';
+  if (review.reason === 'policy') return 'Review required by policy';
+  return 'Saved result ready for review';
+}
+
 export const reviewStatusLabels: Record<Review['status'], string> = {
   pending: 'Pending',
+  done: 'Done',
   accepted: 'Accepted',
   'changes-requested': 'Changes requested',
   rejected: 'Rejected',

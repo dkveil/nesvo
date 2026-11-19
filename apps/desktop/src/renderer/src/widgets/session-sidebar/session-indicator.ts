@@ -1,4 +1,8 @@
-import type { WorkflowRunStatus } from '@nesvo/contracts';
+import {
+  pendingStageQuestion,
+  pendingTurnQuestion,
+  type WorkflowRunStatus,
+} from '@nesvo/contracts';
 import type { Session } from '@/entities/session';
 import type { WorkflowRun } from '@/entities/workflow';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
@@ -18,6 +22,7 @@ type SessionIndicatorInput = {
   run: WorkflowRun | undefined;
   offline: boolean;
   awaitsReview: boolean;
+  needsDecision: boolean;
   now: number;
 };
 
@@ -57,6 +62,12 @@ const runIndicators: Record<
 };
 
 function decisionLabel(session: Session) {
+  if (session.plan?.status === 'plan-ready')
+    return 'Plan waiting for your approval';
+  if (pendingStageQuestion(session) || pendingTurnQuestion(session))
+    return 'Question for you';
+  if (session.parentRequest) return 'Session link waiting for your approval';
+  if (session.coordinatorWait) return 'Coordinator waiting to continue';
   if (session.status === 'running' && session.pendingApprovals.length > 0)
     return 'Waiting for your approval';
   const current = session.delegations.filter(
@@ -117,6 +128,7 @@ export function sessionIndicator({
   run,
   offline,
   awaitsReview,
+  needsDecision,
   now,
 }: SessionIndicatorInput): SessionIndicator {
   if (offline) return { state: 'offline', label: 'Offline', needsYou: false };
@@ -128,10 +140,8 @@ export function sessionIndicator({
       : sessionState(session, now);
   if (base.state === 'attention') return { ...base, needsYou: true };
   if (awaitsReview)
-    return {
-      state: base.state,
-      label: 'Result waiting for your review',
-      needsYou: true,
-    };
+    return { state: 'attention', label: 'Result to review', needsYou: true };
+  if (needsDecision)
+    return { state: 'attention', label: 'Decision needed', needsYou: true };
   return { ...base, needsYou: false };
 }

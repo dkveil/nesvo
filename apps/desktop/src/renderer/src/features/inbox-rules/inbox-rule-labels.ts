@@ -13,6 +13,9 @@ const triggerLabels: Record<HostedInboxItem['trigger'], string> = {
   'files-changed': 'Files changed',
   'run-cost': 'Run cost',
   external: 'External',
+  'decision-needed': 'Decision needed',
+  'question-for-you': 'Question for you',
+  'result-to-review': 'Review every result',
 };
 
 const statusLabels: Record<HostedInboxItem['status'], string> = {

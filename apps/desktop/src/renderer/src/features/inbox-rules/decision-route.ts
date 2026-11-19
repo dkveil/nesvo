@@ -2,7 +2,10 @@ import type { DecisionRoute, SessionGroup } from '@nesvo/contracts';
 import type { Session } from '@/entities/session';
 
 export const resolveDecisionRoute = (
-  session: Pick<Session, 'decisionRoute' | 'groupId' | 'parentId'>,
+  session: Pick<
+    Session,
+    'decisionRoute' | 'decisionRouteOverride' | 'groupId' | 'parentId'
+  >,
   groups: readonly Pick<SessionGroup, 'id' | 'defaults'>[],
   fallback: DecisionRoute,
 ): DecisionRoute => {
@@ -10,5 +13,10 @@ export const resolveDecisionRoute = (
   const group = session.groupId
     ? groups.find(candidate => candidate.id === session.groupId)
     : undefined;
-  return session.decisionRoute ?? group?.defaults.decisionRoute ?? fallback;
+  return (
+    session.decisionRouteOverride ??
+    session.decisionRoute ??
+    group?.defaults.decisionRoute ??
+    fallback
+  );
 };

@@ -17,6 +17,7 @@ export function LessonRow({
   today,
   hostId,
   computerName,
+  inboxContext,
   onSession,
   metrics,
   children,
@@ -25,6 +26,7 @@ export function LessonRow({
   today: string;
   hostId: string;
   computerName?: string;
+  inboxContext?: { id: string; title: string } | null;
   onSession: (sessionKey: string) => void;
   metrics?: ReactNode;
   children: ReactNode;
@@ -38,6 +40,21 @@ export function LessonRow({
       data-lesson-key={lesson.key}
     >
       <div className="min-w-0 space-y-1">
+        {inboxContext && (
+          <Button
+            variant="link"
+            size="inline"
+            onClick={() => onSession(hostKey(inboxContext.id, hostId))}
+          >
+            {inboxContext.title}
+            <ArrowUpRight />
+          </Button>
+        )}
+        {inboxContext !== undefined && (
+          <p className="text-2xs text-muted-foreground">
+            {due ? 'Lesson due for review' : 'Proposes a lesson to keep'}
+          </p>
+        )}
         <div className="flex min-w-0 items-center gap-2">
           <p
             className="min-w-0 truncate text-ui font-medium"

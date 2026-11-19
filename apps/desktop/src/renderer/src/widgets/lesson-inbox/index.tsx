@@ -12,6 +12,7 @@ import {
   useLessonOverview,
   type LessonApi,
 } from '@/features/lessons';
+import type { Session } from '@/entities/session';
 import { LessonRow } from '@/features/lessons/lesson-row';
 import { Button } from '@/shared/ui/button';
 import { SectionLabel } from '@/shared/ui/section-label';
@@ -19,12 +20,14 @@ import { StatusMessage } from '@/shared/ui/status-message';
 
 type LessonInboxProps = {
   computers: Computer[];
+  sessions: Session[];
   api: LessonApi;
   onSession: (sessionKey: string) => void;
 };
 
 type LessonTableProps = {
   computer: Computer;
+  sessions: Session[];
   api: LessonApi;
   showLocation: boolean;
   onSession: (sessionKey: string) => void;
@@ -32,6 +35,7 @@ type LessonTableProps = {
 
 function LessonTable({
   computer,
+  sessions,
   api,
   showLocation,
   onSession,
@@ -81,6 +85,11 @@ function LessonTable({
       <div className="divide-y">
         {rows.map(lesson => {
           const due = lessonIsDue(lesson, today);
+          const source = lesson.evidence.find(item => item.sessionId);
+          const session = sessions.find(
+            item =>
+              item.hostId === computer.id && item.id === source?.sessionId,
+          );
           return (
             <LessonRow
               key={lesson.key}
@@ -88,6 +97,7 @@ function LessonTable({
               today={today}
               hostId={computer.id}
               computerName={showLocation ? computer.name : undefined}
+              inboxContext={session ?? null}
               onSession={onSession}
             >
               <Button
@@ -131,7 +141,12 @@ function LessonTable({
   );
 }
 
-export function LessonInbox({ computers, api, onSession }: LessonInboxProps) {
+export function LessonInbox({
+  computers,
+  sessions,
+  api,
+  onSession,
+}: LessonInboxProps) {
   const ready = computers.filter(
     computer =>
       computer.status === 'connected' &&
@@ -143,6 +158,7 @@ export function LessonInbox({ computers, api, onSession }: LessonInboxProps) {
         <LessonTable
           key={`${computer.id}:${computer.instanceId ?? ''}`}
           computer={computer}
+          sessions={sessions}
           api={api}
           showLocation={ready.length > 1 || computer.id !== 'local'}
           onSession={onSession}

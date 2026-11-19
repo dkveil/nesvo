@@ -71,6 +71,7 @@ type Props = {
 };
 
 const reviewStates: Record<Review['status'], string> = {
+  done: 'Done',
   pending: 'Waiting for acceptance',
   accepted: 'Accepted',
   'changes-requested': 'Corrected',

@@ -1,3 +1,4 @@
+import { pendingStageQuestion, pendingTurnQuestion } from '@nesvo/contracts';
 import type {
   DesktopReview,
   DesktopSession as Session,
@@ -40,6 +41,10 @@ const runKey = (run: Pick<DesktopWorkflowRun, 'id' | 'hostId'>) =>
 
 const waitsForDecision = (session: Session) =>
   !!session.parentRequest ||
+  !!session.coordinatorWait ||
+  session.plan?.status === 'plan-ready' ||
+  !!pendingStageQuestion(session) ||
+  !!pendingTurnQuestion(session) ||
   (session.status === 'running' && session.pendingApprovals.length > 0) ||
   session.delegations.some(
     delegation =>
@@ -53,6 +58,7 @@ export function sessionFilterKeys(
   sessions: Session[],
   reviews: Pick<DesktopReview, 'sessionId' | 'hostId' | 'status'>[],
   runs: Pick<DesktopWorkflowRun, 'id' | 'hostId' | 'status'>[],
+  inboxDecisions: ReadonlySet<string>,
 ): SessionFilterKeys {
   const reviewed = new Set(
     reviews
@@ -76,6 +82,7 @@ export function sessionFilterKeys(
     if (
       waitsForDecision(session) ||
       reviewed.has(key) ||
+      inboxDecisions.has(key) ||
       (!!run && attentionRuns.includes(run))
     )
       keys['needs-me'].add(key);

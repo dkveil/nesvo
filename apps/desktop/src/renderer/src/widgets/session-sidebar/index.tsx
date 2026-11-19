@@ -87,6 +87,7 @@ type Props = {
   pendingActions: number;
   selectedId: string;
   unreadKeys?: Set<string>;
+  reviewKeys?: ReadonlySet<string>;
   inbox: boolean;
   workflows: boolean;
   onSelect: (id: string) => void;
@@ -140,6 +141,7 @@ function SessionMeta({
     return (
       <span className="font-medium text-warning-foreground">Needs you</span>
     );
+  if (indicator.state === 'done') return <span>Done</span>;
   return (
     <time dateTime={session.updatedAt}>
       {formatRelativeTime(session.updatedAt, now)}
@@ -167,6 +169,7 @@ export function SessionSidebar({
   pendingActions,
   selectedId,
   unreadKeys,
+  reviewKeys,
   inbox,
   workflows,
   onSelect,
@@ -353,7 +356,8 @@ export function SessionSidebar({
       session,
       run: runOf(session),
       offline,
-      awaitsReview: !!filterKeys?.['needs-me'].has(entityKey(session)),
+      awaitsReview: !!reviewKeys?.has(entityKey(session)),
+      needsDecision: !!filterKeys?.['needs-me'].has(entityKey(session)),
       now,
     });
     const lifecycle = sessionLifecycleLines(sessionLifecycle(session, now));

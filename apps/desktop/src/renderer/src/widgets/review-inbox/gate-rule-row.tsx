@@ -101,7 +101,8 @@ export function GateRuleRow({
           )}
           <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
             <span>
-              Gate rule for {proposal.steps.join(', ')} · {row.workflow}
+              Proposes a gate rule for {proposal.steps.join(', ')} ·{' '}
+              {row.workflow}
             </span>
             <Badge size="xs">
               {proposal.kind === 'check' ? 'Check suggestion' : 'Instruction'}

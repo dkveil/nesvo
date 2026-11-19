@@ -16,6 +16,8 @@ const actionLabels = {
 export const ruleSummary = (entry: InboxRuleEntry) => {
   const rule = entry.rule;
   if (!rule) return 'This rule has errors and does not apply.';
+  if (rule.trigger === 'result-to-review')
+    return `Reviews every result covered by this rule${rule.route ? ` in ${routeLabels[rule.route]}` : ''}.`;
   const when =
     rule.trigger === 'command'
       ? `Before a command matching ${rule.pattern}`
@@ -33,7 +35,7 @@ export const ruleSummary = (entry: InboxRuleEntry) => {
                   ? `When a run costs more than $${rule.above_usd}`
                   : rule.trigger === 'external'
                     ? `When an external item arrives${rule.pattern ? ` from ${rule.pattern}` : ''}`
-                    : `When ${rule.trigger.replace('-', ' ')}`;
+                    : `When ${rule.trigger.replaceAll('-', ' ')}`;
   const route = rule.route ? ` · ${routeLabels[rule.route]}` : '';
   return `${when}, Nesvo ${actionLabels[rule.action]}${route}.`;
 };

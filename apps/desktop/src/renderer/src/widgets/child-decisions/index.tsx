@@ -1,5 +1,6 @@
 import {
   pendingStageQuestion,
+  pendingTurnQuestion,
   routesToParent,
   type DecisionRoute,
   type PullRequestReference,
@@ -15,6 +16,12 @@ import {
   type HostedInboxItem,
   type InboxItemDecision,
 } from '@/features/inbox-rules';
+import { resultReason, reviewPreview, type Review } from '@/entities/review';
+import {
+  ReviewDecision,
+  type ReviewDecisionProps,
+} from '@/features/review-decision';
+import { TurnQuestionReply } from '@/features/review-decision/turn-question-reply';
 import { entityKey } from '@/shared/lib/host-key';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
@@ -32,6 +39,15 @@ type Props = {
   sessions: Session[];
   items: HostedInboxItem[];
   routeOf: (session: Session) => DecisionRoute;
+  reviews: Review[];
+  reviewDecisions: ReviewDecisionProps;
+  onOpenDiff: (review: Review) => void;
+  onReply: (
+    session: Session,
+    runId: string,
+    text: string,
+    messageId: string,
+  ) => Promise<void>;
   enabled: boolean;
   stages: StageActions;
   rulePending: Record<string, boolean>;
@@ -80,6 +96,10 @@ export function ChildDecisions({
   sessions,
   items,
   routeOf,
+  reviews,
+  reviewDecisions,
+  onOpenDiff,
+  onReply,
   enabled,
   stages,
   rulePending,
@@ -103,24 +123,51 @@ export function ChildDecisions({
       .filter(item => item.binding === 'provider')
       .map(item => item.sessionId),
   );
-  const children = sessions.filter(
+  const allChildren = sessions.filter(
     session =>
-      session.parentId === parent.id &&
-      session.hostId === parent.hostId &&
-      routesToParent(routeOf(session)),
+      session.parentId === parent.id && session.hostId === parent.hostId,
   );
+  const children = allChildren.filter(session =>
+    routesToParent(routeOf(session)),
+  );
+  const turnQuestions = allChildren.flatMap(child => {
+    const question = pendingTurnQuestion(child);
+    return question && routesToParent(question.route)
+      ? [{ child, question }]
+      : [];
+  });
+  const results = reviews.flatMap(review => {
+    const child = allChildren.find(
+      item => item.id === review.sessionId && item.hostId === review.hostId,
+    );
+    return child &&
+      review.status === 'pending' &&
+      review.route &&
+      routesToParent(review.route)
+      ? [{ child, review }]
+      : [];
+  });
   const approvals = children.flatMap(child =>
     child.status === 'running' && child.runId && !heldChildren.has(child.id)
       ? child.pendingApprovals.map(approval => ({ child, approval }))
       : [],
   );
   const plans = children.filter(child => child.plan?.status === 'plan-ready');
-  const questions = children.flatMap(child => {
-    const question = pendingStageQuestion(child);
-    return question ? [{ child, question }] : [];
-  });
+  const questions = allChildren
+    .filter(child =>
+      routesToParent(child.questionRouteOverride ?? routeOf(child)),
+    )
+    .flatMap(child => {
+      const question = pendingStageQuestion(child);
+      return question ? [{ child, question }] : [];
+    });
   const count =
-    ruleItems.length + approvals.length + plans.length + questions.length;
+    ruleItems.length +
+    approvals.length +
+    plans.length +
+    questions.length +
+    turnQuestions.length +
+    results.length;
   if (!count) return null;
   return (
     <section
@@ -133,6 +180,52 @@ export function ChildDecisions({
           : `${count} child decisions wait for you`}
       </SectionLabel>
       <div className="space-y-px">
+        {turnQuestions.map(({ child, question }) => (
+          <article
+            key={question.messageId}
+            aria-label={`Question for you: ${child.title}`}
+          >
+            <ListRow density="block" columns={COLUMNS}>
+              <CardHeader
+                title={child.title}
+                what="Question for you"
+                onOpen={() => onOpen(entityKey(child))}
+              />
+              <TurnQuestionReply
+                questions={question.questions}
+                enabled={enabled}
+                onReply={(text, id) => onReply(child, question.runId, text, id)}
+              />
+            </ListRow>
+          </article>
+        ))}
+        {results.map(({ child, review }) => (
+          <article
+            key={review.id}
+            aria-label={`Result to review: ${child.title}`}
+          >
+            <ListRow density="block" columns={COLUMNS}>
+              <div className="min-w-0 space-y-1">
+                <CardHeader
+                  title={child.title}
+                  what={resultReason(review)}
+                  onOpen={() => onOpen(entityKey(child))}
+                />
+                <p className="line-clamp-2 text-ui">{reviewPreview(review)}</p>
+                {review.diff.files.length > 0 && (
+                  <Button
+                    size="inline"
+                    variant="link"
+                    onClick={() => onOpenDiff(review)}
+                  >
+                    Open diff
+                  </Button>
+                )}
+              </div>
+              <ReviewDecision compact review={review} {...reviewDecisions} />
+            </ListRow>
+          </article>
+        ))}
         {ruleItems.map(item => {
           const key = inboxItemKey(item);
           return (

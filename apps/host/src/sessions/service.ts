@@ -2950,7 +2950,8 @@ export class SessionService {
       this.publish(current);
     } catch (error) {
       current.workflow = previous;
-      current.reviewEveryResult = previousReview;
+      if (previousReview === undefined) delete current.reviewEveryResult;
+      else current.reviewEveryResult = previousReview;
       throw error;
     }
     return structuredClone(current);
@@ -4644,11 +4645,13 @@ export class SessionService {
                   'Inbox rules could not be checked. No provider turn was started.',
               };
         }
-        if (inboxRules) {
+        if (inboxRules?.decisionRoute)
           session.decisionRouteOverride = inboxRules.decisionRoute;
+        else delete session.decisionRouteOverride;
+        if (inboxRules?.questionRoute)
           session.questionRouteOverride = inboxRules.questionRoute;
-          active.resultRoute = inboxRules.resultRoute;
-        }
+        else delete session.questionRouteOverride;
+        active.resultRoute = inboxRules?.resultRoute;
         if (inboxRules?.refusal)
           return { status: 'failed', error: inboxRules.refusal };
         for (const [index, warning] of (inboxRules?.warnings ?? []).entries())

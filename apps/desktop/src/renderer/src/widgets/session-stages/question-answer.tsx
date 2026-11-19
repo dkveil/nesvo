@@ -28,7 +28,6 @@ export function QuestionAnswer({
   actions,
   compact = false,
 }: Props) {
-  const [writing, setWriting] = useState(!compact);
   const [text, setText] = useState('');
   const key = stageKey(session, record.id);
   const deciding = !!actions.pending[key];
@@ -59,49 +58,36 @@ export function QuestionAnswer({
             </Button>
           </Hint>
         ))}
-        {compact && (
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={!enabled}
-            aria-expanded={writing}
-            onClick={() => setWriting(value => !value)}
-          >
-            Other answer
-          </Button>
-        )}
       </div>
-      {writing && (
-        <form
-          aria-label="Answer the question"
-          className={cn(fullWidth, compact && 'pt-1.5')}
-          onSubmit={event => {
-            event.preventDefault();
-            if (!enabled || !text.trim()) return;
-            actions.onAnswer(session, { text: text.trim() });
-          }}
-        >
-          <Composer variant="compact">
-            <ComposerInput
-              aria-label="Answer"
-              placeholder="Answer in your own words, or add a note to an option"
-              maxLength={TEXT_LIMIT}
-              value={text}
-              disabled={!enabled}
-              onChange={event => setText(event.target.value)}
-            />
-            <ComposerToolbar
-              start={<span>The session continues with your answer.</span>}
-              end={
-                <ComposerSend
-                  label="Send answer"
-                  disabled={!enabled || !text.trim()}
-                />
-              }
-            />
-          </Composer>
-        </form>
-      )}
+      <form
+        aria-label="Answer the question"
+        className={cn(fullWidth, compact && 'pt-1.5')}
+        onSubmit={event => {
+          event.preventDefault();
+          if (!enabled || !text.trim()) return;
+          actions.onAnswer(session, { text: text.trim() });
+        }}
+      >
+        <Composer variant="compact">
+          <ComposerInput
+            aria-label="Answer"
+            placeholder="Answer in your own words, or add a note to an option"
+            maxLength={TEXT_LIMIT}
+            value={text}
+            disabled={!enabled}
+            onChange={event => setText(event.target.value)}
+          />
+          <ComposerToolbar
+            start={<span>The session continues with your answer.</span>}
+            end={
+              <ComposerSend
+                label="Send answer"
+                disabled={!enabled || !text.trim()}
+              />
+            }
+          />
+        </Composer>
+      </form>
       {deciding && (
         <StatusMessage tone="loading" className={fullWidth || undefined}>
           Sending answer…

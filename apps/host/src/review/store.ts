@@ -176,7 +176,8 @@ export class ReviewStore {
         )
         .map(message => message.body)
         .join('\n'),
-      ...classification,
+      ...(classification.reason ? { reason: classification.reason } : {}),
+      ...(classification.route ? { route: classification.route } : {}),
       status: classification.reason ? 'pending' : 'done',
       decision: null,
       dependencies,

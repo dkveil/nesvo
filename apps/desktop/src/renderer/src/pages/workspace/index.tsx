@@ -160,6 +160,7 @@ import { Delegations } from '@/widgets/delegations';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
+import { useInboxGateRules } from '@/widgets/review-inbox/use-inbox-gate-rules';
 import { ChildDecisions } from '@/widgets/child-decisions';
 import {
   resolveDecisionRoute,
@@ -214,6 +215,13 @@ import { InboxRulesSettings } from '@/widgets/inbox-rules-settings';
 import { DevicesSettings } from '@/widgets/settings/devices-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
+import { Switch } from '@/shared/ui/switch';
+import { Field } from '@/shared/ui/field';
+import {
+  pendingStageQuestion,
+  pendingTurnQuestion,
+  routesToInbox,
+} from '@nesvo/contracts';
 import { Hint } from '@/shared/ui/tooltip';
 import {
   Select,
@@ -996,6 +1004,7 @@ export function Workspace({
   const stopping = useRef(new Set<string>());
   const automations = useScheduledJobs(store.computers);
   const inboxRules = useInboxItems(store.computers);
+  const inboxGateRules = useInboxGateRules(store.computers);
   const routeOf = (session: Session) =>
     resolveDecisionRoute(
       session,
@@ -1412,9 +1421,42 @@ export function Workspace({
     lastSelection.current = { current: selectedKey, previous: last.current };
   }, [selectedKey]);
   const filterKeys = useMemo(
-    () => sessionFilterKeys(store.sessions, store.reviews, store.workflowRuns),
-    [store.sessions, store.reviews, store.workflowRuns],
+    () =>
+      sessionFilterKeys(
+        store.sessions,
+        store.reviews,
+        store.workflowRuns,
+        new Set([
+          ...inboxRules.items.flatMap(item =>
+            item.status === 'pending' &&
+            item.action !== 'notify' &&
+            item.sessionId
+              ? [hostKey(item.sessionId, item.hostId)]
+              : [],
+          ),
+          ...inboxGateRules.rows.flatMap(({ hostId, proposal }) =>
+            proposal.status === 'pending'
+              ? [hostKey(proposal.taskSessionId ?? proposal.sessionId, hostId)]
+              : [],
+          ),
+        ]),
+      ),
+    [
+      store.sessions,
+      store.reviews,
+      store.workflowRuns,
+      inboxRules.items,
+      inboxGateRules.rows,
+    ],
   );
+  const sessionAttention =
+    selected && filterKeys['needs-me'].has(selectedKey)
+      ? pendingStageQuestion(selected) || pendingTurnQuestion(selected)
+        ? 'Question for you'
+        : selectedReviews.some(review => review.status === 'pending')
+          ? 'Result to review'
+          : 'Decision needed'
+      : '';
   useBackgroundAttention(store.sessions, filterKeys['needs-me'], key =>
     select(key),
   );
@@ -1510,6 +1552,26 @@ export function Workspace({
     setDetailsOpen(false);
   };
   const openInbox = () => guardEditor(openInboxNow);
+  const openInboxDiff = (review: Review) =>
+    guardEditor(() => {
+      selectNow(hostKey(review.sessionId, review.hostId));
+      openDiff(review.id);
+    });
+  const replyToQuestion = async (
+    session: Session,
+    runId: string,
+    text: string,
+    messageId: string,
+  ) => {
+    store.merge([
+      await desktopApi(session.hostId).sendMessage({
+        sessionId: session.id,
+        messageId,
+        text,
+        replyToRunId: runId,
+      }),
+    ]);
+  };
   const openInboxNow = () => {
     navigationVersion.current += 1;
     setPanel(null);
@@ -3328,24 +3390,63 @@ ${text}`
       setSettingsPage('general');
     },
     pendingActions:
-      store.reviews.filter(review => review.status === 'pending').length +
-      store.sessions.reduce(
-        (count, session) =>
+      store.reviews.filter(
+        review =>
+          review.status === 'pending' && routesToInbox(review.route ?? 'inbox'),
+      ).length +
+      inboxGateRules.rows.filter(
+        ({ proposal }) => proposal.status === 'pending',
+      ).length +
+      inboxRules.items.filter(
+        item => item.status === 'pending' && routesToInbox(item.route),
+      ).length +
+      automations.jobs.filter(job => job.pendingStart).length +
+      store.sessions.reduce((count, session) => {
+        const question = pendingTurnQuestion(session);
+        const route = routeOf(session);
+        const holdsOperation = inboxRules.items.some(
+          item =>
+            item.status === 'pending' &&
+            item.binding === 'provider' &&
+            item.sessionId === session.id &&
+            item.hostId === session.hostId,
+        );
+        return (
           count +
-          (session.status === 'running' && session.runId
+          Number(!!session.parentRequest) +
+          Number(!!session.coordinatorWait) +
+          Number(!!question && routesToInbox(question.route)) +
+          Number(
+            !!pendingStageQuestion(session) &&
+              routesToInbox(session.questionRouteOverride ?? route),
+          ) +
+          Number(
+            session.plan?.status === 'plan-ready' && routesToInbox(route),
+          ) +
+          (session.status === 'running' &&
+          session.runId &&
+          routesToInbox(route) &&
+          !holdsOperation
             ? session.pendingApprovals.length +
               session.delegations.filter(
                 item =>
                   item.runId === session.runId && item.status === 'pending',
               ).length
-            : 0),
-        0,
-      ),
+            : 0)
+        );
+      }, 0),
     selectedId:
       creating || costsView || workflowsView || pullRequestsView || automation
         ? ''
         : selectedKey,
     unreadKeys,
+    reviewKeys: new Set(
+      store.reviews.flatMap(review =>
+        review.status === 'pending'
+          ? [hostKey(review.sessionId, review.hostId)]
+          : [],
+      ),
+    ),
     inbox,
     workflows: workflowsView,
     onSelect: select,
@@ -4125,10 +4226,18 @@ ${text}`
           {!browsing &&
             !creating &&
             selected &&
-            selected.status !== 'ready' &&
-            !showsRunStatus(selected, selectedRun) && (
-              <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">
-                {sessionStatusLabel(selected)}
+            (sessionAttention ||
+              (selected.status !== 'ready' &&
+                !showsRunStatus(selected, selectedRun))) && (
+              <span
+                className={cn(
+                  'hidden shrink-0 text-2xs sm:inline',
+                  sessionAttention
+                    ? 'text-warning-foreground'
+                    : 'text-muted-foreground',
+                )}
+              >
+                {sessionAttention || sessionStatusLabel(selected)}
               </span>
             )}
           {finishingWorktree && headerWorktree && selected && window.nesvo && (
@@ -4287,6 +4396,37 @@ ${text}`
                 <ScrollArea className="min-h-0 flex-1">
                   <SessionDetails
                     session={selected}
+                    resultPolicy={
+                      <Field
+                        label="Review every result"
+                        id="review-every-result"
+                        layout="switch"
+                      >
+                        <Switch
+                          id="review-every-result"
+                          checked={!!selected.reviewEveryResult}
+                          disabled={
+                            !store.hostReady(selectedHostId) ||
+                            selected.status === 'running' ||
+                            selected.status === 'stopping'
+                          }
+                          onCheckedChange={checked => {
+                            void desktopApi(selectedHostId)
+                              .assignSessionWorkflow({
+                                sessionId: selected.id,
+                                reviewEveryResult: checked,
+                              })
+                              .then(session => store.merge([session]))
+                              .catch(error =>
+                                setErrors(previous => ({
+                                  ...previous,
+                                  [selectedKey]: errorDetail(error),
+                                })),
+                              );
+                          }}
+                        />
+                      </Field>
+                    }
                     permissions={
                       selected.provider === 'Claude Code' &&
                       autonomy.data && (
@@ -4735,6 +4875,7 @@ ${text}`
           ) : inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}
+              gateRules={inboxGateRules}
               ruleItems={inboxRules.items}
               rulePending={inboxRules.pending}
               ruleErrors={inboxRules.errors}
@@ -4763,6 +4904,8 @@ ${text}`
               delegationPending={delegationPending}
               parentPending={parentPending}
               onContinueCoordinator={continueCoordinator}
+              onDiff={openInboxDiff}
+              onReply={replyToQuestion}
               stages={stages}
               onParent={(input, hostId) =>
                 void decideSessionParent(input, hostId)
@@ -4793,6 +4936,7 @@ ${text}`
               lessons={
                 <LessonInbox
                   computers={store.computers}
+                  sessions={store.sessions}
                   api={window.nesvo}
                   onSession={select}
                 />
@@ -4966,6 +5110,10 @@ ${text}`
                         sessions={store.sessions}
                         items={inboxRules.items}
                         routeOf={routeOf}
+                        reviews={store.reviews}
+                        reviewDecisions={reviewDecisionProps}
+                        onOpenDiff={openInboxDiff}
+                        onReply={replyToQuestion}
                         enabled={
                           !store.loading &&
                           !store.error &&

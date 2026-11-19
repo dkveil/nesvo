@@ -1,7 +1,7 @@
 import { useState, type ComponentProps, type ReactNode } from 'react';
 import {
-  latestStageReport,
   pendingStageQuestion,
+  pendingTurnQuestion,
   routesToInbox,
   type DecisionRoute,
   type PullRequestReference,
@@ -10,13 +10,13 @@ import {
   type DecideSessionParentInput,
   type RespondApprovalInput,
   type StageQuestionRecord,
-  type StageReportRecord,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Inbox } from 'lucide-react';
 import {
   compactPreview,
   reviewDate,
   reviewPreview,
+  resultReason,
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
@@ -54,7 +54,7 @@ import { Toast, ToastRegion } from '@/shared/ui/toast';
 import { undoGateRule } from '@/features/gate-rules/undo-gate-rule';
 import { errorDetail } from '@/entities/session';
 import { GateRuleRow } from './gate-rule-row';
-import { useInboxGateRules } from './use-inbox-gate-rules';
+import type { useInboxGateRules } from './use-inbox-gate-rules';
 import {
   PlanDecision,
   QuestionAnswer,
@@ -69,6 +69,7 @@ import {
   type InboxItemDecision,
 } from '@/features/inbox-rules';
 
+import { TurnQuestionReply } from '@/features/review-decision/turn-question-reply';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 
 type Props = ReviewDecisionProps & {
@@ -88,6 +89,13 @@ type Props = ReviewDecisionProps & {
   onApproval: (input: RespondApprovalInput, hostId: string) => void;
   onDelegation: (input: DecideDelegationInput, hostId: string) => void;
   onSession: (sessionId: string, targetId?: string) => void;
+  onDiff: (review: Review) => void;
+  onReply: (
+    session: Session,
+    runId: string,
+    text: string,
+    messageId: string,
+  ) => Promise<void>;
   onRefresh: () => void;
   automations: ScheduledJob[];
   automationPending: Record<string, boolean>;
@@ -97,6 +105,7 @@ type Props = ReviewDecisionProps & {
   originLabel?: (review: Review) => string;
   notice?: ReactNode;
   lessons?: ReactNode;
+  gateRules: ReturnType<typeof useInboxGateRules>;
   stages: StageActions;
   ruleItems: HostedInboxItem[];
   rulePending: Record<string, boolean>;
@@ -122,6 +131,13 @@ type ActionRow =
     }
   | { type: 'coordinator-wait'; session: Session; at: string; id: string }
   | { type: 'review'; review: Review; at: string; id: string }
+  | {
+      type: 'turn-question';
+      session: Session;
+      question: NonNullable<ReturnType<typeof pendingTurnQuestion>>;
+      at: string;
+      id: string;
+    }
   | { type: 'rule'; item: HostedInboxItem; at: string; id: string }
   | { type: 'automation'; job: ScheduledJob; at: string; id: string }
   | {
@@ -158,13 +174,6 @@ type ActionRow =
       record: StageQuestionRecord;
       at: string;
       id: string;
-    }
-  | {
-      type: 'report';
-      session: Session;
-      record: StageReportRecord;
-      at: string;
-      id: string;
     };
 
 const ROW_COLUMNS = 'minmax(0,1fr) auto';
@@ -185,6 +194,7 @@ type ActionItemProps = Omit<ComponentProps<'article'>, 'title'> & {
   title: string;
   onOpen?: () => void;
   location: string;
+  why?: string;
   summary: ReactNode;
   meta: ReactNode;
 };
@@ -193,6 +203,7 @@ function ActionItem({
   title,
   onOpen,
   location,
+  why,
   summary,
   meta,
   children,
@@ -217,6 +228,14 @@ function ActionItem({
           ) : (
             <p className="text-ui font-medium [overflow-wrap:anywhere]">
               {title}
+            </p>
+          )}
+          {why && (
+            <p
+              className="line-clamp-1 text-2xs font-medium text-muted-foreground"
+              title={why}
+            >
+              {why}
             </p>
           )}
           {location && (
@@ -364,6 +383,8 @@ export function ReviewInbox({
   onDelegation,
   onContinueCoordinator,
   onSession,
+  onDiff,
+  onReply,
   onRefresh,
   automations,
   automationPending,
@@ -373,6 +394,7 @@ export function ReviewInbox({
   originLabel,
   notice,
   lessons,
+  gateRules,
   stages,
   ruleItems,
   rulePending,
@@ -390,7 +412,6 @@ export function ReviewInbox({
       .map(item => `${item.hostId}/${item.sessionId}`),
   );
   const inInbox = (session: Session) => routesToInbox(routeOf(session));
-  const gateRules = useInboxGateRules(computers);
   const [gateToast, setGateToast] = useState<{
     row: GateRuleProposal;
     hostId: string;
@@ -416,10 +437,12 @@ export function ReviewInbox({
   const rows: ActionRow[] = reviews
     .filter(
       review =>
-        filter === 'all' ||
-        (filter === 'pending'
-          ? review.status === 'pending'
-          : review.status !== 'pending'),
+        review.status !== 'done' &&
+        routesToInbox(review.route ?? 'inbox') &&
+        (filter === 'all' ||
+          (filter === 'pending'
+            ? review.status === 'pending'
+            : review.status !== 'pending')),
     )
     .map(review => ({
       type: 'review',
@@ -496,8 +519,7 @@ export function ReviewInbox({
   if (filter !== 'history')
     for (const session of sessions) {
       const key = entityKey(session);
-      if (!inInbox(session)) continue;
-      if (session.plan?.status === 'plan-ready')
+      if (inInbox(session) && session.plan?.status === 'plan-ready')
         rows.push({
           type: 'plan',
           session,
@@ -506,7 +528,10 @@ export function ReviewInbox({
           id: `${key}/${session.plan.id}`,
         });
       const question = pendingStageQuestion(session);
-      if (question)
+      if (
+        question &&
+        routesToInbox(session.questionRouteOverride ?? routeOf(session))
+      )
         rows.push({
           type: 'question',
           session,
@@ -514,19 +539,14 @@ export function ReviewInbox({
           at: question.at,
           id: `${key}/${question.id}`,
         });
-      const report = latestStageReport(session);
-      if (
-        report &&
-        report.runId === session.runId &&
-        session.status !== 'running' &&
-        session.status !== 'stopping'
-      )
+      const turnQuestion = pendingTurnQuestion(session);
+      if (turnQuestion && routesToInbox(turnQuestion.route))
         rows.push({
-          type: 'report',
+          type: 'turn-question',
           session,
-          record: report,
-          at: report.at,
-          id: `${key}/${report.id}`,
+          question: turnQuestion,
+          at: session.updatedAt,
+          id: `${key}/${turnQuestion.runId}`,
         });
     }
   if (filter !== 'history')
@@ -648,6 +668,7 @@ export function ReviewInbox({
               row.type === 'parent' ||
               row.type === 'plan' ||
               row.type === 'question' ||
+              row.type === 'turn-question' ||
               row.type === 'automation',
           ) && (
             <StatusMessage className="mb-3 px-2">
@@ -655,7 +676,7 @@ export function ReviewInbox({
             </StatusMessage>
           )}
         {rows.length > 0 ? (
-          <div className="space-y-px">
+          <div className="divide-y divide-border/60">
             {rows.map(row => {
               if (row.type === 'gate-rule-proposal') {
                 const title =
@@ -698,6 +719,46 @@ export function ReviewInbox({
                   />
                 );
               }
+              if (row.type === 'turn-question') {
+                const { session, question } = row;
+                return (
+                  <ActionItem
+                    key={row.id}
+                    aria-label={`Question for you: ${session.title}`}
+                    data-inbox-kind="question-for-you"
+                    title={session.title}
+                    onOpen={() =>
+                      onSession(entityKey(session), question.messageId)
+                    }
+                    why={
+                      question.questions.some(item => item.options.length)
+                        ? 'Asks you to choose an option'
+                        : 'Asks for your reply'
+                    }
+                    location={location(session.hostId)}
+                    summary={null}
+                    meta={null}
+                  >
+                    <TurnQuestionReply
+                      questions={question.questions}
+                      enabled={
+                        operationEnabled &&
+                        isOperationEnabled(session) &&
+                        !ruleItems.some(
+                          item =>
+                            item.status === 'pending' &&
+                            item.action === 'hold' &&
+                            item.sessionId === session.id &&
+                            item.hostId === session.hostId,
+                        )
+                      }
+                      onReply={(text, messageId) =>
+                        onReply(session, question.runId, text, messageId)
+                      }
+                    />
+                  </ActionItem>
+                );
+              }
               if (row.type === 'review') {
                 const { review } = row;
                 const origin = originLabel?.(review) ?? '';
@@ -715,6 +776,8 @@ export function ReviewInbox({
                     aria-label={`Review result: ${review.title}, version ${review.version}`}
                     data-host-id={review.hostId}
                     title={title}
+                    why={resultReason(review)}
+                    data-inbox-kind="result-to-review"
                     onOpen={() =>
                       onSession(
                         hostKey(review.sessionId, review.hostId),
@@ -745,6 +808,15 @@ export function ReviewInbox({
                           >
                             {origin} ·
                           </span>
+                        )}
+                        {review.diff.files.length > 0 && (
+                          <Button
+                            variant="link"
+                            size="inline"
+                            onClick={() => onDiff(review)}
+                          >
+                            Open diff
+                          </Button>
                         )}
                         <span>
                           Result · v{review.version} ·{' '}
@@ -796,11 +868,7 @@ export function ReviewInbox({
                     data-inbox-type={
                       item.binding === 'external' ? 'external' : undefined
                     }
-                    title={
-                      item.binding === 'external'
-                        ? item.subject
-                        : (subjectSession?.title ?? item.sessionTitle)
-                    }
+                    title={subjectSession?.title ?? item.sessionTitle}
                     openLabel={
                       item.sessionId
                         ? `Open session: ${subjectSession?.title ?? item.sessionTitle}`
@@ -817,6 +885,14 @@ export function ReviewInbox({
                                   item.presentation.pullRequest,
                                 )
                         : undefined
+                    }
+                    data-inbox-kind="decision-needed"
+                    why={
+                      item.binding === 'external'
+                        ? item.subject
+                        : item.action === 'hold'
+                          ? `Waiting for approval: ${item.subject}`
+                          : item.subject
                     }
                     location={location(item.hostId)}
                     summary={
@@ -912,6 +988,8 @@ export function ReviewInbox({
                 return (
                   <ActionItem
                     key={`plan/${row.id}`}
+                    data-inbox-kind="decision-needed"
+                    why="Plan needs your approval"
                     aria-label={`Plan: ${session.title}`}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -960,6 +1038,11 @@ export function ReviewInbox({
                 return (
                   <ActionItem
                     key={`question/${row.id}`}
+                    why={
+                      record.question.options.length
+                        ? 'Asks you to choose an option'
+                        : 'Asks for your reply'
+                    }
                     aria-label={`Question: ${session.title}`}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -1007,46 +1090,13 @@ export function ReviewInbox({
                   </ActionItem>
                 );
               }
-              if (row.type === 'report') {
-                const { report } = row.record;
-                return (
-                  <ActionItem
-                    key={`report/${row.id}`}
-                    aria-label={`Report: ${session.title}`}
-                    data-host-id={session.hostId}
-                    title={session.title}
-                    onOpen={() =>
-                      onSession(entityKey(session), `stage-${row.record.id}`)
-                    }
-                    location={location(session.hostId)}
-                    summary={
-                      <FullText text={report.summary}>
-                        <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
-                          {report.summary}
-                        </p>
-                      </FullText>
-                    }
-                    meta={
-                      <>
-                        <span>
-                          Report · {report.status === 'ok' ? 'OK' : 'Failed'}
-                          {report.links.length
-                            ? ` · ${report.links.length} ${report.links.length === 1 ? 'link' : 'links'}`
-                            : ''}
-                          {from}
-                        </span>
-                        <time dateTime={row.at}>{reviewDate(row.at)}</time>
-                      </>
-                    }
-                  />
-                );
-              }
               if (row.type === 'parent') {
                 const { request } = row;
                 const deciding = !!parentPending[row.id];
                 return (
                   <ActionItem
                     key={`parent/${row.id}`}
+                    why="Asks to join a coordinator"
                     aria-label={`Join coordinator: ${session.title}`}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -1100,6 +1150,12 @@ export function ReviewInbox({
                 return (
                   <ActionItem
                     key={`approval/${row.id}`}
+                    data-inbox-kind="decision-needed"
+                    why={
+                      approval.kind === 'command'
+                        ? `Wants to run ${compactPreview(approval.detail, 100).split(/\s+/, 2).join(' ')}`
+                        : `Requests approval: ${approval.title}`
+                    }
                     aria-label={`Operation approval: ${session.title}`}
                     data-approval-id={approval.id}
                     data-host-id={session.hostId}
@@ -1161,6 +1217,7 @@ export function ReviewInbox({
               return (
                 <ActionItem
                   key={`delegation/${row.id}`}
+                  why={`Wants to start a worker: ${delegation.title}`}
                   aria-label={`Start worker: ${delegation.title}`}
                   data-host-id={session.hostId}
                   title={session.title}

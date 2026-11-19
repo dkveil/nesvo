@@ -103,6 +103,8 @@ const fullSessions = target =>
 const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
 const launchArgs = [resolve('apps/desktop')];
+const inboxOutcomeScreenshots = process.env.NESVO_INBOX_OUTCOME_SCREENSHOT_DIR;
+if (inboxOutcomeScreenshots) launchArgs.push('--remote-debugging-port=9244');
 const launchApplication = (overrides = {}) =>
   electron.launch({
     executablePath,
@@ -623,7 +625,11 @@ try {
     name: 'Skills',
     exact: true,
   });
-  const waitReview = async (sessionId, afterVersion = 0) => {
+  const waitReview = async (
+    sessionId,
+    afterVersion = 0,
+    status = 'pending',
+  ) => {
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       const reviews = await page.evaluate(() => window.nesvo.listReviews());
@@ -631,13 +637,13 @@ try {
         review =>
           review.sessionId === sessionId &&
           review.version > afterVersion &&
-          review.status === 'pending',
+          review.status === status,
       );
       if (review) return review;
       await delay(100);
     }
     assert.fail(
-      `No pending review for session ${sessionId} after version ${afterVersion}`,
+      `No ${status} review for session ${sessionId} after version ${afterVersion}`,
     );
   };
   const waitOwned = async (provider = 'Claude Code') => {
@@ -1564,7 +1570,7 @@ try {
       sharedInstructionsMessage.skill.path,
     ),
   );
-  await waitReview(first.id);
+  await waitReview(first.id, 0, 'done');
   const beforeDuplicate = await page.evaluate(async () => ({
     sessions: await window.nesvo.listSessions(),
     reviews: await window.nesvo.listReviews(),
@@ -2321,7 +2327,10 @@ try {
     name: `Operation approval: ${codex.title}`,
     exact: true,
   });
-  await operationRow.getByText(/fixture write approved marker/).waitFor();
+  await operationRow
+    .getByText('Wants to run fixture write', { exact: true })
+    .waitFor();
+  await operationRow.getByText(/^fixture write approved marker/).waitFor();
   await screenshot('-approval');
   await operationRow.getByRole('button', { name: 'Deny', exact: true }).click();
   const declinedOperation = await waitState(codex.id, 'completed');
@@ -2735,7 +2744,7 @@ try {
   assert.equal(writingSession.mode, 'supervised');
   await message('Codex fixture initial reply.').waitFor();
   await waitState(writingSession.id, 'completed');
-  const introReview = await waitReview(writingSession.id);
+  const introReview = await waitReview(writingSession.id, 0, 'done');
   await send('fixture:review-write');
   await message('Codex fixture initial files.').waitFor();
   const initialFiles = await waitState(writingSession.id, 'completed');
@@ -2901,6 +2910,154 @@ try {
     .waitFor();
   await openInbox();
   await reviewRow(initialReview).waitFor();
+  await reviewRow(initialReview)
+    .getByText(/^Changed \d+ files?$/)
+    .waitFor();
+  await reviewRow(initialReview)
+    .getByRole('button', { name: 'Open diff', exact: true })
+    .waitFor();
+
+  const outcomeSession = async (title, prompt, extra = {}) => {
+    const folder = join(directory, title);
+    await mkdir(folder);
+    const session = await page.evaluate(
+      input => window.nesvo.createSession(input),
+      {
+        title,
+        model: 'sonnet',
+        provider: 'Claude Code',
+        directory: folder,
+        ...extra,
+      },
+    );
+    await page.evaluate(input => window.nesvo.sendMessage(input), {
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text: prompt,
+    });
+    await page.waitForFunction(
+      async id =>
+        (await window.nesvo.listSessions()).some(
+          item => item.id === id && item.status === 'completed',
+        ),
+      session.id,
+    );
+    return session;
+  };
+  const questionSession = await outcomeSession(
+    'Release channel',
+    'fixture:ask-option',
+  );
+  await outcomeSession(
+    'Release plan',
+    'fixture:exit-plan Check the release notes and publish the changelog',
+    { planFirst: true },
+  );
+  const doneSession = await outcomeSession(
+    'Documentation scan',
+    'fixture:say The contributor instructions are up to date.',
+  );
+  const doneRow = navigation.getByRole('button', {
+    name: /^Documentation scan .* Done .* Unread$/,
+  });
+  await doneRow.waitFor();
+  await doneRow.getByText('Done', { exact: true }).waitFor();
+  assert.equal(
+    await page
+      .getByRole('article', { name: /Review result: Documentation scan/ })
+      .count(),
+    0,
+  );
+  const questionRow = page.getByRole('article', {
+    name: 'Question for you: Release channel',
+  });
+  await questionRow.getByText('Asks you to choose an option').waitFor();
+  await questionRow.getByText('Which release channel should I use?').waitFor();
+  await questionRow
+    .getByRole('button', { name: 'Preview', exact: true })
+    .waitFor();
+  await questionRow
+    .getByRole('textbox', { name: 'Reply', exact: true })
+    .waitFor();
+  assert.equal(
+    await questionRow
+      .getByRole('button', { name: 'Accept result', exact: true })
+      .count(),
+    0,
+  );
+  await page.getByText('Plan needs your approval', { exact: true }).waitFor();
+  if (inboxOutcomeScreenshots) {
+    await mkdir(inboxOutcomeScreenshots, { recursive: true });
+    const captureInbox = async name => {
+      await page.evaluate(
+        () =>
+          new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      const encoded = await application.evaluate(async ({ BrowserWindow }) => {
+        const image =
+          await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+            undefined,
+            { stayHidden: true, stayAwake: true },
+          );
+        return image.toPNG().toString('base64');
+      });
+      await writeFile(
+        join(inboxOutcomeScreenshots, name),
+        Buffer.from(encoded, 'base64'),
+      );
+    };
+    for (const [width, height] of [
+      [1920, 1080],
+      [1280, 800],
+    ]) {
+      await application.evaluate(
+        ({ BrowserWindow }, size) => {
+          BrowserWindow.getAllWindows()[0].setContentSize(...size);
+        },
+        [width, height],
+      );
+      await page.waitForFunction(
+        ([width, height]) => innerWidth === width && innerHeight === height,
+        [width, height],
+      );
+      await captureInbox('inbox-' + width + 'x' + height + '.png');
+    }
+    await questionRow
+      .getByRole('textbox', { name: 'Reply', exact: true })
+      .focus();
+    await captureInbox('question-quick-replies.png');
+    await reviewRow(initialReview)
+      .getByRole('button', { name: 'Open diff', exact: true })
+      .focus();
+    await captureInbox('result-review.png');
+    await doneRow.focus();
+    await captureInbox('sidebar-done-unread.png');
+  }
+  await questionRow
+    .getByRole('button', { name: 'Stable', exact: true })
+    .click();
+  await questionRow.waitFor({ state: 'hidden' });
+  await page.waitForFunction(async id => {
+    const session = (await window.nesvo.listSessions()).find(
+      item => item.id === id,
+    );
+    return (
+      session?.status === 'completed' &&
+      session.messages.at(-2)?.body === 'Stable'
+    );
+  }, questionSession.id);
+  await doneRow.click();
+  await navigation
+    .getByRole('button', { name: /^Documentation scan .* Done$/ })
+    .waitFor();
+  await page
+    .getByRole('button', { name: 'Saved results', exact: false })
+    .first()
+    .waitFor();
+  assert.ok(doneSession.id);
+  await openInbox();
   await screenshot('-inbox');
   await openReviewSession(initialReview);
   const initialDiff = await openSavedDiff(
@@ -4960,7 +5117,7 @@ try {
       .getByRole('article')
       .filter({ hasText: 'Automation · Smoke automation' });
   await automationShell.getByRole('button', { name: /^Inbox/ }).click();
-  await automationResult().waitFor();
+  await automationResult().waitFor({ state: 'hidden' });
   const [smokeAutomation] = await restartedPage.evaluate(() =>
     window.nesvo.scheduledJobs.list('local'),
   );
@@ -4977,11 +5134,7 @@ try {
   ).find(session => session.id === smokeRuns.runs[0].sessionId);
   assert.match(automationSession.title, /^Smoke automation · /);
   assert.equal(automationSession.scheduledJobId, smokeAutomation.id);
-  await automationShot(restartedPage, 'inbox-row');
-  await automationResult()
-    .getByRole('button', { name: 'Accept result', exact: true })
-    .click();
-  await automationResult().waitFor({ state: 'hidden' });
+  assert.equal(automationSession.messages.at(-1).outcome.kind, 'done');
   const openAutomationDetail = async () => {
     await automationShell
       .getByRole('button', { name: 'Automations', exact: true })
@@ -4998,16 +5151,16 @@ try {
   const automationDetail = await openAutomationDetail();
   await automationDetail
     .locator('[data-run-status="completed"]')
-    .getByText('Accepted', { exact: true })
+    .getByText('Done', { exact: true })
     .waitFor();
-  const reviewsAfterAccept = await restartedPage.evaluate(() =>
+  const savedReviews = await restartedPage.evaluate(() =>
     window.nesvo.listReviews(),
   );
-  const acceptedReview = reviewsAfterAccept.find(
+  const savedReview = savedReviews.find(
     review => review.id === smokeRuns.runs[0].reviewId,
   );
-  assert.equal(acceptedReview.status, 'accepted');
-  await automationShot(restartedPage, 'detail-accepted');
+  assert.equal(savedReview.status, 'done');
+  await automationShot(restartedPage, 'detail-completed');
   await automationDetail
     .getByRole('button', { name: 'Edit', exact: true })
     .click();
