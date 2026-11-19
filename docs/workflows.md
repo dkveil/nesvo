@@ -86,7 +86,7 @@ bun run lint
 | Field | Values | Meaning |
 | -- | -- | -- |
 | `name` | lowercase letters, digits and inner hyphens | Must match the file name. |
-| `type` | `command`, `agent`, `human`, `action`, `wait-ci`, `until`, `probe`, `session`, `fan-out` | Use `session` to run one child workflow and `fan-out` to run a child workflow for each item in a list. |
+| `type` | `command`, `check`, `agent`, `human`, `action`, `wait-ci`, `until`, `probe`, `session`, `fan-out` | Use `session` to run one child workflow and `fan-out` to run a child workflow for each item in a list. |
 | `phase` | `plan`, `pre-done`, `pre-push` | When the step runs, see [Phases](#phases-and-author-turns). |
 | `timeout` | `1s` to `4h`, for example `90s`, `15m` | Default `15m`. |
 | `retries` | 0 to 5 | Default 0. `retries: 2` allows up to three attempts. The run records each attempt, then applies the normal failure route and `on_fail`. Human decisions never retry. |
@@ -98,6 +98,39 @@ bun run lint
 | `needs` | `env:NAME`, `browser` | A missing `env:NAME` variable blocks the step with a readable reason instead of running it. `browser` runs an `agent` step whose step and workflow are defined in your own workflows folder with browser access when its provider supports it on this computer (Claude Code with the browser extension); otherwise, on other step types and for steps defined in the repository, the step is blocked with the reason. An unattended browser step can open and read pages but cannot click, type, run scripts or take screenshots. |
 
 Body by type: a `command` or `action` body is a shell script run in the task directory; an `agent` body holds the instructions for the verifying session; a `human` body is the question shown at the gate. Command and action steps do not inherit variables ending in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`; list them in `needs` when a step really needs one.
+
+### Portable test checks
+
+A `check` step runs tests selected for the task checkout. A Global workflow can use the same step across projects. Project settings live in the repository and Global settings live in the owner's Nesvo configuration.
+
+```yaml
+name: verify-tests
+type: check
+phase: pre-done
+intent: tests
+preferred:
+  typescript: { runner: package-script, script: test }
+  kotlin: { runner: gradle-wrapper, task: test }
+timeout: 5m
+on_fail: fix
+```
+
+Write the acceptance criteria in the Markdown body. For example, require the suite that covers the changed code and evidence of at least one executed test. The host inventories one module per run. It reads `package.json` scripts and package manager signals, Gradle wrapper inputs and static Gradle tasks, test commands in supported CI files, Makefile, justfile and Taskfile targets, and README or CONTRIBUTING examples. The host reads these files without evaluating build or CI configuration. A read-only verifier selects a candidate ID from that inventory.
+
+A mixed checkout can locate its module and prefer a known target with `.agents/project.md`. A Gradle task such as `:app:test` implies module `app` unless you set `module`.
+
+```yaml
+---
+stack: kotlin
+module: app
+checks:
+  tests: { runner: gradle-wrapper, task: ':app:test' }
+---
+```
+
+When the host has no suitable candidate, the verifier can propose a single local test command with a source reference. The Inbox shows its command, working folder, provenance and reason. Approval saves the mapping in `.agents/project.md` in the run checkout and permits the command to run. Later runs on this computer can reuse the approved mapping hash for that project. A new or edited command mapping needs its own approval. Use **Undo Project mapping** in **Last run** to restore the previous file if its hash still matches. Inbox workflow-step and command holds apply to each actual invocation.
+
+A known setup mismatch can select one alternate of the same test scope. A failed suite follows the normal failure edge and `on_fail`. A zero exit must also produce evidence that tests ran, such as a positive runner count or fresh Gradle test reports. **Last run** shows the selected candidate, exact invocation, source and hash, substitution reason and observed outcome. Check commands use the same local process boundary and permissions as command steps. Use trusted project scripts and build files.
 
 ### Waiting for pull request checks
 
