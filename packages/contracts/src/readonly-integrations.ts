@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { directCommandSchema } from './direct-command';
 
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/);
 const toolName = z
@@ -19,8 +20,8 @@ const selection = z.discriminatedUnion('kind', [
 export const readonlyMcpObservationSchema = z.strictObject({
   sessionId: z.uuid(),
   server: serverName,
-  transport: z.literal('https'),
-  endpoint: z.string().url().max(1024),
+  transport: z.enum(['https', 'stdio']),
+  endpoint: z.string().min(1).max(1024),
   tools: z
     .array(
       z.strictObject({
@@ -41,6 +42,34 @@ export const readonlyMcpGrantSchema = readonlyMcpObservationSchema.extend({
   createdAt: z.iso.datetime(),
 });
 
+const hookMatcher = z.enum(['startup', 'resume', 'clear', 'compact', '']);
+const hookName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[^\p{Cc}\p{Cf}]+$/u);
+export const claudePlanHookDefinitionSchema = z.strictObject({
+  name: hookName,
+  matcher: hookMatcher,
+  command: directCommandSchema,
+});
+const hookGrant = z.strictObject({
+  id: z.uuid(),
+  sessionId: z.uuid(),
+  name: hookName,
+  matcher: hookMatcher,
+  revision: fingerprint,
+  enabled: z.boolean(),
+});
+const hookReview = z.strictObject({
+  name: hookName,
+  matcher: hookMatcher,
+  executable: z.string().min(1).max(4096),
+  argv: z.array(z.string().max(4096)).max(64),
+  revision: fingerprint,
+});
+
 export const readonlyIntegrationInputSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('read'), sessionId: z.uuid().optional() }),
   z.strictObject({
@@ -57,6 +86,29 @@ export const readonlyIntegrationInputSchema = z.discriminatedUnion('action', [
     selection,
   }),
   z.strictObject({
+    action: z.literal('inspect-hook'),
+    sessionId: z.uuid(),
+    definition: claudePlanHookDefinitionSchema,
+  }),
+  z.strictObject({
+    action: z.literal('approve-hook'),
+    sessionId: z.uuid(),
+    definition: claudePlanHookDefinitionSchema,
+    actionId: z.uuid(),
+    revision: fingerprint,
+  }),
+  z.strictObject({
+    action: z.literal('set-hook-enabled'),
+    actionId: z.uuid(),
+    grantId: z.uuid(),
+    enabled: z.boolean(),
+  }),
+  z.strictObject({
+    action: z.literal('revoke-hook'),
+    actionId: z.uuid(),
+    grantId: z.uuid(),
+  }),
+  z.strictObject({
     action: z.literal('revoke'),
     actionId: z.uuid(),
     grantId: z.uuid(),
@@ -67,6 +119,7 @@ export const readonlyIntegrationReplySchema = z.discriminatedUnion('action', [
   z.strictObject({
     action: z.literal('read'),
     grants: z.array(readonlyMcpGrantSchema).max(100),
+    hooks: z.array(hookGrant).max(100).default([]),
     claudeHookReason: z.string().max(500),
     codexHookReason: z.string().max(500),
     claudeMcpReason: z.string().max(500),
@@ -78,9 +131,20 @@ export const readonlyIntegrationReplySchema = z.discriminatedUnion('action', [
           sessionId: z.uuid(),
           hostId: z.uuid(),
           runId: z.uuid().nullable(),
-          action: z.enum(['approve', 'revoke', 'invoke']),
+          action: z.enum([
+            'approve',
+            'revoke',
+            'invoke',
+            'approve-hook',
+            'revoke-hook',
+            'launch-hook',
+            'hold-hook',
+            'enable-hook',
+            'disable-hook',
+          ]),
           actor: z.enum(['operator', 'host']),
           tool: toolName.nullable(),
+          hook: hookName.optional(),
           revision: fingerprint,
           at: z.iso.datetime(),
         }),
@@ -96,6 +160,10 @@ export const readonlyIntegrationReplySchema = z.discriminatedUnion('action', [
     grant: readonlyMcpGrantSchema,
   }),
   z.strictObject({ action: z.literal('revoke') }),
+  z.strictObject({ action: z.literal('inspect-hook'), hook: hookReview }),
+  z.strictObject({ action: z.literal('approve-hook'), hook: hookGrant }),
+  z.strictObject({ action: z.literal('revoke-hook') }),
+  z.strictObject({ action: z.literal('set-hook-enabled'), hook: hookGrant }),
 ]);
 
 export type ReadonlyMcpObservation = z.infer<
@@ -107,4 +175,7 @@ export type ReadonlyIntegrationInput = z.infer<
 >;
 export type ReadonlyIntegrationReply = z.infer<
   typeof readonlyIntegrationReplySchema
+>;
+export type ClaudePlanHookDefinition = z.infer<
+  typeof claudePlanHookDefinitionSchema
 >;

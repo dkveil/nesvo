@@ -4,6 +4,10 @@ import {
   type AllowCandidate,
 } from './claude-allow-pattern';
 import type { VerifyMcpTurn } from '../mcp/service';
+import type {
+  ClaudePlanHookGroup,
+  ReadonlyMcpApproval,
+} from '../mcp/readonly-grants';
 import { writeClaudeRunConfig } from '../mcp/claude-config-file';
 import { spawn } from 'node:child_process';
 import { providerEnvironment } from './profiles';
@@ -1370,6 +1374,8 @@ export function startClaude(options: {
   assertFullAccess?: () => void;
   permissionRules?: { allows: (candidate: AllowCandidate) => boolean };
   mcpTurn?: { verify: VerifyMcpTurn; dataDirectory: string };
+  readonlyMcpGrant?: ReadonlyMcpApproval;
+  planHooks?: () => Promise<{ groups: ClaudePlanHookGroup[]; held: string[] }>;
   compact?: { instructions: string | null };
   control?: SessionControlTurn;
   planTurn?: boolean;
@@ -1484,6 +1490,41 @@ export function startClaude(options: {
           : permission.cli;
       const readOnly = options.mode === 'read-only';
       const integrations = await options.mcpTurn?.verify();
+      const isolatedPlan =
+        readOnly && (options.planHooks || options.readonlyMcpGrant);
+      const version = /^(\d+)\.(\d+)\.(\d+)/
+        .exec(inspection.status.version ?? '')
+        ?.slice(1)
+        .map(Number);
+      const [major = 0, minor = 0, patch = 0] = version ?? [];
+      const hookSupported =
+        major > 2 ||
+        (major === 2 && (minor > 1 || (minor === 1 && patch >= 328)));
+      const warnHook = (name: string, detail: string) =>
+        options.onEvent({
+          type: 'tool-activity',
+          activity: makeActivity({
+            id: randomUUID(),
+            kind: 'tool',
+            title: name,
+            status: 'failed',
+            detail,
+          }),
+        });
+      const hooks =
+        readOnly && options.planHooks && hookSupported
+          ? await options.planHooks()
+          : undefined;
+      if (readOnly && options.planHooks && !hookSupported)
+        warnHook(
+          'SessionStart hooks unavailable',
+          'Update Claude Code to 2.1.328 or newer to use reviewed exec-form hooks in Plan.',
+        );
+      for (const name of hooks?.held ?? [])
+        warnHook(
+          name,
+          'The approved SessionStart command changed or was revoked. Review the current definition before running it.',
+        );
       const configured = integrations
         ? { ...integrations.servers, ...integrations.projectServers }
         : {};
@@ -1549,11 +1590,17 @@ export function startClaude(options: {
           options.mcpTurn.dataDirectory,
           !readOnly || canAsk ? servers : {},
           {
-            ...(readOnly || integrations.projectDisablesHooks
-              ? { disableAllHooks: true }
-              : integrations.projectSettings
-                ? {}
-                : { hooks: integrations.projectHooks }),
+            ...(isolatedPlan
+              ? {
+                  hooks: hooks?.groups.length
+                    ? { SessionStart: hooks.groups }
+                    : {},
+                }
+              : readOnly || integrations.projectDisablesHooks
+                ? { disableAllHooks: true }
+                : integrations.projectSettings
+                  ? {}
+                  : { hooks: integrations.projectHooks }),
             ...(readOnly
               ? { permissions: { ask: ['mcp__*'] } }
               : askRules.length
@@ -1569,7 +1616,11 @@ export function startClaude(options: {
             '--settings',
             runConfig.settingsPath,
             '--setting-sources',
-            integrations?.projectSettings ? 'user,project,local' : 'user',
+            isolatedPlan
+              ? ''
+              : integrations?.projectSettings
+                ? 'user,project,local'
+                : 'user',
           ]
         : [
             ...(textOnly || askRules.length
@@ -1673,6 +1724,7 @@ export function startClaude(options: {
       const structured: { output?: { value: unknown } } = {};
       let successful = false;
       let initialized = false;
+      let mcpInventory = new Map<string, string[]>();
       let providerFailure: string | null = null;
       let rateLimitFailure: string | null = null;
       let rateLimitResetsAt: string | null = null;
@@ -1893,16 +1945,53 @@ export function startClaude(options: {
           emit({ type: 'approval', approval: ask.approval, subject });
           return;
         }
-        const recheckRule = options.permissionRules
-          ? () =>
-              claudeAllowCandidate(
-                options.directory,
-                String(request.tool_name),
-                ask.input,
-                servers,
-                request.blocked_path,
-              )
-          : undefined;
+        if (readOnly && options.readonlyMcpGrant) {
+          const configured = Object.entries(servers).filter(([server]) =>
+            subject.tool.startsWith(`mcp__${server}__`),
+          );
+          if (configured.length === 1) {
+            const [server, value] = configured[0]!;
+            const definition = object(value);
+            const names = mcpInventory.get(server);
+            const tool = subject.tool.slice(`mcp__${server}__`.length);
+            const grant = options.readonlyMcpGrant;
+            let allowed = false;
+            try {
+              allowed =
+                !!definition &&
+                !!names?.includes(tool) &&
+                grant.candidate(server, tool) &&
+                grant.allow(server, tool, subject.input, {
+                  definition,
+                  tools: names,
+                });
+            } catch {
+              allowed = false;
+            }
+            if (allowed) {
+              try {
+                answerApproval(ask.requestId, {
+                  behavior: 'allow',
+                  input: ask.input,
+                });
+              } catch {
+                fail('Claude permission answer could not be delivered.');
+              }
+              return;
+            }
+          }
+        }
+        const recheckRule =
+          options.permissionRules && !readOnly
+            ? () =>
+                claudeAllowCandidate(
+                  options.directory,
+                  String(request.tool_name),
+                  ask.input,
+                  servers,
+                  request.blocked_path,
+                )
+            : undefined;
         const eligibility = recheckRule?.();
         const candidate =
           eligibility && 'kind' in eligibility ? eligibility : undefined;
@@ -2158,6 +2247,32 @@ export function startClaude(options: {
           } else {
             initialized = true;
             reportedModel = value.model;
+            const names = value.tools;
+            if (
+              readOnly &&
+              options.readonlyMcpGrant &&
+              Array.isArray(names) &&
+              names.length <= 1000 &&
+              Array.isArray(value.mcp_servers)
+            ) {
+              const status = mcpStatusMap(value.mcp_servers, claudeMcpStatus);
+              mcpInventory = new Map(
+                Object.keys(servers).flatMap(server => {
+                  if (status.get(server)?.status !== 'connected') return [];
+                  const prefix = `mcp__${server}__`;
+                  return [
+                    [
+                      server,
+                      names.flatMap((name: unknown) =>
+                        typeof name === 'string' && name.startsWith(prefix)
+                          ? [name.slice(prefix.length)]
+                          : [],
+                      ),
+                    ],
+                  ];
+                }),
+              );
+            }
             if (control && !isClaudeControlServer(value.mcp_servers))
               controlUnavailable();
             if (options.browser && !browserConnected(value.mcp_servers)) {

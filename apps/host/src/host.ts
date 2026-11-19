@@ -21,7 +21,7 @@ import {
 import { Effect } from 'effect';
 import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
 import { CostStore } from './cost-store';
-import { inspectClaude } from './providers/claude';
+import { inspectClaude, inspectClaudeMcp } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { ProviderProfiles, profileEnvironment } from './providers/profiles';
 import { mcpConnections } from './mcp/connections';
@@ -60,6 +60,7 @@ import { ProviderUsageService } from './providers/usage-service';
 import { ProviderUsageGates, ProviderUsageHeld } from './providers/usage-gates';
 import { ReadonlyMcpGrants } from './mcp/readonly-grants';
 import { inspectCodexGrant } from './providers/codex';
+import { mcpRecord } from './providers/mcp-native';
 import { DiscoveryQueue } from './process/discovery-queue';
 import { reviewWorkingRules } from './working-rules';
 import { WorkflowRunStore } from './workflows/store';
@@ -443,20 +444,51 @@ export const serveHost = ({
       const readonlyGrants = new ReadonlyMcpGrants(
         database,
         id => store.get(id),
-        async (session, server, signal) =>
-          inspectCodexGrant(
-            session.directory,
-            server,
+        async (session, server, signal) => {
+          const profile = await profiles.directory(
+            session.provider,
+            session.profileId,
             signal,
-            profileEnvironment(
-              session.provider,
-              await profiles.directory(
-                session.provider,
-                session.profileId,
-                signal,
-              ),
-            ),
-          ),
+          );
+          const environment = profileEnvironment(session.provider, profile);
+          if (session.provider === 'Codex')
+            return inspectCodexGrant(
+              session.directory,
+              server,
+              signal,
+              environment,
+            );
+          const verify = await mcpPolicy.prepare(
+            session.provider,
+            session.directory,
+            signal,
+            profile,
+          );
+          const policy = await verify();
+          const definition = mcpRecord(
+            policy.projectServers[server] ?? policy.servers[server],
+          );
+          if (!definition)
+            throw new SessionError(
+              'unavailable',
+              'Select a configured and trusted MCP server.',
+            );
+          const runtime = (
+            await inspectClaudeMcp(
+              session.directory,
+              directory,
+              { [server]: definition },
+              signal,
+              environment,
+            )
+          ).get(server);
+          if (runtime?.status !== 'connected' || !runtime.tools?.length)
+            throw new SessionError(
+              'unavailable',
+              'Claude Code did not report a connected MCP tool inventory.',
+            );
+          return { definition, tools: runtime.tools };
+        },
       );
       const usage = new ProviderUsageService();
       const usageGates = new ProviderUsageGates(

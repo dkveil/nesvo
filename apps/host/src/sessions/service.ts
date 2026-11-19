@@ -183,7 +183,10 @@ import {
   ProviderUsageHeld,
   type ProviderUsageGates,
 } from '../providers/usage-gates';
-import type { ReadonlyMcpGrants } from '../mcp/readonly-grants';
+import type {
+  ReadonlyMcpApproval,
+  ReadonlyMcpGrants,
+} from '../mcp/readonly-grants';
 import type { ExternalSessionIngress } from '../external-session-ingress';
 import {
   executeWorktreeSetup,
@@ -5068,6 +5071,31 @@ export class SessionService {
         }
         const assertFullAccess = () => this.requireFullAccess(session);
         if (session.mode === 'full-access' && !readOnly) assertFullAccess();
+        const grants = this.options.readonlyGrants;
+        const readonlyMcpGrant: ReadonlyMcpApproval | undefined =
+          mcpTurn && session.mode === 'read-only' && grants?.hasGrant(session)
+            ? {
+                candidate: (server, tool) =>
+                  grants.candidate(session, server, tool),
+                allow: (server, tool, input, observation) => {
+                  if (
+                    controller.signal.aborted ||
+                    inboxRules?.gate.holds({
+                      tool: `mcp__${server}__${tool}`,
+                      input,
+                    })
+                  )
+                    return false;
+                  return grants.allow(
+                    session,
+                    server,
+                    tool,
+                    observation,
+                    randomUUID(),
+                  );
+                },
+              }
+            : undefined;
         provider =
           session.provider === 'Codex'
             ? startCodex({
@@ -5081,34 +5109,7 @@ export class SessionService {
                   !privateResponse,
                 environment: turnEnvironment,
                 mcpTurn,
-                readonlyMcpGrant:
-                  mcpTurn && this.options.readonlyGrants
-                    ? {
-                        candidate: (server, tool) =>
-                          this.options.readonlyGrants!.candidate(
-                            session,
-                            server,
-                            tool,
-                          ),
-                        allow: (server, tool, input, observation) => {
-                          if (
-                            controller.signal.aborted ||
-                            inboxRules?.gate.holds({
-                              tool: `mcp__${server}__${tool}`,
-                              input,
-                            })
-                          )
-                            return false;
-                          return this.options.readonlyGrants!.allow(
-                            session,
-                            server,
-                            tool,
-                            observation,
-                            randomUUID(),
-                          );
-                        },
-                      }
-                    : undefined,
+                readonlyMcpGrant,
                 sessionId: session.providerSessionId,
                 mode:
                   session.mode === 'full-access' && !readOnly
@@ -5172,6 +5173,13 @@ export class SessionService {
               })
             : startClaude({
                 ...options,
+                readonlyMcpGrant,
+                planHooks:
+                  mcpTurn &&
+                  session.mode === 'read-only' &&
+                  grants?.hasHooks(session.id)
+                    ? () => grants.planHooks(session, controller.signal)
+                    : undefined,
                 effort: session.effort,
                 environment: turnEnvironment,
                 ...(mcpTurn

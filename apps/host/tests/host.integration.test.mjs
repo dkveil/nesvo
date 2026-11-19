@@ -444,110 +444,260 @@ test(
 );
 
 test(
-  'D88 a Codex MCP grant verifies the live tool schema before automatic approval',
-  { timeout: 45_000 },
+  'D88 Claude Plan isolates verified hooks and grants only the live MCP inventory',
+  { timeout: 60_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-d88-mcp-grant-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-d88-plan-grants-')),
     );
-    const codex = join(directory, 'codex-config');
-    const toolSchema = join(directory, 'tool-schema.json');
-    const pid = join(directory, 'fixture-pid');
-    await mkdir(codex);
+    const config = join(directory, 'profile');
+    const mcpLog = join(directory, 'launch.jsonl');
+    const script = join(directory, 'session start.cjs');
+    await mkdir(config);
+    await writeFile(script, 'console.log("Plan context");');
     await writeFile(
-      join(codex, 'config.toml'),
-      '[mcp_servers.search]\nurl = "https://search.example.test/mcp"\n',
-    );
-    await writeFile(
-      toolSchema,
+      join(config, '.claude.json'),
       JSON.stringify({
-        type: 'object',
-        properties: { query: { type: 'string' } },
+        mcpServers: { fixture: { command: process.execPath, args: [script] } },
       }),
     );
-    const host = launch(directory, pid, {
-      CODEX_HOME: codex,
-      NESVO_CODEX_FIXTURE_MCP_APPROVAL: '1',
-      NESVO_FIXTURE_MCP_GRANT_SCHEMA: toolSchema,
+    const host = launch(directory, join(directory, 'pid'), {
+      CLAUDE_CONFIG_DIR: config,
+      NESVO_FIXTURE_PLAN_GRANTS: '1',
+      NESVO_FIXTURE_MCP_LOG: mcpLog,
     });
     t.after(async () => {
       if (host.child.exitCode === null) await host.stop();
       await rm(directory, { recursive: true, force: true });
     });
     const created = await host.request('create-session', {
-      title: 'Grant fixture',
-      provider: 'Codex',
-      model: 'fixture-codex',
+      title: 'Plan grants',
       directory,
+      model: 'sonnet',
       mode: 'read-only',
     });
     assert.equal(created.type, 'session', JSON.stringify(created));
-    const target = { sessionId: created.session.id, server: 'search' };
-    const inspected = await host.request('readonly-integration-grants', {
-      action: 'inspect-mcp',
-      ...target,
+    const sessionId = created.session.id;
+    const call = async input => {
+      const response = await host.request('readonly-integration-grants', input);
+      assert.equal(
+        response.type,
+        'readonly-integration-grants',
+        JSON.stringify(response),
+      );
+      return response.reply;
+    };
+    const definition = {
+      name: 'Approved SessionStart',
+      matcher: '',
+      command: {
+        executable: process.execPath,
+        argv: [script],
+        files: [script],
+        timeoutMs: 5000,
+      },
+    };
+    const inspected = await call({
+      action: 'inspect-hook',
+      sessionId,
+      definition,
     });
-    assert.equal(
-      inspected.type,
-      'readonly-integration-grants',
-      JSON.stringify(inspected),
-    );
-    const approval = await host.request('readonly-integration-grants', {
-      action: 'approve-mcp',
+    const approved = await call({
+      action: 'approve-hook',
+      sessionId,
+      definition,
+      revision: inspected.hook.revision,
       actionId: randomUUID(),
-      revision: inspected.reply.observation.revision,
-      selection: { kind: 'tool', tool: 'lookup' },
-      ...target,
     });
-    assert.equal(
-      approval.reply.action,
-      'approve-mcp',
-      JSON.stringify(approval),
-    );
-    const send = () =>
-      host.request('send-message', {
-        sessionId: target.sessionId,
+    assert.equal(approved.hook.enabled, false);
+    await call({
+      action: 'set-hook-enabled',
+      grantId: approved.hook.id,
+      enabled: true,
+      actionId: randomUUID(),
+    });
+    const target = { sessionId, server: 'fixture' };
+    const inventory = await call({ action: 'inspect-mcp', ...target });
+    assert.equal(inventory.observation.transport, 'stdio');
+    const granted = await call({
+      action: 'approve-mcp',
+      ...target,
+      revision: inventory.observation.revision,
+      selection: { kind: 'tool', tool: 'lookup' },
+      actionId: randomUUID(),
+    });
+    const send = async () => {
+      const request = await host.request('send-message', {
+        sessionId,
         messageId: randomUUID(),
         text: 'fixture:ask-mcp',
       });
-    const granted = await send();
-    assert.equal(granted.type, 'session', JSON.stringify(granted));
+      assert.equal(request.type, 'session', JSON.stringify(request));
+      return request.session.runId;
+    };
+    const completed = async runId =>
+      host.event(
+        value =>
+          value.id === sessionId &&
+          value.runId === runId &&
+          ['completed', 'failed'].includes(value.status),
+      );
+    const first = await completed(await send());
+    assert.equal(first.status, 'completed', first.error);
+    const launchLog = async () =>
+      (await readFile(mcpLog, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(JSON.parse)
+        .at(-1);
+    assert.equal((await launchLog()).settingSources, '');
+    assert.deepEqual((await launchLog()).hooks.SessionStart[0].hooks[0].args, [
+      script,
+    ]);
+    const history = await call({ action: 'read', sessionId });
+    assert.ok(
+      history.history.some(
+        entry =>
+          entry.action === 'invoke' &&
+          entry.tool === 'lookup' &&
+          entry.runId === first.runId,
+      ),
+    );
+    await writeFile(script, 'console.log("Changed Plan context");');
+    const second = await completed(await send());
+    assert.equal(second.status, 'completed', second.error);
+    assert.deepEqual((await launchLog()).hooks, {});
+    assert.ok(
+      (await call({ action: 'read', sessionId })).history.some(
+        entry => entry.action === 'hold-hook',
+      ),
+    );
+    await call({
+      action: 'revoke',
+      grantId: granted.grant.id,
+      actionId: randomUUID(),
+    });
+    const pending = await send();
     await host.event(
       value =>
-        value.id === target.sessionId &&
-        value.runId === granted.session.runId &&
-        value.status === 'completed',
+        value.id === sessionId &&
+        value.runId === pending &&
+        value.pendingApprovals.length > 0,
     );
-    const history = await host.request('readonly-integration-grants', {
-      action: 'read',
-      sessionId: target.sessionId,
-    });
-    assert.equal(history.reply.history[0].action, 'invoke');
-    await writeFile(
-      toolSchema,
-      JSON.stringify({
-        type: 'object',
-        properties: { query: { type: 'string', minLength: 1 } },
-      }),
-    );
-    const changed = await send();
-    assert.equal(changed.type, 'session', JSON.stringify(changed));
-    const pending = await host.event(
-      value =>
-        value.id === target.sessionId &&
-        value.runId === changed.session.runId &&
-        value.pendingApprovals.length,
-    );
-    assert.equal(
-      pending.pendingApprovals[0].title,
-      'Use MCP tool search / lookup',
-    );
-    await host.request('stop-run', {
-      sessionId: target.sessionId,
-      runId: changed.session.runId,
-    });
+    await host.request('stop-run', { sessionId, runId: pending });
   },
 );
+
+for (const transport of ['https', 'stdio'])
+  test(
+    `D88 a Codex ${transport} MCP grant verifies the live tool schema before automatic approval`,
+    { timeout: 45_000 },
+    async t => {
+      const directory = await realpath(
+        await mkdtemp(join(tmpdir(), 'nesvo-d88-mcp-grant-')),
+      );
+      const codex = join(directory, 'codex-config');
+      const toolSchema = join(directory, 'tool-schema.json');
+      const pid = join(directory, 'fixture-pid');
+      await mkdir(codex);
+      await writeFile(
+        join(codex, 'config.toml'),
+        '[mcp_servers.search]\n' +
+          (transport === 'https'
+            ? 'url = "https://search.example.test/mcp"\n'
+            : 'command = "node"\nargs = ["read-probe.cjs"]\n'),
+      );
+      await writeFile(
+        toolSchema,
+        JSON.stringify({
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        }),
+      );
+      const host = launch(directory, pid, {
+        CODEX_HOME: codex,
+        NESVO_CODEX_FIXTURE_MCP_APPROVAL: '1',
+        NESVO_FIXTURE_MCP_GRANT_SCHEMA: toolSchema,
+      });
+      t.after(async () => {
+        if (host.child.exitCode === null) await host.stop();
+        await rm(directory, { recursive: true, force: true });
+      });
+      const created = await host.request('create-session', {
+        title: 'Grant fixture',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        directory,
+        mode: 'read-only',
+      });
+      assert.equal(created.type, 'session', JSON.stringify(created));
+      const target = { sessionId: created.session.id, server: 'search' };
+      const inspected = await host.request('readonly-integration-grants', {
+        action: 'inspect-mcp',
+        ...target,
+      });
+      assert.equal(
+        inspected.type,
+        'readonly-integration-grants',
+        JSON.stringify(inspected),
+      );
+      assert.equal(inspected.reply.observation.transport, transport);
+      const approval = await host.request('readonly-integration-grants', {
+        action: 'approve-mcp',
+        actionId: randomUUID(),
+        revision: inspected.reply.observation.revision,
+        selection: { kind: 'tool', tool: 'lookup' },
+        ...target,
+      });
+      assert.equal(
+        approval.reply.action,
+        'approve-mcp',
+        JSON.stringify(approval),
+      );
+      const send = () =>
+        host.request('send-message', {
+          sessionId: target.sessionId,
+          messageId: randomUUID(),
+          text: 'fixture:ask-mcp',
+        });
+      const granted = await send();
+      assert.equal(granted.type, 'session', JSON.stringify(granted));
+      await host.event(
+        value =>
+          value.id === target.sessionId &&
+          value.runId === granted.session.runId &&
+          value.status === 'completed',
+      );
+      const history = await host.request('readonly-integration-grants', {
+        action: 'read',
+        sessionId: target.sessionId,
+      });
+      assert.equal(history.reply.history[0].action, 'invoke');
+      await writeFile(
+        toolSchema,
+        JSON.stringify({
+          type: 'object',
+          properties: { query: { type: 'string', minLength: 1 } },
+        }),
+      );
+      const changed = await send();
+      assert.equal(changed.type, 'session', JSON.stringify(changed));
+      const pending = await host.event(
+        value =>
+          value.id === target.sessionId &&
+          value.runId === changed.session.runId &&
+          value.pendingApprovals.length,
+      );
+      assert.equal(
+        pending.pendingApprovals[0].title,
+        'Use MCP tool search / lookup',
+      );
+      await host.request('stop-run', {
+        sessionId: target.sessionId,
+        runId: changed.session.runId,
+      });
+    },
+  );
 
 test(
   'D88 custom worktree commands verify Git identity and refuse a changed pinned provider',

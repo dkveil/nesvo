@@ -8,6 +8,7 @@ export type NativeMcpStatus = {
   status: McpConnectionStatus;
   logout: boolean;
   waiting: boolean;
+  tools?: string[];
 };
 
 export type NativeMcpAction = Exclude<McpConnectionAction, 'reconnect'>;
@@ -31,6 +32,13 @@ export function claudeMcpStatus(row: Record<string, unknown>): NativeMcpStatus {
             : 'unavailable',
     logout: false,
     waiting: status === 'pending' || status === 'connecting',
+    ...(Array.isArray(row.tools) && row.tools.length <= 100
+      ? {
+          tools: row.tools
+            .map(tool => mcpRecord(tool)?.name)
+            .filter((name): name is string => typeof name === 'string'),
+        }
+      : {}),
   };
 }
 

@@ -2,8 +2,9 @@ import type { ProviderToolSubject } from '../inbox-rules/turn-gate';
 import { isDeepStrictEqual } from 'node:util';
 import { codexProjectOverride, tomlInline } from '../mcp/codex-overrides';
 import {
-  grantEndpoint,
+  grantTransport,
   type NativeMcpObservation,
+  type ReadonlyMcpApproval,
 } from '../mcp/readonly-grants';
 import type { VerifyMcpTurn } from '../mcp/service';
 import { spawn } from 'node:child_process';
@@ -1189,8 +1190,8 @@ export async function inspectCodexGrant(
       throw new Error('Codex does not report native approvals for MCP tools.');
     const configured = await codexServerDefinitions(peer, directory);
     const definition = object(configured[server]);
-    if (!definition || !grantEndpoint(definition))
-      throw new Error('Select a configured HTTPS MCP server.');
+    if (!definition || !grantTransport(definition))
+      throw new Error('Select a configured stdio or HTTPS MCP server.');
     return { definition, tools: await codexGrantInventory(peer, server) };
   } finally {
     signal.removeEventListener('abort', abort);
@@ -1677,15 +1678,7 @@ type CodexRunOptions = {
   controlTools?: readonly SessionControlToolDefinition[];
   outputSchema?: Record<string, unknown>;
   mcpTurn?: VerifyMcpTurn;
-  readonlyMcpGrant?: {
-    candidate: (server: string, tool: string) => boolean;
-    allow: (
-      server: string,
-      tool: string,
-      input: RecordValue,
-      observation: NativeMcpObservation,
-    ) => boolean;
-  };
+  readonlyMcpGrant?: ReadonlyMcpApproval;
   instructionsOnly?: boolean;
   isolatedContext?: boolean;
   summaryInstructions?: string;
@@ -2100,7 +2093,7 @@ export function startCodex(options: CodexRunOptions): {
           options.mode === 'read-only' &&
           grant &&
           definition &&
-          grantEndpoint(definition) &&
+          grantTransport(definition) &&
           grant.candidate(server, name)
         ) {
           const liveThread = threadId;

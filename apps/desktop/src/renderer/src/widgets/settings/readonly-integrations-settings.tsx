@@ -30,6 +30,7 @@ import {
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { ClaudePlanHookDialog } from './claude-plan-hook-dialog';
 
 type Listing = Extract<ReadonlyIntegrationReply, { action: 'read' }>;
 const serverPattern = /^[A-Za-z0-9_-]{1,100}$/;
@@ -55,7 +56,6 @@ export function ReadonlyIntegrationsSettings({
   const candidates = sessions
     .filter(
       session =>
-        session.provider === 'Codex' &&
         !session.archivedAt &&
         !session.parentId &&
         !session.workflowRunId &&
@@ -70,6 +70,7 @@ export function ReadonlyIntegrationsSettings({
   const [tool, setTool] = useState('');
   const [observation, setObservation] = useState<ReadonlyMcpObservation>();
   const [revoke, setRevoke] = useState<Listing['grants'][number]>();
+  const [revokeHook, setRevokeHook] = useState<Listing['hooks'][number]>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const read = async () => {
@@ -173,14 +174,14 @@ export function ReadonlyIntegrationsSettings({
                     </DialogTitle>
                     <DialogDescription>
                       {observation?.endpoint ??
-                        'Choose a Codex session and a configured HTTPS MCP server.'}
+                        'Choose a Claude Code or Codex session and a configured MCP server.'}
                     </DialogDescription>
                   </DialogHeader>
                   {observation ? (
                     <>
                       <StatusMessage tone="warning">
-                        A granted tool can have side effects. Codex tool hints
-                        are advisory.
+                        A granted tool can have side effects. Provider tool
+                        hints are advisory.
                       </StatusMessage>
                       <div className="max-h-52 overflow-y-auto">
                         {observation.tools.map(entry => (
@@ -277,7 +278,54 @@ export function ReadonlyIntegrationsSettings({
             <SettingsRow
               title="Claude Code Plan hooks"
               description={data.claudeHookReason}
-            />
+            >
+              <ClaudePlanHookDialog
+                hostId={hostId}
+                sessions={candidates.filter(
+                  session => session.provider === 'Claude Code',
+                )}
+                onSaved={read}
+              />
+            </SettingsRow>
+            {data.hooks.map(hook => {
+              const session = sessions.find(item => item.id === hook.sessionId);
+              return (
+                <SettingsRow
+                  key={hook.id}
+                  title={hook.name}
+                  description={`${session?.title ?? 'Saved session'} · SessionStart${hook.matcher ? ` (${hook.matcher})` : ''}`}
+                >
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => {
+                      setError('');
+                      void window.nesvo
+                        .readonlyIntegrationGrants(
+                          {
+                            action: 'set-hook-enabled',
+                            grantId: hook.id,
+                            enabled: !hook.enabled,
+                            actionId: crypto.randomUUID(),
+                          },
+                          hostId,
+                        )
+                        .then(read)
+                        .catch(reason => setError(errorDetail(reason)));
+                    }}
+                  >
+                    {hook.enabled ? 'Disable' : 'Enable in Plan'}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setRevokeHook(hook)}
+                  >
+                    Revoke
+                  </Button>
+                </SettingsRow>
+              );
+            })}
             <SettingsRow
               title="Codex Read-only hooks"
               description={data.codexHookReason}
@@ -288,8 +336,8 @@ export function ReadonlyIntegrationsSettings({
             />
             {!candidates.length && (
               <SettingsRow
-                title="Codex MCP grants"
-                description="Open a standalone Codex session on this computer to grant a tool."
+                title="MCP grants"
+                description="Open a standalone Claude Code or Codex session on this computer to grant a tool."
               />
             )}
             {data.grants.map(grant => (
@@ -343,9 +391,15 @@ export function ReadonlyIntegrationsSettings({
                       approve: 'Grant approved',
                       revoke: 'Grant revoked',
                       invoke: 'Tool allowed',
+                      'approve-hook': 'Hook approved',
+                      'revoke-hook': 'Hook revoked',
+                      'launch-hook': 'Hook included in launch',
+                      'hold-hook': 'Hook withheld',
+                      'enable-hook': 'Hook enabled',
+                      'disable-hook': 'Hook disabled',
                     }[entry.action]
                   }
-                  description={`${entry.tool ?? 'Server scope'} · ${new Date(entry.at).toLocaleString()}`}
+                  description={`${entry.hook ?? entry.tool ?? 'Server scope'} · ${new Date(entry.at).toLocaleString()}`}
                 />
               ))
             ) : (
@@ -370,6 +424,35 @@ export function ReadonlyIntegrationsSettings({
                 action: 'revoke',
                 actionId: crypto.randomUUID(),
                 grantId: revoke.id,
+              },
+              hostId,
+            );
+            await read();
+            return true;
+          } catch (reason) {
+            setError(errorDetail(reason));
+            return false;
+          }
+        }}
+      >
+        {error && <StatusMessage tone="error">{error}</StatusMessage>}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={!!revokeHook}
+        onOpenChange={value => {
+          if (!value) setRevokeHook(undefined);
+        }}
+        title="Revoke SessionStart hook?"
+        description="Future Plan launches will omit this command."
+        confirmLabel="Revoke"
+        onConfirm={async () => {
+          if (!revokeHook) return true;
+          try {
+            await window.nesvo.readonlyIntegrationGrants(
+              {
+                action: 'revoke-hook',
+                actionId: crypto.randomUUID(),
+                grantId: revokeHook.id,
               },
               hostId,
             );

@@ -490,6 +490,12 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           document TEXT NOT NULL CHECK (json_valid(document))
         );
         CREATE INDEX IF NOT EXISTS readonly_mcp_grants_session ON readonly_mcp_grants (session_id);
+        CREATE TABLE IF NOT EXISTS readonly_claude_hooks (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          document TEXT NOT NULL CHECK (json_valid(document))
+        );
+        CREATE INDEX IF NOT EXISTS readonly_claude_hooks_session ON readonly_claude_hooks (session_id);
         CREATE TABLE IF NOT EXISTS readonly_integration_actions (
           id TEXT PRIMARY KEY,
           payload TEXT NOT NULL,

@@ -189,7 +189,11 @@ const runEnvironment = () => ({
 });
 
 if (args.length === 1 && args[0] === '--version') {
-  console.log('2.1.0 (Claude Code fixture)');
+  console.log(
+    process.env.NESVO_FIXTURE_PLAN_GRANTS
+      ? '2.1.328 (Claude Code fixture)'
+      : '2.1.0 (Claude Code fixture)',
+  );
 } else if (args.length === 1 && args[0] === '--help') {
   console.log(
     flags
@@ -217,8 +221,9 @@ if (args.length === 1 && args[0] === '--version') {
   writeFileSync(join(process.env.NESVO_TEST_MCP_AUTH, 'claude-authorized'), '');
   console.log('fixture-private-oauth-output');
 } else if (
-  process.env.NESVO_TEST_MCP_AUTH &&
+  (process.env.NESVO_TEST_MCP_AUTH || process.env.NESVO_FIXTURE_PLAN_GRANTS) &&
   args.includes('--strict-mcp-config') &&
+  args.includes('--no-session-persistence') &&
   args[args.indexOf('--setting-sources') + 1] === '' &&
   args[args.indexOf('--mcp-config') + 1] !== '{"mcpServers":{}}' &&
   !args.includes('--session-id')
@@ -233,7 +238,7 @@ if (args.length === 1 && args[0] === '--version') {
   const { mcpServers } = JSON.parse(
     readFileSync(args[args.indexOf('--mcp-config') + 1], 'utf8'),
   );
-  const root = process.env.NESVO_TEST_MCP_AUTH;
+  const root = process.env.NESVO_TEST_MCP_AUTH ?? process.cwd();
   for await (const line of createInterface({ input: process.stdin })) {
     const frame = JSON.parse(line);
     assert.equal(frame.type, 'control_request');
@@ -243,9 +248,13 @@ if (args.length === 1 && args[0] === '--version') {
       response = {
         mcpServers: Object.keys(mcpServers).map(name => ({
           name,
+          ...(process.env.NESVO_FIXTURE_PLAN_GRANTS && name === 'fixture'
+            ? { tools: [{ name: 'lookup' }] }
+            : {}),
           status:
             {
               'fixture-ready': 'connected',
+              fixture: 'connected',
               'fixture-oauth': existsSync(join(root, 'claude-authorized'))
                 ? 'connected'
                 : 'needs-auth',
@@ -505,7 +514,16 @@ if (args.length === 1 && args[0] === '--version') {
   assert.ok(['', 'user', 'user,project,local'].includes(settingSources));
   assert.equal(values.has('--strict-mcp-config'), true);
   if (permissionMode === 'plan' || permissionMode === 'dontAsk') {
-    assert.equal(settings.disableAllHooks, true);
+    if (process.env.NESVO_FIXTURE_PLAN_GRANTS && settingSources === '') {
+      assert.notEqual(settings.disableAllHooks, true);
+      assert.ok(
+        (settings.hooks?.SessionStart ?? []).every(group =>
+          group.hooks.every(
+            hook => hook.type === 'command' && Array.isArray(hook.args),
+          ),
+        ),
+      );
+    } else assert.equal(settings.disableAllHooks, true);
     if (!hostPrompts) assert.deepEqual(config, { mcpServers: {} });
     else if (settings.permissions || Object.keys(config.mcpServers).length)
       assert.deepEqual(settings.permissions.ask, ['mcp__*']);
@@ -835,7 +853,11 @@ if (args.length === 1 && args[0] === '--version') {
   } else {
     assert.equal(values.has('--json-schema'), false);
     assert.ok(
-      ['user', 'user,project,local'].includes(values.get('--setting-sources')),
+      [
+        'user',
+        'user,project,local',
+        ...(process.env.NESVO_FIXTURE_PLAN_GRANTS ? [''] : []),
+      ].includes(values.get('--setting-sources')),
     );
     assert.equal(values.has('--no-session-persistence'), false);
   }
@@ -857,8 +879,18 @@ if (args.length === 1 && args[0] === '--version') {
     subtype: 'init',
     session_id: sessionId,
     model: `fixture-${values.get('--model') ?? 'default'}`,
-    tools: ['Read', 'Glob', 'Grep'],
+    tools: [
+      'Read',
+      'Glob',
+      'Grep',
+      ...(process.env.NESVO_FIXTURE_PLAN_GRANTS && config.mcpServers.fixture
+        ? ['mcp__fixture__lookup']
+        : []),
+    ],
     mcp_servers: [
+      ...(process.env.NESVO_FIXTURE_PLAN_GRANTS && config.mcpServers.fixture
+        ? [{ name: 'fixture', status: 'connected' }]
+        : []),
       ...(controlTools
         ? [{ name: 'nesvo', status: 'connected', source: 'sdk' }]
         : []),
