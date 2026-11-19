@@ -142,6 +142,8 @@ type AssistantSelection = {
 
 function assistantSubject(row: ActionRow): AssistantSelection | null {
   switch (row.type) {
+    case 'steering':
+      return null;
     case 'rule':
       return {
         hostId: row.item.hostId,
