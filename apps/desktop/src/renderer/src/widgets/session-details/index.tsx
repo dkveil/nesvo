@@ -21,7 +21,6 @@ type Props = {
   session: Session;
   children?: ReactNode;
   permissions?: ReactNode;
-  resultPolicy?: ReactNode;
 };
 
 const DETAILS_CLOCK_MS = 60_000;
@@ -49,12 +48,7 @@ function sessionUsage({ usageTotals: totals }: Session) {
   };
 }
 
-export function SessionDetails({
-  session,
-  children,
-  permissions,
-  resultPolicy,
-}: Props) {
+export function SessionDetails({ session, children, permissions }: Props) {
   const role = sessionRoleLabel(session);
   const usage = sessionUsage(session);
   const now = useNow(DETAILS_CLOCK_MS);
@@ -114,7 +108,6 @@ export function SessionDetails({
           ]}
         />
       </section>
-      {resultPolicy}
       {children}
       {usage && (
         <section aria-label="Usage" className="space-y-4">

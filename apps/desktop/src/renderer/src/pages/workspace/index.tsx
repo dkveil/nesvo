@@ -41,6 +41,7 @@ import {
   FileCode2,
   FileDown,
   FolderCheck,
+  ListChecks,
   FolderInput,
   FolderOpen,
   Gauge,
@@ -215,8 +216,6 @@ import { InboxRulesSettings } from '@/widgets/inbox-rules-settings';
 import { DevicesSettings } from '@/widgets/settings/devices-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
-import { Switch } from '@/shared/ui/switch';
-import { Field } from '@/shared/ui/field';
 import {
   pendingStageQuestion,
   pendingTurnQuestion,
@@ -3132,6 +3131,29 @@ ${text}`
     !browsing && !creating && selected
       ? [
           ...threadActions(selected),
+          {
+            label: selected.reviewEveryResult
+              ? 'Stop reviewing every result'
+              : 'Review every result',
+            icon: <ListChecks />,
+            disabled:
+              !store.hostReady(selectedHostId) ||
+              selected.status === 'running' ||
+              selected.status === 'stopping',
+            onSelect: () =>
+              void desktopApi(selectedHostId)
+                .assignSessionWorkflow({
+                  sessionId: selected.id,
+                  reviewEveryResult: !selected.reviewEveryResult,
+                })
+                .then(session => store.merge([session]))
+                .catch(error =>
+                  setErrors(previous => ({
+                    ...previous,
+                    [selectedKey]: errorDetail(error),
+                  })),
+                ),
+          },
           ...terminalAction(selected),
           exportAction(selected),
         ]
@@ -4396,37 +4418,6 @@ ${text}`
                 <ScrollArea className="min-h-0 flex-1">
                   <SessionDetails
                     session={selected}
-                    resultPolicy={
-                      <Field
-                        label="Review every result"
-                        id="review-every-result"
-                        layout="switch"
-                      >
-                        <Switch
-                          id="review-every-result"
-                          checked={!!selected.reviewEveryResult}
-                          disabled={
-                            !store.hostReady(selectedHostId) ||
-                            selected.status === 'running' ||
-                            selected.status === 'stopping'
-                          }
-                          onCheckedChange={checked => {
-                            void desktopApi(selectedHostId)
-                              .assignSessionWorkflow({
-                                sessionId: selected.id,
-                                reviewEveryResult: checked,
-                              })
-                              .then(session => store.merge([session]))
-                              .catch(error =>
-                                setErrors(previous => ({
-                                  ...previous,
-                                  [selectedKey]: errorDetail(error),
-                                })),
-                              );
-                          }}
-                        />
-                      </Field>
-                    }
                     permissions={
                       selected.provider === 'Claude Code' &&
                       autonomy.data && (
