@@ -115,8 +115,18 @@ export const prepareShell = async (body: string): Promise<StepShell> => {
   };
 };
 
+export type LocalInvocation = {
+  executable: string;
+  args: string[];
+  cwd: string;
+  batch: boolean;
+  logFile: string;
+  mode: string;
+};
+
 export async function runShellStep(
   execution: StepExecution,
+  invocation?: LocalInvocation,
 ): Promise<ShellRun | null> {
   const { env, secrets } = stepEnvironment(execution);
   const combined = new TailBuffer(STEP_OUTPUT_BYTES);
@@ -125,12 +135,15 @@ export async function runShellStep(
   let recording: Promise<void> = Promise.resolve();
   let shell: StepShell | null = null;
   try {
-    shell = await prepareShell(execution.definition.body);
+    if (invocation?.batch)
+      shell = await prepareShell(['"' + invocation.executable + '"', ...invocation.args].join(' '));
+    else if (!invocation) shell = await prepareShell(execution.definition.body);
+    if (invocation) env.NESVO_SESSION_MODE = invocation.mode;
     result = await runOwnedProcess({
-      command: shell.command,
-      args: shell.args,
-      windowsVerbatimArguments: shell.windowsVerbatimArguments,
-      cwd: execution.run.directory,
+      command: shell?.command ?? invocation!.executable,
+      args: shell?.args ?? invocation!.args,
+      windowsVerbatimArguments: shell?.windowsVerbatimArguments ?? false,
+      cwd: invocation?.cwd ?? execution.run.directory,
       env,
       timeoutMs:
         parseDurationMs(execution.definition.timeout) ?? DEFAULT_TIMEOUT_MS,
@@ -157,7 +170,7 @@ export async function runShellStep(
   }
   if (execution.signal.aborted) return null;
   const log = filterResultText(combined.text(), secrets);
-  const file = `attempt-${execution.step.attempt}.log`;
+  const file = invocation?.logFile ?? `attempt-${execution.step.attempt}.log`;
   await execution.evidence.write(execution.step, file, log);
   return {
     process: result,

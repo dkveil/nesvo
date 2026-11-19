@@ -300,7 +300,7 @@ const evaluate = (
   };
 };
 
-const sumUsage = (usages: readonly TurnUsage[]) => {
+export const sumUsage = (usages: readonly TurnUsage[]) => {
   const total = (pick: (usage: TurnUsage) => number | null) => {
     const values = usages
       .map(pick)
@@ -407,7 +407,7 @@ const resolveStepSkill = async (
   return { skillId: usable[0]!.id, skillHash: usable[0]!.contentHash };
 };
 
-const waitForIdle = (
+export const waitForIdle = (
   sessions: Pick<AgentStepSessions, 'onRunFinished'>,
   signal: AbortSignal,
   delayMs: number,

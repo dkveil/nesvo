@@ -662,6 +662,31 @@ export class SessionService {
     );
   }
 
+  async claimWorkflowCheck(
+    directory: string,
+    access: FolderAccess,
+    sessionId: string | null,
+    signal: AbortSignal,
+  ): Promise<() => void> {
+    const request = {
+      directory: canonicalDirectory(directory),
+      access,
+      group: null,
+    };
+    for (;;) {
+      signal.throwIfAborted();
+      if (this.closing)
+        throw new SessionError('busy', 'The host is shutting down.');
+      const claim = this.folders.tryAcquire({
+        ...request,
+        operation: 'run',
+        sessionId,
+      });
+      if (typeof claim === 'function') return claim;
+      await this.folders.whenFree(request, signal);
+    }
+  }
+
   private folderWait(request: FolderRequest): FolderWait | null {
     const blocker = this.folders.blocker(request);
     return blocker
