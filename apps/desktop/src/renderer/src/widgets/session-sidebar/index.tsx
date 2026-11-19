@@ -44,7 +44,7 @@ import {
 } from '@/entities/session';
 import type { WorkflowRun } from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
-import { Badge, CountBadge } from '@/shared/ui/badge';
+import { CountBadge } from '@/shared/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -371,20 +371,20 @@ export function SessionSidebar({
               aria-label="Pinned"
             />
           )}
-          <span className={cn('min-w-0 truncate', unread && 'font-semibold')}>
+          <span
+            className={cn('min-w-0 truncate', unread && 'font-semibold')}
+            title={session.title}
+          >
             {session.title}
           </span>
-          {session.mode === 'full-access' && (
-            <Badge tone="warning" size="xs">
-              Full access
-            </Badge>
-          )}
         </span>
       </Hint>
     );
     const details = (
       <span className="flex min-w-0 items-center gap-1">
-        <span className="min-w-6 shrink-[3] truncate">{directory}</span>
+        <span className="min-w-0 shrink truncate" title={directory}>
+          {directory}
+        </span>
         {branchLabel && (
           <>
             <MetaSeparator />
@@ -405,14 +405,16 @@ export function SessionSidebar({
         {apps.length > 0 && (
           <span
             data-running-apps=""
-            className="flex shrink-0 items-center gap-0.5 font-mono tabular-nums"
+            className="flex shrink-0 items-center gap-0.5"
+            title={runningAppsSummary(apps)}
           >
             <RadioTower
               className="size-2.5 shrink-0 text-sidebar-icon"
               aria-hidden="true"
             />
-            <span className="sr-only">Running apps </span>
-            {runningAppsSummary(apps)}
+            <span className="sr-only">
+              Running apps {runningAppsSummary(apps)}
+            </span>
           </span>
         )}
         {session.pullRequest && (
@@ -443,6 +445,14 @@ export function SessionSidebar({
           </>
         )}
         <span className="min-w-0 flex-1" />
+        {session.mode === 'full-access' && (
+          <span className="shrink-0 font-medium text-warning-foreground">
+            Full access
+          </span>
+        )}
+        {indicator.needsYou && (
+          <span className="ml-auto shrink-0">{status}</span>
+        )}
         <ProviderGlyph
           provider={session.provider}
           className="size-3 text-sidebar-icon"
@@ -468,16 +478,16 @@ export function SessionSidebar({
     return (
       <li
         key={entityKey(session)}
-        className={cn('relative', decoration?.dimmed && 'opacity-60')}
+        className={cn('relative', decoration?.dimmed && 'opacity-90')}
       >
         <ListRow
           tone="sidebar"
           size="sm"
           density={child ? 'tree' : 'two-line'}
-          level={child ? depth + 1 : depth}
+          level={Math.min(child ? depth + 1 : depth, 2)}
           leading={leading}
           title={title}
-          meta={child ? undefined : status}
+          meta={child || indicator.needsYou ? undefined : status}
           trailing={child ? status : undefined}
           description={child ? undefined : details}
           selected={selected}
@@ -503,7 +513,7 @@ export function SessionSidebar({
             },
             'aria-current': selected ? 'page' : undefined,
             'aria-describedby': lifecycleId,
-            'aria-label': `${session.title} · ${directory} · ${indicator.label}${indicator.needsYou ? ' · Needs you' : ''}${unread ? ' · Unread' : ''}${profile ? ` · Account: ${profile}` : ''}`,
+            'aria-label': `${session.title} · ${directory} · ${indicator.label}${indicator.needsYou ? ' · Needs you' : ''}${unread ? ' · Unread' : ''}${profile ? ` · Account: ${profile}` : ''}${session.mode === 'full-access' ? ' · Full access' : ''}`,
           }}
           {...decoration?.item}
         />
@@ -673,8 +683,13 @@ export function SessionSidebar({
               const name = sessionFilterLabels[value];
               return {
                 value,
-                label: count ? String(count) : '',
-                icon: filterIcons[value],
+                label:
+                  value === filter
+                    ? `${name}${count ? ` ${count}` : ''}`
+                    : count
+                      ? String(count)
+                      : '',
+                icon: value === filter ? undefined : filterIcons[value],
                 tooltip: name,
                 ariaLabel: `${name} (${count})`,
               };

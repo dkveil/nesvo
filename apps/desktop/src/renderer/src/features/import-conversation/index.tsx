@@ -10,7 +10,6 @@ import type {
   ProviderProfile,
 } from '@nesvo/contracts';
 import { errorDetail, ProviderGlyph } from '@/entities/session';
-import { cn } from '@/shared/lib/cn';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import { Badge } from '@/shared/ui/badge';
@@ -239,7 +238,7 @@ function ConversationPicker({
   return (
     <DialogContent
       showCloseButton={!pending}
-      className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
+      className="flex h-[min(30rem,calc(100dvh-2rem))] flex-col overflow-y-auto sm:max-w-xl"
     >
       <DialogHeader>
         <DialogTitle>Import conversation</DialogTitle>
@@ -301,6 +300,7 @@ function ConversationPicker({
             {!profileProvider && (
               <SegmentedControl<Provider | 'all'>
                 label="Filter by provider"
+                size="md"
                 options={[
                   { value: 'all', label: 'All' },
                   { value: 'Claude Code', label: 'Claude Code' },
@@ -352,7 +352,7 @@ function ConversationPicker({
               }
             />
           ) : (
-            <ScrollArea className={cn('min-w-0', matches.length > 5 && 'h-60')}>
+            <ScrollArea className="min-h-14 min-w-0 flex-1">
               <div
                 className="space-y-1"
                 aria-label="Conversations"
@@ -370,7 +370,13 @@ function ConversationPicker({
                       title={conversation.title}
                       description={
                         <Hint label={conversation.directory}>
-                          <span>{folderName(conversation.directory)}</span>
+                          <span>
+                            {folderName(conversation.directory)} ·{' '}
+                            {conversation.messageCount}{' '}
+                            {conversation.messageCount === 1
+                              ? 'message'
+                              : 'messages'}
+                          </span>
                         </Hint>
                       }
                       meta={
@@ -380,12 +386,6 @@ function ConversationPicker({
                       }
                       trailing={
                         <>
-                          <span className="text-2xs text-muted-foreground">
-                            {conversation.messageCount}{' '}
-                            {conversation.messageCount === 1
-                              ? 'message'
-                              : 'messages'}
-                          </span>
                           {conversation.adopted && (
                             <Badge size="xs">Imported</Badge>
                           )}
@@ -414,20 +414,21 @@ function ConversationPicker({
           {catalog && (catalog.truncated || !!catalog.skippedFiles) && (
             <StatusMessage>{catalogNotice(catalog)}</StatusMessage>
           )}
-          {selected && (
-            <div className="min-w-0 space-y-1 rounded-control bg-accent px-3 py-2">
-              <p className="text-xs font-medium">Preview</p>
-              <p className="text-xs whitespace-pre-wrap [overflow-wrap:anywhere] text-muted-foreground">
-                {selected.preview}
-              </p>
-            </div>
-          )}
+          <section
+            aria-label="Preview"
+            className="h-20 shrink-0 space-y-1 overflow-auto border-t pt-2"
+          >
+            <p className="text-xs font-medium">Preview</p>
+            <p className="text-xs whitespace-pre-wrap [overflow-wrap:anywhere] text-muted-foreground">
+              {selected?.preview || 'Select a conversation to preview it.'}
+            </p>
+          </section>
           {adoptError && (
             <StatusMessage tone="error">{adoptError}</StatusMessage>
           )}
         </>
       )}
-      <DialogFooter>
+      <DialogFooter className="mt-auto shrink-0">
         <DialogCancel disabled={pending} onClick={onCancel} />
         {available && (
           <Button

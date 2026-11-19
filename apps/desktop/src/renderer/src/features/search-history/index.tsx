@@ -37,6 +37,8 @@ type ResultRow = {
   hostId: HostId;
   group: string;
   title: string;
+  sessionKey?: string;
+  messageMatch?: boolean;
   provider: HistorySearchResult['provider'];
   snippet: HistorySearchResult['snippet'];
   directory: string;
@@ -204,6 +206,8 @@ export function HistorySearchDialog({
         hostId: computer.id,
         group: computer.name,
         title: result.title,
+        sessionKey: `${computer.id}/${result.sessionId}`,
+        messageMatch: !!result.messageId,
         provider: result.provider,
         snippet: result.snippet,
         directory: result.directory,
@@ -310,12 +314,19 @@ export function HistorySearchDialog({
           <Listbox
             id={RESULTS_ID}
             label="History matches"
-            options={rows.map(row => ({
+            options={rows.map((row, index) => ({
+              ariaLabel: `${row.title}, ${row.messageMatch ? 'Message match' : 'Conversation'}`,
               value: row.key,
-              label: row.title,
+              label:
+                row.sessionKey && row.sessionKey === rows[index - 1]?.sessionKey
+                  ? row.messageMatch
+                    ? 'Message match'
+                    : 'Session title match'
+                  : row.title,
               group: row.group,
               icon: <ProviderGlyph provider={row.provider} />,
               description: <HighlightedSnippet {...row.snippet} />,
+              wrapDescription: true,
               trailing: (
                 <>
                   {directoryLabel(row.directory)} ·{' '}

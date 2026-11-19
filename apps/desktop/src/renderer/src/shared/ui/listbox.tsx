@@ -18,6 +18,7 @@ type ListboxOption<T extends string> = {
   value: T;
   label: string;
   description?: ReactNode;
+  wrapDescription?: boolean;
   icon?: ReactNode;
   trailing?: ReactNode;
   group?: string;
@@ -206,7 +207,14 @@ export function Listbox<T extends string>({
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate">{option.label}</span>
                       {option.description && (
-                        <span className="truncate text-2xs text-muted-foreground">
+                        <span
+                          className={cn(
+                            'text-2xs text-muted-foreground',
+                            option.wrapDescription
+                              ? 'line-clamp-2 whitespace-normal break-words'
+                              : 'truncate',
+                          )}
+                        >
                           {option.description}
                         </span>
                       )}

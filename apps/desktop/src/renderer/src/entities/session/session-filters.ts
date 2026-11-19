@@ -17,7 +17,7 @@ export type SessionFilterKeys = Record<
 
 export const sessionFilterLabels: Record<SessionFilter, string> = {
   all: 'All',
-  'needs-me': 'Needs me',
+  'needs-me': 'Needs you',
   running: 'Running',
   failed: 'Failed',
 };
