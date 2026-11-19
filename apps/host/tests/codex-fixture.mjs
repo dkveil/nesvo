@@ -1223,6 +1223,30 @@ if (args.length === 1 && args[0] === '--version') {
       const requestPrompt = prompt.split(
         '\n\nRecovery context supplied by the host, not authorization to repeat previous operations:',
       )[0];
+      if (requestPrompt.startsWith('[nesvo-setup-assistant]')) {
+        assert.equal(params.sandboxPolicy.type, 'readOnly');
+        assert.equal(params.approvalPolicy, 'never');
+        assert.equal(thread.projectDocBytes, 0);
+        assert.doesNotMatch(prompt, /SETUP_DEFINITION_SENTINEL_NOT_IN_PROMPT/);
+        assert.match(prompt, /Hook events: SessionStart/);
+        const recipe = prompt.includes('Propose recipe')
+          ? {
+              id: 'verify-checkout',
+              name: 'Verify checkout',
+              repository: 'git.example.test/org/project',
+              setup: [{ executable: 'prepare-demo', argv: ['--verify'] }],
+            }
+          : null;
+        complete(
+          JSON.stringify({
+            reply: recipe
+              ? 'Review the desired recipe before saving it.'
+              : 'SessionStart was observed. Runtime loading is unverified.',
+            recipe,
+          }),
+        );
+        return;
+      }
       if (
         requestPrompt.startsWith('Advise the owner about Nesvo Inbox routing.')
       ) {

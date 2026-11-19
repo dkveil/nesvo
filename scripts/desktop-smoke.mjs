@@ -186,6 +186,13 @@ async function setupShot(app, page, name) {
 }
 
 async function smokeSetupProfile() {
+  if (setupStage === 'D') {
+    await mkdir(claudeConfigDirectory, { recursive: true });
+    await writeFile(
+      join(claudeConfigDirectory, 'settings.json'),
+      JSON.stringify({ hooks: { SessionStart: [] } }),
+    );
+  }
   const file = join(directory, 'profile.yaml');
   const shared = join(directory, 'shared.yaml');
   const machine = join(directory, 'machine.yaml');
@@ -213,6 +220,67 @@ async function smokeSetupProfile() {
   await page.getByRole('button', { name: 'Close profile sources' }).click();
   await page.getByRole('button', { name: 'Load profile' }).click();
   await page.getByText('Active profile', { exact: true }).waitFor();
+  if (setupStage === 'D') {
+    await page
+      .getByRole('button', { name: 'Ask about setup', exact: true })
+      .click();
+    const drawer = page.getByLabel('Setup assistant', { exact: true });
+    await drawer.getByRole('combobox', { name: 'Provider' }).click();
+    await page.getByRole('option', { name: 'Codex', exact: true }).click();
+    await drawer.getByRole('combobox', { name: 'Model' }).click();
+    await page.getByRole('listbox').getByRole('option').first().click();
+    const ask = async text => {
+      await drawer
+        .getByRole('textbox', { name: 'Message to setup assistant' })
+        .fill(text);
+      await drawer
+        .getByRole('button', { name: 'Send to setup assistant' })
+        .click();
+    };
+    await ask('Which hook is configured?');
+    await drawer
+      .getByText('SessionStart was observed. Runtime loading is unverified.')
+      .waitFor();
+    await drawer
+      .getByRole('textbox', { name: 'Message to setup assistant' })
+      .scrollIntoViewIfNeeded();
+    await setupShot(application, page, 'stage-d-hook-answer');
+    await ask(
+      'Propose recipe using prepare-demo --verify for git.example.test/org/project',
+    );
+    const recipe = drawer.getByRole('article', {
+      name: 'Configuration change Verify checkout',
+    });
+    await recipe
+      .getByRole('button', { name: 'Review diff for Verify checkout' })
+      .click();
+    await recipe
+      .getByRole('button', { name: 'Accept', exact: true })
+      .scrollIntoViewIfNeeded();
+    await setupShot(application, page, 'stage-d-assistant-proposal');
+    await recipe.getByRole('button', { name: 'Accept', exact: true }).click();
+    const confirm = page.getByRole('alertdialog', {
+      name: 'Save profile recipe',
+      exact: true,
+    });
+    await confirm
+      .getByRole('button', { name: 'Save recipe', exact: true })
+      .click();
+    await recipe.getByText('Applied', { exact: true }).waitFor();
+    assert.match(await readFile(machine, 'utf8'), /executable: prepare-demo/);
+    await recipe.getByRole('button', { name: 'Undo', exact: true }).click();
+    await recipe.getByText('Undone', { exact: true }).waitFor();
+    assert.equal(await readFile(machine, 'utf8'), machineDocument);
+    console.log(
+      JSON.stringify({
+        result: 'passed',
+        scenario: 'setup assistant profile recipe and undo',
+        stage: setupStage,
+        platform: process.platform,
+      }),
+    );
+    return;
+  }
   if (setupStage === 'C') {
     await page
       .getByRole('button', { name: 'Close settings', exact: true })
@@ -227,6 +295,7 @@ async function smokeSetupProfile() {
     await pending
       .getByText('Runtime verification is unavailable on this computer.')
       .waitFor();
+    await pending.locator('[data-line]').first().waitFor();
     assert.equal(
       await pending
         .getByRole('button', { name: 'Accept', exact: true })
@@ -268,6 +337,16 @@ async function smokeSetupProfile() {
   await route.getByRole('button', { name: 'Undo', exact: true }).click();
   await route.getByText('Undone', { exact: true }).waitFor();
   assert.equal(await readFile(machine, 'utf8'), machineDocument);
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
+  await writeFile(machine, 'version: 1\ninbox: {defaultRoute: both}\n');
+  await page
+    .getByRole('button', { name: 'Review setup changes', exact: true })
+    .click();
+  await page
+    .getByText('From profile · Inbox and parent session', { exact: true })
+    .waitFor();
   console.log(
     JSON.stringify({
       result: 'passed',
@@ -2568,6 +2647,7 @@ async function smokeDesktop() {
     'portable-checks',
     'setup-profile-v1',
     'setup-detection-v1',
+    'setup-assistant-v1',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

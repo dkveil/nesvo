@@ -281,6 +281,7 @@ async function launchApplication() {
   const env = {
     ...process.env,
     NESVO_SMOKE_TEST: '1',
+    NESVO_TEST_MODE: '1',
     NESVO_DATA_DIR: profile,
     NESVO_TEST_PID_FILE: join(profile, 'processes.json'),
     NESVO_CLAUDE_EXECUTABLE: join(
@@ -662,7 +663,87 @@ try {
     });
   }
   assert.deepEqual(await remoteTurns(), []);
+  const localSetup = await page.evaluate(() =>
+    window.nesvo.setupProfile({ action: 'inspect' }, 'local'),
+  );
+  const remoteProfilePath = '/var/lib/nesvo/profile.yaml';
+  await remoteNode(
+    "require('node:fs').writeFileSync(process.argv[1], 'version: 1\\ninbox: {defaultRoute: inbox}\\n', { mode: 0o600 })",
+    [remoteProfilePath],
+  );
+  const remoteSetup = await page.evaluate(
+    ({ hostId, file }) =>
+      window.nesvo.setupProfile({ action: 'inspect', file }, hostId),
+    { hostId: remoteId, file: remoteProfilePath },
+  );
+  assert.ok(localSetup.ok && remoteSetup.ok);
+  assert.equal(remoteSetup.review.instanceId, remoteHealth.instanceId);
+  assert.notEqual(localSetup.review.instanceId, remoteSetup.review.instanceId);
+  assert.equal(remoteSetup.review.path, remoteProfilePath);
+  const scan = await page.evaluate(
+    hostId =>
+      window.nesvo.setupDetection(
+        { action: 'scan', trigger: 'manual' },
+        hostId,
+      ),
+    remoteId,
+  );
+  assert.equal(scan.scan.instanceId, remoteHealth.instanceId);
+  await assert.rejects(
+    page.evaluate(
+      async ({ hostId, file, localId, remote }) => {
+        const result = await window.nesvo.setupProfile(
+          {
+            action: 'apply',
+            file,
+            instanceId: localId,
+            revision: remote.revision,
+            effectiveRevision: remote.effectiveRevision,
+            actionId: crypto.randomUUID(),
+          },
+          hostId,
+        );
+        if (!result.ok) throw new Error(result.message);
+      },
+      {
+        hostId: remoteId,
+        file: remoteProfilePath,
+        localId: localSetup.review.instanceId,
+        remote: remoteSetup.review,
+      },
+    ),
+    /computer identity changed/i,
+  );
+  const remoteApplied = await page.evaluate(
+    ({ hostId, review }) =>
+      window.nesvo.setupProfile(
+        {
+          action: 'apply',
+          file: review.path,
+          instanceId: review.instanceId,
+          revision: review.revision,
+          effectiveRevision: review.effectiveRevision,
+          actionId: crypto.randomUUID(),
+        },
+        hostId,
+      ),
+    { hostId: remoteId, review: remoteSetup.review },
+  );
+  assert.equal(remoteApplied.receipt.status, 'applied');
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.nesvo.setupProfile({ action: 'inspect' }, 'local'),
+    ),
+    localSetup,
+  );
   await disconnectRemote();
+  await assert.rejects(
+    page.evaluate(
+      hostId => window.nesvo.setupProfile({ action: 'inspect' }, hostId),
+      remoteId,
+    ),
+    /connect|offline|disconnected/i,
+  );
   await assert.rejects(
     page.evaluate(
       hostId => window.nesvo.providerUsage({ provider: 'Codex' }, hostId),
@@ -1072,6 +1153,7 @@ try {
     authoritativeCatchUp: true,
     hostScopedProviderUsage: true,
     offlineUsageRejected: true,
+    remoteProfileIsolated: true,
     removePreservedDaemon: true,
   };
 } catch (error) {

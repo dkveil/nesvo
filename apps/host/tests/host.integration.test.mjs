@@ -2747,6 +2747,142 @@ test('setup detection reports bounded passive evidence and keeps changed hooks w
   }
 });
 
+test('setup assistant uses isolated evidence and writes recipes only after a revision-bound owner review', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-setup-assistant-')),
+  );
+  const file = join(root, 'profile.yaml');
+  const original = 'version: 1\n';
+  const claude = join(root, 'claude');
+  await mkdir(claude);
+  await writeFile(file, original);
+  await writeFile(
+    join(claude, 'settings.json'),
+    JSON.stringify({
+      hooks: {
+        SessionStart: [
+          { hooks: [{ command: 'SETUP_DEFINITION_SENTINEL_NOT_IN_PROMPT' }] },
+        ],
+      },
+    }),
+  );
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_PROFILE_PATH: file,
+    CLAUDE_CONFIG_DIR: claude,
+  });
+  try {
+    const profile = (await host.request('setup-profile', { action: 'inspect' }))
+      .result.review;
+    await host.request('setup-profile', {
+      action: 'apply',
+      file,
+      instanceId: profile.instanceId,
+      revision: profile.revision,
+      effectiveRevision: profile.effectiveRevision,
+      actionId: randomUUID(),
+    });
+    const selection = {
+      instanceId: profile.instanceId,
+      provider: 'Codex',
+      model: 'fixture-codex',
+    };
+    const assistant = input =>
+      host.request('setup-assistant', { ...selection, ...input });
+    assert.equal((await assistant({ action: 'read' })).result.sessionId, null);
+    assert.equal(
+      (await assistant({ action: 'read', instanceId: randomUUID() })).result
+        .code,
+      'conflict',
+    );
+    const ask = async text => {
+      const { result } = await assistant({
+        action: 'send',
+        text,
+        messageId: randomUUID(),
+      });
+      assert.ok(result.sessionId, JSON.stringify(result));
+      const finished = await host.event(
+        item =>
+          item.id === result.sessionId &&
+          item.status === 'completed' &&
+          item.messages.at(-2)?.body === text,
+      );
+      assert.match(
+        finished.messages.at(-1).body,
+        /Runtime loading is unverified|desired recipe/,
+      );
+      return result.sessionId;
+    };
+    const first = await ask('Which hook is currently configured?');
+    const second = await ask(
+      'Propose recipe using prepare-demo --verify for git.example.test/org/project',
+    );
+    assert.equal(first, second);
+    const history = async () =>
+      (
+        await host.request('list-config-changes', {
+          area: 'setup-profile-file',
+        })
+      ).result.page.changes;
+    let proposal;
+    for (let attempt = 0; attempt < 60 && !proposal; attempt++) {
+      proposal = (await history()).find(
+        change => change.source.kind === 'assistant',
+      );
+      if (!proposal) await delay(100);
+    }
+    assert.equal(proposal?.status, 'pending');
+    assert.equal(await readFile(file, 'utf8'), original);
+    const applied = (
+      await host.request('decide-config-proposal', {
+        id: proposal.id,
+        revision: proposal.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+      })
+    ).result;
+    assert.equal(applied.receipt?.status, 'applied', JSON.stringify(applied));
+    assert.match(await readFile(file, 'utf8'), /executable: prepare-demo/);
+    const undo = (
+      await host.request('undo-config-change', {
+        id: applied.receipt.id,
+        revision: applied.receipt.revision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(undo.receipt?.status, 'undone', JSON.stringify(undo));
+    assert.equal(await readFile(file, 'utf8'), original);
+    await ask(
+      'Propose recipe again using prepare-demo --verify for git.example.test/org/project',
+    );
+    let secondProposal;
+    for (let attempt = 0; attempt < 60 && !secondProposal; attempt++) {
+      secondProposal = (await history()).find(
+        change =>
+          change.source.kind === 'assistant' && change.status === 'pending',
+      );
+      if (!secondProposal) await delay(100);
+    }
+    assert.ok(secondProposal);
+    const newer = 'version: 1\ninbox: {defaultRoute: both}\n';
+    await writeFile(file, newer);
+    const stale = (
+      await host.request('decide-config-proposal', {
+        id: secondProposal.id,
+        revision: secondProposal.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+      })
+    ).result;
+    assert.equal(stale.receipt?.status, 'conflicted', JSON.stringify(stale));
+    assert.equal(await readFile(file, 'utf8'), newer);
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('configuration permission proposals require exact owner confirmation and honor managed policy', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-config-authority-')),
@@ -5322,6 +5458,7 @@ test(
         'portable-checks',
         'setup-profile-v1',
         'setup-detection-v1',
+        'setup-assistant-v1',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -10991,6 +11128,7 @@ test(
       'portable-checks',
       'setup-profile-v1',
       'setup-detection-v1',
+      'setup-assistant-v1',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -34465,7 +34603,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-18), [
+  assert.deepEqual(capabilities.slice(-19), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -34484,6 +34622,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'portable-checks',
     'setup-profile-v1',
     'setup-detection-v1',
+    'setup-assistant-v1',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {
