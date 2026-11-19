@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
 import { parse as parseToml } from 'smol-toml';
 
 const args = process.argv.slice(2);
@@ -186,6 +187,32 @@ if (args.length === 1 && args[0] === '--version') {
     delta(body);
     complete(body);
   };
+  const requestWorkerFeedback = async () => {
+    for (let attempt = 0; attempt < 60 && !current.completed; attempt++) {
+      const reply = await callControl('session_children', randomUUID(), {});
+      const child = JSON.parse(reply.contentItems[0].text).sessions.find(
+        session => session.title === 'Fixture worker A' && session.runId,
+      );
+      if (child) {
+        for (const text of [
+          'Discard this feedback.',
+          'Check only the example.',
+        ]) {
+          const result = await callControl('session_steer', randomUUID(), {
+            sessionId: child.sessionId,
+            expectedRunId: child.runId,
+            text,
+          });
+          assert.equal(
+            JSON.parse(result.contentItems[0].text).status,
+            'awaiting-owner',
+          );
+        }
+        return;
+      }
+      await delay(100);
+    }
+  };
   const response = (id, result) => emit({ id, result });
   const notify = (method, params) => emit({ method, params });
   const statePath = id => {
@@ -318,6 +345,8 @@ if (args.length === 1 && args[0] === '--version') {
     let workers = [worker('a', 'complete'), worker('b', 'hold')];
     if (variant === 'two-hold')
       workers = [worker('a', 'hold'), worker('b', 'hold')];
+    else if (variant === 'steering')
+      workers = [{ ...worker('a', 'hold'), task: 'fixture:steer-native' }];
     else if (variant === 'mixed')
       workers = [worker('a', 'complete'), worker('b', 'fail')];
     else if (variant === 'recursive') workers = [worker('a', 'recursive')];
@@ -1024,6 +1053,13 @@ if (args.length === 1 && args[0] === '--version') {
         complete('Unknown steering fixture settled.');
       } else {
         response(id, { turnId: current.id });
+        if (current.steerMode === 'fixture:steer-write') {
+          assert.equal(thread.supervised, true);
+          writeFileSync(
+            join(thread.cwd, 'notes.md'),
+            'Keep examples for the next release.\n',
+          );
+        }
         complete('Steered: ' + params.input[0].text);
       }
     } else if (method === 'turn/start') {
@@ -1388,7 +1424,9 @@ if (args.length === 1 && args[0] === '--version') {
         const calls = JSON.parse(command.slice('fixture:nesvo '.length));
         void runControl(Array.isArray(calls) ? calls : [calls]);
       } else if (/^fixture:delegate(?:-|$)/.test(command)) {
-        delegate(command.slice('fixture:delegate-'.length) || 'default');
+        const variant = command.slice('fixture:delegate-'.length) || 'default';
+        delegate(variant);
+        if (variant === 'steering') void requestWorkerFeedback();
       } else if (command === 'fixture:disconnect') {
         delta('Codex fixture disconnected.');
         await new Promise(resolve => process.stdout.write('', resolve));
@@ -1489,8 +1527,15 @@ if (args.length === 1 && args[0] === '--version') {
           delta('.');
         }
         complete('Codex fixture finished a long active turn.');
-      } else if (command.startsWith('fixture:steer-')) {
-        current.steerMode = command;
+      } else if (
+        command.startsWith('fixture:steer-') ||
+        requestPrompt.endsWith('\nTask:\nfixture:steer-native')
+      ) {
+        current.steerMode = command.startsWith('fixture:steer-')
+          ? command
+          : 'fixture:steer-native';
+        if (current.steerMode === 'fixture:steer-native')
+          assert.equal(params.sandboxPolicy.type, 'readOnly');
         delta('Waiting for feedback.');
       } else if (command === 'fixture:hold') {
         await hold();

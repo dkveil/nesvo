@@ -30645,6 +30645,96 @@ test('D87 steering stays bound to a child run and queues only after definite ref
   assert.equal(stopped.queue[0].held, true);
 });
 
+test('D87 owner decisions bind worker feedback to the approved task, run and text', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-worker-feedback-')),
+  );
+  const host = launch(directory, join(directory, 'fixture.pid'));
+  t.after(async () => {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory,
+    })
+  ).session;
+  const turn = await host.request('send-message', {
+    sessionId: parent.id,
+    messageId: randomUUID(),
+    text: 'fixture:delegate-steering',
+  });
+  const pending = await host.event(
+    item =>
+      item.id === parent.id &&
+      item.delegations.some(proposal => proposal.status === 'pending'),
+  );
+  const approved = await host.request('decide-delegation', {
+    sessionId: parent.id,
+    runId: turn.session.runId,
+    delegationId: pending.delegations[0].id,
+    decision: 'accept',
+  });
+  assert.equal(approved.type, 'session', JSON.stringify(approved));
+  const worker = await host.event(
+    item =>
+      item.parentId === parent.id &&
+      item.role === 'worker' &&
+      item.steeringRequests?.length === 2 &&
+      agent(item).body === 'Waiting for feedback.',
+  );
+  assert.equal(worker.mode, 'read-only');
+  const [declined, accepted] = worker.steeringRequests;
+  assert.equal(declined.text, 'Discard this feedback.');
+  assert.equal(accepted.text, 'Check only the example.');
+  assert.equal(accepted.coordinatorId, parent.id);
+  const decide = (requestId, decision) => ({
+    sessionId: worker.id,
+    expectedRunId: worker.runId,
+    requestId,
+    actionId: randomUUID(),
+    decision,
+  });
+  assert.equal(
+    (
+      await host.request('decide-child-steering', {
+        ...decide(accepted.id, 'accept'),
+        expectedRunId: randomUUID(),
+      })
+    ).type,
+    'error',
+  );
+  assert.equal(
+    (
+      await host.request(
+        'decide-child-steering',
+        decide(declined.id, 'decline'),
+      )
+    ).receipt.status,
+    'declined',
+  );
+  const input = decide(accepted.id, 'accept');
+  const steered = await host.request('decide-child-steering', input);
+  assert.equal(steered.receipt?.status, 'steered', JSON.stringify(steered));
+  assert.deepEqual(
+    (await host.request('decide-child-steering', input)).receipt,
+    steered.receipt,
+  );
+  const finished = await finishedChild(host, worker.id);
+  assert.equal(finished.runId, worker.runId);
+  assert.equal(agent(finished).body, 'Steered: Check only the example.');
+  assert.deepEqual(
+    finished.messages
+      .filter(message => message.origin === 'steering')
+      .map(message => [message.id, message.body]),
+    [[steered.receipt.messageId, accepted.text]],
+  );
+});
+
 test('D87 reads snapshot-bound child work and resolves an earlier saved result', async t => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-d87-read-')),
