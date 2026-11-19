@@ -20,6 +20,7 @@ import { globalRoot, pathKey, readDefinitionFile } from './definitions';
 import { filterResultText } from './evidence';
 import { latestAttempts, type StepExecution } from './runner';
 import { workflowAdvice } from './advice';
+import type { decisionPrecedentDelivery } from './decision-memory';
 
 const schema = z.toJSONSchema(gateRecommendationOutputSchema, {
   io: 'input',
@@ -33,6 +34,7 @@ type Ports = {
   sessions: SessionService;
   pullRequests: Pick<PullRequests, 'read' | 'files' | 'workflowChecks'>;
   steps: (runId: string) => WorkflowStepRecord[];
+  precedents?: (run: WorkflowRun, step: string) => ReturnType<typeof decisionPrecedentDelivery>;
 };
 
 const nested = (root: string, path: string) => {
@@ -340,6 +342,7 @@ export function gateRecommendation(ports: Ports) {
       );
       if (typeof evidence === 'string') return { ...result, reason: evidence };
       result.head = evidence.head;
+      const precedents = ports.precedents?.(run, step.name);
       const prompt = [
         'Recommend a decision for this workflow gate.',
         'Approve only when the evidence establishes the requested result. Escalate uncertainty. Reference only the verified check names.',
@@ -353,6 +356,7 @@ export function gateRecommendation(ports: Ports) {
             summary: filterResultText(review.summary).slice(0, 3000),
           },
           files: evidence.files,
+          precedents: precedents?.block ?? null,
           checks: evidence.checked.map(item => ({
             name: item.name,
             summary: item.result?.summary,
@@ -371,19 +375,20 @@ export function gateRecommendation(ports: Ports) {
       if (
         !report ||
         !report.references.every(name =>
-          evidence.checked.some(item => item.name === name),
+          evidence.checked.some(item => item.name === name) || precedents?.entries.some(item => item.id === name),
         )
       )
         return {
           ...result,
           reason: 'The provider did not return a verified recommendation.',
         };
+      if (precedents?.entries.length) execution.saveDeliveredRules?.(precedents.entries);
       const verified = { ...report, reason: filterResultText(report.reason) };
       return {
         ...result,
         report: verified,
         outcome:
-          report.recommendation === 'approve' && report.references.length > 0
+          report.recommendation === 'approve' && report.references.some(name => evidence.checked.some(item => item.name === name))
             ? 'would-approve'
             : 'needs-approval',
         reason: verified.reason || 'The provider did not return a reason.',

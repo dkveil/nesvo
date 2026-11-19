@@ -1022,6 +1022,14 @@ The human executor snapshots its typed form, review revision and changed paths b
 
 A configured D83 policy is read from the Global workflows root. The host validates current results, a matching CI wait, repository, target branch, live head and a complete bounded PR diff before asking for a read-only recommendation. The saved recommendation is scoped to the attempt. A terminal gate can accept the bound review only with an explicit hash-bound host activation. Policy and activation are checked again inside the review transaction. Existing guards continue to hold external actions.
 
+### Workflow edits from evidence
+
+The settled-run learner compares validated successful substitutions across distinct runs in the same project. A conditional route suggestion is restricted to an existing edge into an optional pre-done agent step and takes its proposed condition from an owner Fix or Reject comment. A persistent proposal fingerprint prevents repeated suggestions. The shared Inbox queue and assistant change writer handle approval, conflict refusal and Undo. Edits stay scoped to the original file.
+
+### Decision precedents
+
+The host queues a deterministic proposal per owner gate decision when workflow memory or the host-wide switch opts in. The host-wide switch queues review. A workflow can explicitly opt in to saving immediately. The shared rule entry file records its source decision and run, the pinned review identity and bounded evidence references. Creation and Undo use the assistant change writer and its hash checks. The host checks accepted provenance and content hashes before listing or delivering precedents. Recommendations treat the entries as untrusted historical data.
+
 ### Human gates
 
 A `human` step (`apps/host/src/workflows/steps/human.ts`) binds to the latest review version of the run's session, which is the result of the implementation, planning or correction turn that preceded it. The step becomes `awaiting-human` with `reviewId` and `reviewVersion`, and the run becomes `awaiting-human`, in one transaction; then the pass waits. A session without a review binds the gate to no review and the decision rests on the spec alone. When the latest result was already decided outside the gate (changes requested or rejected), the step is `blocked` and the run needs attention instead of waiting on a result nobody can decide. A manual run has no session, so its `human` steps are `skipped` with "Runs without a task session do not wait for a human decision", which keeps manual runs and the portability check unattended; a `human` step followed by an `effect: external` step in the same phase is `blocked` instead, so an external step never runs without a decision. Host shutdown and restart keep a waiting gate as it is and never resolve it. The binding is per step, so it does not depend on the order or shape of the workflow around it.

@@ -1,5 +1,6 @@
 import {
   Eye,
+  BookOpen,
   Redo2,
   Save,
   Settings2,
@@ -135,6 +136,19 @@ export function Toolbar({
           <Redo2 />
         </IconButton>
         <ToolbarSeparator />
+        {state.document.hash && (
+          <IconButton
+            label="Lessons & decisions"
+            aria-pressed={state.selection.kind === 'memory'}
+            onClick={() =>
+              state.select({
+                kind: state.selection.kind === 'memory' ? 'none' : 'memory',
+              })
+            }
+          >
+            <BookOpen />
+          </IconButton>
+        )}
         {overlay.available && (
           <Button
             type="button"

@@ -17,7 +17,7 @@ import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 import { installConfigurationTables } from './workflows/assistant-change-store';
 
-const DATABASE_VERSION = 39;
+const DATABASE_VERSION = 40;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;

@@ -427,6 +427,7 @@ export type WorkflowTurnState =
   'none' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 export type WorkflowTurn = {
+  resultless?: true;
   sessionId: string;
   messageId: string;
   text: string;
@@ -933,6 +934,8 @@ export class SessionService {
       turn.skillHash,
       'workflow',
     );
+    if (turn.resultless && session.runId)
+      this.resultlessRuns.add(session.runId);
     if (ephemeral) session.providerSessionId = randomUUID();
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));

@@ -125,7 +125,7 @@ export class AssistantChangeError extends Error {
 
 const isRuleEntryKind = (
   kind: AssistantChange['kind'],
-): kind is RuleEntryType => kind === 'lesson' || kind === 'gate-rule';
+): kind is RuleEntryType => kind === 'lesson' || kind === 'gate-rule' || kind === 'decision';
 
 const hashOf = (text: string) =>
   createHash('sha256').update(text).digest('hex');

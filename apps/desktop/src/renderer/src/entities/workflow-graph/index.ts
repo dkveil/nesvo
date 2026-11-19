@@ -55,6 +55,7 @@ export type EditorEdge = {
 export type EditorDocument = {
   name: string;
   lanes?: WorkflowLanes | undefined;
+  decisionMemory?: 'review' | 'automatic' | undefined;
   description: string;
   body: string;
   scope: DefinitionScope;
@@ -495,6 +496,7 @@ export const fromCatalog = (
   return {
     name: workflow.name,
     lanes: workflow.lanes,
+    decisionMemory: workflow.decision_memory,
     description: workflow.description,
     body: workflow.body,
     scope: workflow.source.scope,
@@ -538,6 +540,8 @@ export const toFileText = (document: EditorDocument): string => {
   if (document.description)
     lines.push(`description: ${yamlText(document.description)}`);
   if (document.lanes) lines.push(`lanes: ${JSON.stringify(document.lanes)}`);
+  if (document.decisionMemory)
+    lines.push(`decision_memory: ${document.decisionMemory}`);
   lines.push(`steps: [${names.map(yamlName).join(', ')}]`);
   lines.push('edges:');
   for (const edge of document.edges)

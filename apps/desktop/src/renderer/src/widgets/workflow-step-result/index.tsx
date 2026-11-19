@@ -276,7 +276,9 @@ export function StepResult({
         <p className="leading-5 text-muted-foreground">
           {state === 'running'
             ? 'Running. The result appears here when the step finishes.'
-            : (stateNotes[state] ?? 'No result was reported.')}
+            : record?.state === 'awaiting-human' && record.decisionForm
+              ? null
+              : (stateNotes[state] ?? 'No result was reported.')}
         </p>
       )}
       {record?.state === 'awaiting-human' && record.decisionForm && (

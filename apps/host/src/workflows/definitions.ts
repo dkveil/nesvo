@@ -155,7 +155,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'policy',
     'max_depth',
   ],
-  workflow: ['name', 'description', 'decisions', 'lanes', 'steps', ...graphFields],
+  workflow: ['name', 'description', 'decisions', 'decision_memory', 'lanes', 'steps', ...graphFields],
   spec: ['workflow', 'pipeline', 'title'],
 };
 const legacyFields: Partial<Record<Kind, Record<string, string>>> = {
@@ -1198,6 +1198,7 @@ export async function loadCatalog(
     resolvedWorkflows.push({
       name: definition.name,
       ...(definition.lanes ? { lanes: definition.lanes } : {}),
+      ...(definition.decision_memory ? { decision_memory: definition.decision_memory } : {}),
       description: definition.description,
       body: definition.body,
       source: source(entry),

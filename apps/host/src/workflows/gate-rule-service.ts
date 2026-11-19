@@ -16,6 +16,7 @@ import {
   type GateRulesInput,
   type Review,
   type RuleEntry,
+  type ResolvedDecisionPrecedent,
   type WorkflowRun,
   type WorkflowStepRecord,
 } from '@nesvo/contracts';
@@ -49,6 +50,18 @@ import {
 } from './gate-rule-proposal';
 import type { GateRuleStore } from './gate-rule-store';
 import {
+  editableConditionalRoute,
+  routeDocument,
+  workflowLearning,
+} from './workflow-learning';
+import { parseCheckCommand, readCheckInput } from './check-inventory';
+import {
+  parseProjectOverride,
+  projectProfilePath,
+  projectProfileWithMapping,
+} from './project-checks';
+import { precedentId, precedentProposal } from './decision-memory';
+import {
   RULE_ENTRY_MAX_NUMBER,
   highestRuleEntryNumber,
   parseRuleEntryText,
@@ -63,8 +76,11 @@ import { quotaReason } from './steps/agent';
 
 type Ports = {
   store: GateRuleStore;
-  runs: Pick<WorkflowRunStore, 'getRun' | 'stepsForRun'>;
-  changes: Pick<AssistantChanges, 'applyRuleEntry'>;
+  runs: Pick<WorkflowRunStore, 'getRun' | 'stepsForRun' | 'listRuns'>;
+  changes: Pick<
+    AssistantChanges,
+    'applyRuleEntry' | 'applyProjectProfile' | 'apply'
+  >;
   appliedChange: (
     sessionId: string,
     changeId: string,
@@ -117,10 +133,33 @@ export class GateRuleService {
     ports.store.recover();
   }
 
+  remember(run: WorkflowRun | undefined, step: WorkflowStepRecord): void {
+    if (
+      !run ||
+      this.controller.signal.aborted ||
+      (!run.workflow.decision_memory && !this.ports.store.decisionMemory())
+    )
+      return;
+    const row = precedentProposal(run, step);
+    if (!row || !this.ports.store.addLearning(row, step.id)) return;
+    this.ports.emit({ type: 'gate-rule-proposal-changed', proposal: row });
+    if (run.workflow.decision_memory === 'automatic')
+      void this.execute({
+        action: 'decide',
+        decision: {
+          proposalId: row.id,
+          revision: row.revision,
+          decisionId: row.id,
+          action: 'accept',
+        },
+      }).catch(() => undefined);
+  }
+
   settled(run: WorkflowRun): void {
     const { store } = this.ports;
     if (this.controller.signal.aborted || !terminal(run) || !store.enabled())
       return;
+    if (!run.parent) this.learn(run);
     const sources = this.sources(run);
     if (
       !sources.length ||
@@ -131,11 +170,46 @@ export class GateRuleService {
     if (generation) this.launch(generation, run, sources);
   }
 
+  private learn(run: WorkflowRun): void {
+    const { runs, store } = this.ports;
+    const steps = runs.stepsForRun(run.id);
+    if (
+      !steps.some(
+        step =>
+          step.result?.check || step.decision?.comment.includes('Route: '),
+      )
+    )
+      return;
+    const candidates = workflowLearning(
+      run,
+      steps,
+      runs.listRuns(null, 25)?.runs ?? [],
+      id => runs.stepsForRun(id),
+    );
+    const count = store
+      .proposals(run.id)
+      .filter(item => item.origin !== 'precedent').length;
+    for (const candidate of candidates.slice(
+      0,
+      Math.max(0, gateRuleLimits.proposalsPerRun - count),
+    )) {
+      if (store.addLearning(candidate.row, candidate.step.id, candidate.key))
+        this.ports.emit({
+          type: 'gate-rule-proposal-changed',
+          proposal: candidate.row,
+        });
+    }
+  }
+
   async execute(input: GateRulesInput): Promise<GateRuleOverview> {
     const { store } = this.ports;
     if (input.action === 'read') return this.overview(input.runId);
     const previous = this.decisions;
     const next = previous.then(async () => {
+      if (input.action === 'decision-memory') {
+        store.setDecisionMemory(input.enabled);
+        return this.overview();
+      }
       if (input.action === 'settings') {
         store.setEnabled(input.enabled);
         return this.overview();
@@ -158,6 +232,20 @@ export class GateRuleService {
     await Promise.all([...this.running, this.decisions]);
   }
 
+  verifiedPrecedent(entry: ResolvedDecisionPrecedent): boolean {
+    const proposal =
+      entry.provenance.proposal &&
+      this.ports.store.proposal(entry.provenance.proposal)?.row;
+    return Boolean(
+      proposal &&
+      proposal.origin === 'precedent' &&
+      proposal.status === 'accepted' &&
+      proposal.ruleId === entry.id &&
+      proposal.scope === entry.source.scope &&
+      this.undoFor(proposal.id, entry.source.contentHash),
+    );
+  }
+
   undoFor(proposalId: string, hash: string) {
     const proposal = this.ports.store.proposal(proposalId)?.row;
     if (!proposal?.changeId) return undefined;
@@ -174,6 +262,7 @@ export class GateRuleService {
     const { store } = this.ports;
     return {
       enabled: store.enabled(),
+      decisionMemory: store.decisionMemory(),
       proposals: store
         .proposals(runId)
         .map(row =>
@@ -371,43 +460,53 @@ export class GateRuleService {
             [...fresh, ...entries.filter(item => item.entry.type === 'lesson')],
             instructions,
           );
-          const proposals = admitted.map(({ proposal, source, existing }) => {
-            if (
-              !existing &&
-              proposal.steps.some(
-                step =>
-                  mergeGateRules(fresh).filter(
-                    rule =>
-                      activeGateRule(rule) &&
-                      gateRuleMatches(rule, step, run.workflow.name),
-                  ).length >= GATE_RULES_PER_STEP,
-              )
+          const learningCount = store
+            .proposals(run.id)
+            .filter(
+              item => item.origin === 'mapping' || item.origin === 'route',
+            ).length;
+          const proposals = admitted
+            .slice(
+              0,
+              Math.max(0, gateRuleLimits.proposalsPerRun - learningCount),
             )
-              throw new Error(
-                'The target step is at its gate rule limit. Propose an update.',
-              );
-            const target = run.workflow.steps.find(
-              step => step.name === proposal.steps[0],
-            )!;
-            const row: GateRuleProposal = {
-              id: randomUUID(),
-              runId: run.id,
-              revision: 1,
-              sessionId: session.id,
-              taskSessionId: run.sessionId,
-              workflow: run.workflow.name,
-              status: 'pending',
-              createdAt: new Date().toISOString(),
-              proposal,
-              scope: existing?.root.scope ?? target.source.scope,
-              decisionKind: source.kind,
-              current: existing?.entry.body ?? null,
-              changeId: null,
-              ruleId: null,
-              error: null,
-            };
-            return { row, sourceStep: source.step.id };
-          });
+            .map(({ proposal, source, existing }) => {
+              if (
+                !existing &&
+                proposal.steps.some(
+                  step =>
+                    mergeGateRules(fresh).filter(
+                      rule =>
+                        activeGateRule(rule) &&
+                        gateRuleMatches(rule, step, run.workflow.name),
+                    ).length >= GATE_RULES_PER_STEP,
+                )
+              )
+                throw new Error(
+                  'The target step is at its gate rule limit. Propose an update.',
+                );
+              const target = run.workflow.steps.find(
+                step => step.name === proposal.steps[0],
+              )!;
+              const row: GateRuleProposal = {
+                id: randomUUID(),
+                runId: run.id,
+                revision: 1,
+                sessionId: session.id,
+                taskSessionId: run.sessionId,
+                workflow: run.workflow.name,
+                status: 'pending',
+                createdAt: new Date().toISOString(),
+                proposal,
+                scope: existing?.root.scope ?? target.source.scope,
+                decisionKind: source.kind,
+                current: existing?.entry.body ?? null,
+                changeId: null,
+                ruleId: null,
+                error: null,
+              };
+              return { row, sourceStep: source.step.id };
+            });
           if (store.pendingCount() + proposals.length > gateRuleLimits.pending)
             return finish(
               'blocked',
@@ -512,16 +611,201 @@ export class GateRuleService {
     else {
       const run = runs.getRun(row.runId);
       if (!run) throw new SessionError('not-found', 'Workflow run not found.');
-      const source = this.sources(run).find(
-        item => item.step.id === sourceStep,
-      );
-      if (!source || !source.comment.includes(row.proposal.quote))
-        throw invalid('The owner comment for this proposal is unavailable.');
-      next = await this.save(run, next, source.step, input);
+      if (row.origin === 'precedent')
+        next = await this.savePrecedent(run, next, sourceStep, input);
+      else if (row.origin === 'mapping' || row.origin === 'route')
+        next = await this.saveWorkflowLearning(run, next, input);
+      else {
+        const source = this.sources(run).find(
+          item => item.step.id === sourceStep,
+        );
+        if (!source || !source.comment.includes(row.proposal.quote))
+          throw invalid('The owner comment for this proposal is unavailable.');
+        next = await this.save(run, next, source.step, input);
+      }
     }
     store.decide(next, input);
     this.ports.emit({ type: 'gate-rule-proposal-changed', proposal: next });
     return this.overview(row.runId);
+  }
+
+  private async saveWorkflowLearning(
+    run: WorkflowRun,
+    row: GateRuleProposal,
+    input: Exclude<DecideGateRuleInput, { action: 'dismiss' }>,
+  ): Promise<GateRuleProposal> {
+    const body = input.action === 'edit' ? input.edit.body : row.proposal.body;
+    if (input.action === 'edit' && input.edit.scope !== row.scope)
+      throw invalid('The proposal must retain its recorded file location.');
+    const signal = this.controller.signal;
+    const context = {
+      conversationId: row.sessionId,
+      messageId: row.id,
+      directory: run.projectRoot,
+    };
+    let change: AssistantChange | null;
+    if (row.origin === 'mapping' && row.mapping) {
+      const mapping = row.mapping;
+      const [source, current] = await Promise.all([
+        readCheckInput(run.projectRoot, mapping.source.file, signal),
+        readCheckInput(run.projectRoot, projectProfilePath, signal),
+      ]);
+      if (
+        source?.contentHash !== mapping.source.hash ||
+        (current?.contentHash ?? null) !== mapping.expectedHash ||
+        !parseCheckCommand(body.check) ||
+        (current && parseProjectOverride(current.text).checks?.tests)
+      )
+        throw invalid('The test command source or Project mapping changed.');
+      const text = projectProfileWithMapping(
+        current,
+        body.check,
+        mapping.source,
+      );
+      change = await this.ports.changes.applyProjectProfile(
+        { ...context, mappingRoot: run.projectRoot },
+        text,
+        mapping.expectedHash,
+        signal,
+      );
+    } else {
+      const route = editableConditionalRoute(run, body.check);
+      if (!route)
+        throw invalid(
+          'The suggestion must update an existing optional review route.',
+        );
+      const file = await readDefinitionFile(run.workflow.source.path, signal);
+      if (file.contentHash !== run.workflow.source.contentHash)
+        throw invalid(
+          'The workflow changed. Review its current routes before proposing an update.',
+        );
+      change = await this.ports.changes.apply(context, {
+        kind: 'workflow',
+        op: 'update',
+        name: run.workflow.name,
+        scope: row.scope,
+        basedOnHash: file.contentHash,
+        document: routeDocument(file.text, route),
+        summary: 'Apply the reviewed conditional route.',
+      });
+    }
+    if (!change)
+      throw invalid(
+        'The workflow change was refused. Check the current file and active runs.',
+      );
+    return {
+      ...row,
+      status: 'accepted',
+      changeId: change.changeId,
+      proposal: { ...row.proposal, body },
+    };
+  }
+
+  private async savePrecedent(
+    run: WorkflowRun,
+    row: GateRuleProposal,
+    sourceStep: string,
+    input: Exclude<DecideGateRuleInput, { action: 'dismiss' }>,
+  ): Promise<GateRuleProposal> {
+    const source = this.ports.runs
+      .stepsForRun(run.id)
+      .find(step => step.id === sourceStep);
+    if (!source?.decision || source.decision.decisionId !== row.id)
+      throw invalid('The source decision is no longer available.');
+    const scope = run.workflow.source.scope;
+    if (
+      input.action === 'edit' &&
+      (input.edit.scope !== scope ||
+        input.edit.steps.length !== 1 ||
+        input.edit.steps[0] !== source.name)
+    )
+      throw invalid('The precedent must retain its workflow and gate.');
+    const id = precedentId(row.id);
+    const body = input.action === 'edit' ? input.edit.body : row.proposal.body;
+    const description =
+      input.action === 'edit'
+        ? input.edit.description
+        : row.proposal.description;
+    const evidence = this.ports.runs
+      .stepsForRun(run.id)
+      .filter(
+        step =>
+          step.state === 'passed' &&
+          step.result?.evidence.length &&
+          step.result.finishedAt <= source.decision!.at,
+      )
+      .slice(-12)
+      .map(step => step.id);
+    const entry: RuleEntry = {
+      id,
+      type: 'decision',
+      kind: 'instruction',
+      status: 'active',
+      enforcedBy: 'none',
+      description,
+      scope: { workflows: [run.workflow.name], steps: [source.name] },
+      body,
+      provenance: {
+        source: 'run',
+        run: run.id,
+        workflow: run.workflow.name,
+        step: source.name,
+        session: row.sessionId,
+        decision: row.decisionKind,
+        decisionId: row.id,
+        date: source.decision.at.slice(0, 10),
+        attempt: Math.max(1, source.attempt),
+        proposal: row.id,
+        quote: row.proposal.quote,
+        evidence,
+        ...(source.reviewId && source.reviewVersion
+          ? { review: { id: source.reviewId, version: source.reviewVersion } }
+          : {}),
+        ...(input.action === 'edit' ? { edited: true } : {}),
+      },
+    };
+    const roots = await this.roots(run, this.controller.signal);
+    const root = roots.find(item => item.scope === scope)!;
+    const outcome = await this.ports.changes.applyRuleEntry(
+      {
+        conversationId: row.sessionId,
+        messageId: row.id,
+        directory: run.projectRoot,
+      },
+      {
+        type: 'decision',
+        op: 'create',
+        scope,
+        name: id,
+        basedOnHash: null,
+        document: serializeRuleEntry(entry),
+        summary: description,
+        validate: text => {
+          const issues = validateRuleEntryDocument('decision', id, text);
+          const existing = readRuleEntryFolder('decision', root);
+          if ((existing.fileCount ?? 0) >= ruleEntryLimits.entriesPerRoot)
+            issues.push(
+              'This workflows root reached its decision precedent limit.',
+            );
+          return issues;
+        },
+      },
+    );
+    if (outcome.status === 'refused')
+      throw invalid(
+        outcome.issues[0]?.message ?? 'The precedent could not be saved.',
+      );
+    return {
+      ...row,
+      ruleId: id,
+      status: 'accepted',
+      proposal: { ...row.proposal, body, description },
+      changeId: outcome.status === 'applied' ? outcome.change.changeId : null,
+      error:
+        outcome.status === 'applied'
+          ? null
+          : 'The precedent was saved without an Undo record.',
+    };
   }
 
   private async save(

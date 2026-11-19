@@ -10,6 +10,7 @@ import {
   isWorkflowMethod,
   toSessionWindow,
   type DefinitionCatalog,
+  type WorkflowRun,
   type DefinitionWriteResult,
   type DesktopEvent,
   type HostMessage,
@@ -130,6 +131,11 @@ import {
 } from './workflows/runner';
 import { workflowAdvice } from './workflows/advice';
 import { authorizeGate, gateRecommendation } from './workflows/gate-policy';
+import {
+  decisionPrecedentDelivery,
+  precedentMetricKey,
+  readPrecedents,
+} from './workflows/decision-memory';
 import { triageOutputSchema } from './workflows/triage';
 import { workflowTriageSchema } from '@nesvo/contracts';
 import { WorkflowGates } from './workflows/gates';
@@ -438,11 +444,11 @@ export const serveHost = ({
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
         if (message.type === 'workflow-run-changed')
           gateRules.current?.settled(message.run);
-        if (message.type === 'workflow-step-changed')
-          lessons.current?.workflowStepChanged(
-            workflowRunStore.getRun(message.step.runId),
-            message.step,
-          );
+        if (message.type === 'workflow-step-changed') {
+          const run = workflowRunStore.getRun(message.step.runId);
+          lessons.current?.workflowStepChanged(run, message.step);
+          gateRules.current?.remember(run, message.step);
+        }
       };
       let observeAssistant: (session: Session) => void = () => {};
       const control: { current?: SessionControl } = {};
@@ -891,8 +897,15 @@ export const serveHost = ({
       );
       const snapshots = new SpecSnapshots(directory);
       const assistantChangeStore = new AssistantChangeStore(database);
+      const precedentsFor = (run: WorkflowRun, step?: string) =>
+        decisionPrecedentDelivery(
+          run,
+          step,
+          entry => gateRules.current?.verifiedPrecedent(entry) === true,
+        );
       const gatePorts = {
         sessions,
+        precedents: precedentsFor,
         pullRequests,
         steps: (id: string) => workflowRunStore.stepsForRun(id),
       };
@@ -944,6 +957,7 @@ export const serveHost = ({
                 { unattended: true },
                 signal,
               ),
+            precedents: run => precedentsFor(run),
             lessons: (run, step, paths, budget) =>
               lessons.current?.verifierLessons(
                 {
@@ -2875,6 +2889,12 @@ export const serveHost = ({
           definitionRequests++;
           const inspection = loading
             .then(catalog => {
+              const precedents = readPrecedents(
+                sessions.draftDirectory(request.input.directory),
+              ).filter(entry => gateRuleService.verifiedPrecedent(entry));
+              const precedentMetrics = ruleMetrics.metrics(
+                precedents.map(precedentMetricKey),
+              );
               const entries = catalog.gateRules ?? [];
               const key = (rule: (typeof entries)[number]) =>
                 ruleEntryMetricKey(dirname(dirname(rule.source.path)), rule.id);
@@ -2884,6 +2904,16 @@ export const serveHost = ({
                 id: request.id,
                 catalog: {
                   ...catalog,
+                  precedents: precedents.map(entry => ({
+                    ...entry,
+                    metrics: precedentMetrics.get(precedentMetricKey(entry)),
+                    undo: entry.provenance.proposal
+                      ? gateRuleService.undoFor(
+                          entry.provenance.proposal,
+                          entry.source.contentHash,
+                        )
+                      : undefined,
+                  })),
                   gateRules: entries.map(rule => ({
                     ...rule,
                     metrics: metrics.get(key(rule)),

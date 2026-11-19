@@ -408,6 +408,9 @@ export async function smokePortableCheck({
         .locator('[data-editor-node="deep-review"][data-run-state="unreached"]')
         .click();
       await editor.getByText(/Light lane/).waitFor();
+      await editor
+        .getByRole('button', { name: 'Fit graph', exact: true })
+        .click();
       await screenshots('d83-3-light-lane');
     }
     if (['4', '5'].includes(process.env.NESVO_D90_STAGE)) {
@@ -422,7 +425,7 @@ export async function smokePortableCheck({
       await write(
         home,
         'workflows/typed-smoke.md',
-        '---\nname: typed-smoke\nsteps: [choose-gate]\n---\n',
+        `---\nname: typed-smoke\nsteps: [choose-gate]\n${process.env.NESVO_D90_STAGE === '5' ? 'decision_memory: review\n' : ''}---\n`,
       );
       const specPath = '.agents/tasks/typed-smoke.md';
       await write(
@@ -474,6 +477,43 @@ export async function smokePortableCheck({
       const confirmed = await settled(task.id);
       assert.equal(confirmed.run.status, 'passed');
       assert.equal(confirmed.steps[0].decision.answer.option, 'manual');
+      if (process.env.NESVO_D90_STAGE === '5') {
+        const proposal = await page.evaluate(async runId => {
+          const overview = await window.nesvo.gateRules(
+            { action: 'read', runId },
+            'local',
+          );
+          return overview.proposals.find(item => item.origin === 'precedent');
+        }, task.id);
+        assert.ok(proposal);
+        await page.evaluate(
+          proposal =>
+            window.nesvo.gateRules(
+              {
+                action: 'decide',
+                decision: {
+                  action: 'accept',
+                  proposalId: proposal.id,
+                  revision: proposal.revision,
+                  decisionId: crypto.randomUUID(),
+                },
+              },
+              'local',
+            ),
+          proposal,
+        );
+        await editor
+          .getByRole('button', { name: 'Lessons & decisions', exact: true })
+          .click();
+        const memory = editor.getByRole('region', {
+          name: 'Lessons and decisions',
+        });
+        await memory
+          .getByText(/The operator chose Approve at choose-gate/)
+          .waitFor();
+        await memory.getByRole('button', { name: 'Open source run' }).waitFor();
+        await screenshots('d90-decision-memory');
+      }
     }
   }
   for (const detail of results) {

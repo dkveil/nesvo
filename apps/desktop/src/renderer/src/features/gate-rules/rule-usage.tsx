@@ -6,7 +6,7 @@ import { Badge } from '@/shared/ui/badge';
 
 type Props = {
   metrics?: RuleEntryMetrics | null;
-  kind: 'instruction' | 'check';
+  kind: 'instruction' | 'check' | 'decision';
   since: string;
   now?: number;
   stacked?: boolean;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { checkCandidateSchema } from './checks';
 import {
   ruleEntryBodySchema,
   ruleEntryDescriptionSchema,
@@ -69,6 +70,14 @@ export const decideGateRuleSchema = z.union([
 export type DecideGateRuleInput = z.infer<typeof decideGateRuleSchema>;
 
 export const gateRuleProposalSchema = z.strictObject({
+  origin: z.enum(['precedent', 'mapping', 'route']).optional(),
+  mapping: z
+    .strictObject({
+      command: z.string().min(1).max(600),
+      source: checkCandidateSchema.shape.source,
+      expectedHash: definitionHashSchema.nullable(),
+    })
+    .optional(),
   id: z.uuid(),
   runId: z.uuid(),
   sessionId: z.uuid(),
@@ -79,10 +88,12 @@ export const gateRuleProposalSchema = z.strictObject({
   status: z.enum(['pending', 'accepted', 'dismissed', 'stale']),
   proposal: proposedGateRuleSchema,
   scope: definitionScopeSchema,
-  decisionKind: z.enum(['fix', 'reject']),
+  decisionKind: z.enum(['accept', 'fix', 'reject']),
   current: ruleEntryBodySchema.nullable(),
   changeId: z.uuid().nullable(),
-  ruleId: ruleEntryIdSchema('gate-rule').nullable(),
+  ruleId: z
+    .union([ruleEntryIdSchema('gate-rule'), ruleEntryIdSchema('decision')])
+    .nullable(),
   error: z.string().max(800).nullable(),
 });
 export type GateRuleProposal = z.infer<typeof gateRuleProposalSchema>;
@@ -105,6 +116,7 @@ export const gateRuleGenerationSchema = z.strictObject({
 export type GateRuleGeneration = z.infer<typeof gateRuleGenerationSchema>;
 
 export const gateRuleOverviewSchema = z.strictObject({
+  decisionMemory: z.boolean().optional(),
   enabled: z.boolean(),
   proposals: z.array(gateRuleProposalSchema).max(gateRuleLimits.pending),
   generation: gateRuleGenerationSchema.nullable(),
@@ -114,6 +126,10 @@ export type GateRuleOverview = z.infer<typeof gateRuleOverviewSchema>;
 export const gateRulesInputSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('read'), runId: z.uuid().optional() }),
   z.strictObject({ action: z.literal('settings'), enabled: z.boolean() }),
+  z.strictObject({
+    action: z.literal('decision-memory'),
+    enabled: z.boolean(),
+  }),
   z.strictObject({
     action: z.literal('decide'),
     decision: decideGateRuleSchema,

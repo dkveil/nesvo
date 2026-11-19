@@ -1831,6 +1831,16 @@ export class WorkflowRunner {
       };
       if (!this.replaceBoth(waiting, step.revision, paused, run.revision))
         continue;
+      const references = new Set(
+        waiting.recommendation?.report?.references ?? [],
+      );
+      if (references.size)
+        this.ruleMetrics?.recordCitations(
+          waiting.deliveredRules
+            ?.filter(item => references.has(item.id))
+            .map(item => item.key) ?? [],
+          waiting.updatedAt,
+        );
       this.emit({ type: 'workflow-step-changed', step: waiting });
       this.emit({ type: 'workflow-run-changed', run: paused });
       if (

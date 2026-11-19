@@ -1,15 +1,17 @@
 import { z } from 'zod';
 
-export const ruleEntryTypeSchema = z.enum(['lesson', 'gate-rule']);
+export const ruleEntryTypeSchema = z.enum(['lesson', 'gate-rule', 'decision']);
 export type RuleEntryType = z.infer<typeof ruleEntryTypeSchema>;
 
 export const RULE_ENTRY_FOLDERS = {
   lesson: 'lessons',
+  decision: 'decisions',
   'gate-rule': 'gate-rules',
 } as const satisfies Record<RuleEntryType, string>;
 
 export const RULE_ENTRY_ID_PREFIXES = {
   lesson: 'lesson',
+  decision: 'decision',
   'gate-rule': 'rule',
 } as const satisfies Record<RuleEntryType, string>;
 
@@ -40,7 +42,7 @@ export type RuleEntryMetrics = z.infer<typeof ruleEntryMetricsSchema>;
 export const ruleEntryCitationSchema = z
   .string()
   .max(40)
-  .regex(/^(?:rule|lesson)-\d{4,}$/);
+  .regex(/^(?:rule|lesson|decision)-\d{4,}$/);
 export const GATE_RULES_PER_STEP = 12;
 
 export const RULE_ENTRY_TRIGGER = 'Applies when';
@@ -88,6 +90,10 @@ export const ruleEntryProvenanceSchema = z.strictObject({
   decision: singleLine(40).optional(),
   date: dateSchema,
   decisionId: z.uuid().optional(),
+  review: z
+    .strictObject({ id: z.uuid(), version: z.number().int().positive() })
+    .optional(),
+  evidence: z.array(z.uuid()).max(12).optional(),
   proposal: z.uuid().optional(),
   workflow: singleLine(ruleEntryLimits.scopeItem).optional(),
   attempt: z.number().int().positive().optional(),
@@ -284,6 +290,12 @@ export const serializeRuleEntry = (entry: RuleEntry): string => {
     `  date: ${provenance.date}`,
     ...(provenance.decisionId
       ? [`  decisionId: ${provenance.decisionId}`]
+      : []),
+    ...(provenance.review
+      ? [`  review: ${JSON.stringify(provenance.review)}`]
+      : []),
+    ...(provenance.evidence?.length
+      ? [`  evidence: ${yamlList(provenance.evidence)}`]
       : []),
     ...(provenance.proposal ? [`  proposal: ${provenance.proposal}`] : []),
     ...(provenance.workflow

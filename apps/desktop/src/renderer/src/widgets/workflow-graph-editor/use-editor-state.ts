@@ -44,6 +44,7 @@ import type { InspectorIssue } from './inspector';
 export type Selection =
   | { kind: 'none' }
   | { kind: 'workflow' }
+  | { kind: 'memory' }
   | { kind: 'start' }
   | { kind: 'draft' }
   | { kind: 'node'; id: string }
@@ -377,7 +378,10 @@ export function useEditorState({
 
   const setWorkflowFields = (
     fields: Partial<
-      Pick<EditorDocument, 'name' | 'description' | 'body' | 'lanes'>
+      Pick<
+        EditorDocument,
+        'name' | 'description' | 'body' | 'lanes' | 'decisionMemory'
+      >
     >,
   ) =>
     mutate(current => ({ ...current, ...fields }), {

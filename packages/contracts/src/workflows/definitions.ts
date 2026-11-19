@@ -365,6 +365,7 @@ const workflowStepNamesSchema = z
   .refine(values => !hasDuplicates(values), 'List each step once.');
 
 const workflowDefinitionShape = {
+  decision_memory: z.enum(['review', 'automatic']).optional(),
   lanes: workflowLanesSchema.optional(),
   name: stepNameSchema,
   description: z.string().max(workflowDefinitionLimits.description).default(''),
@@ -447,6 +448,19 @@ export const resolvedGateRuleSchema = ruleEntrySchema.safeExtend({
 });
 export type ResolvedGateRule = z.infer<typeof resolvedGateRuleSchema>;
 
+export const resolvedDecisionPrecedentSchema = ruleEntrySchema.safeExtend({
+  type: z.literal('decision'),
+  source: definitionSourceSchema,
+  metrics: ruleEntryMetricsSchema.optional(),
+  undo: z
+    .strictObject({ conversationId: z.uuid(), changeId: z.uuid() })
+    .optional(),
+});
+
+export type ResolvedDecisionPrecedent = z.infer<
+  typeof resolvedDecisionPrecedentSchema
+>;
+
 export const resolvedStepSchema = stepDefinitionSchema.safeExtend({
   source: definitionSourceSchema,
   notes: definitionNotesSchema,
@@ -504,6 +518,7 @@ export const taskSpecSummarySchema = z.strictObject({
 });
 
 export const definitionCatalogSchema = z.strictObject({
+  precedents: z.array(resolvedDecisionPrecedentSchema).max(200).optional(),
   roots: z.strictObject({
     global: definitionPathSchema.nullable(),
     project: definitionPathSchema.nullable(),

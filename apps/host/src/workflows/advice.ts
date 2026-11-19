@@ -61,6 +61,7 @@ export async function workflowAdvice<T>(
           readOnly: true,
           ephemeral: true,
           instructionsOnly: true,
+          resultless: true,
         }) === 'sent'
       )
         break;

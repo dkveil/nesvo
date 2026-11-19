@@ -18,11 +18,14 @@ export function GateRuleSettings({
   const { overview, error, reload } = useGateRules(hostId, connected);
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState('');
-  const save = async (enabled: boolean) => {
+  const save = async (
+    enabled: boolean,
+    action: 'settings' | 'decision-memory' = 'settings',
+  ) => {
     setSaving(true);
     setFailure('');
     try {
-      await window.nesvo.gateRules({ action: 'settings', enabled }, hostId);
+      await window.nesvo.gateRules({ action, enabled }, hostId);
       reload();
     } catch (reason) {
       setFailure(errorDetail(reason));
@@ -41,6 +44,17 @@ export function GateRuleSettings({
           checked={overview?.enabled ?? false}
           disabled={!connected || !overview || saving}
           onCheckedChange={enabled => void save(enabled)}
+        />
+      </SettingsRow>
+      <SettingsRow
+        title="Remember workflow decisions"
+        description="Queue owner decisions for review as precedents for workflows on this computer."
+      >
+        <Switch
+          aria-label="Remember workflow decisions"
+          checked={overview?.decisionMemory ?? false}
+          disabled={!connected || !overview || saving}
+          onCheckedChange={enabled => void save(enabled, 'decision-memory')}
         />
       </SettingsRow>
       {(!connected || error || failure) && (

@@ -31,7 +31,7 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
-const currentDatabaseVersion = 39;
+const currentDatabaseVersion = 40;
 const newerDatabaseVersion = currentDatabaseVersion + 1;
 
 test(
@@ -1775,6 +1775,41 @@ test(
     assert.match(check(adapted).invocations[1].substitution, /absent/);
     assert.equal(check(adapted).invocations[1].command, 'npm run test:ci');
     assert.match(check(adapted).invocations[1].proof, /reported 1 test\b/);
+
+    await rm(join(root, 'inbox-rules/test-command.md'), { force: true });
+    const repeated = await settled(await run(project));
+    assert.equal(repeated.run.status, 'passed');
+    const learned = await host.request('gate-rules', {
+      action: 'read',
+      runId: repeated.run.id,
+    });
+    const proposal = learned.overview.proposals.find(
+      item => item.origin === 'mapping',
+    );
+    assert.equal(proposal.mapping.command, 'npm run test:ci');
+    const learnedFile = join(project, '.agents/project.md');
+    await assert.rejects(readFile(learnedFile, 'utf8'), { code: 'ENOENT' });
+    const applied = await host.request('gate-rules', {
+      action: 'decide',
+      decision: {
+        proposalId: proposal.id,
+        revision: proposal.revision,
+        decisionId: randomUUID(),
+        action: 'accept',
+      },
+    });
+    assert.equal(applied.type, 'gate-rules', JSON.stringify(applied));
+    const accepted = applied.overview.proposals.find(
+      item => item.id === proposal.id,
+    );
+    assert.equal(accepted.status, 'accepted');
+    assert.match(await readFile(learnedFile, 'utf8'), /npm run test:ci/);
+    const restored = await host.request('workflow-assistant-undo', {
+      conversationId: proposal.sessionId,
+      changeId: accepted.changeId,
+    });
+    assert.equal(restored.result.status, 'undone');
+    await assert.rejects(readFile(learnedFile, 'utf8'), { code: 'ENOENT' });
 
     await write(project, 'package.json', scripts(true));
     await write(project, 'sample.test.ts', suite(true));
@@ -16508,6 +16543,7 @@ test(
           stepFile({
             name: 'typed-task',
             steps: '[choose-review]',
+            decision_memory: 'review',
             body: '',
           }),
         );
@@ -16548,6 +16584,50 @@ test(
           kind: 'choice',
           option: 'manual',
         });
+        const memory = await host.request('gate-rules', {
+          action: 'read',
+          runId: run.id,
+        });
+        const precedent = memory.overview.proposals.find(
+          item => item.origin === 'precedent',
+        );
+        assert.equal(precedent.id, input.decisionId);
+        await assert.rejects(readdir(join(workflowRoot, 'decisions')), {
+          code: 'ENOENT',
+        });
+        const saved = await host.request('gate-rules', {
+          action: 'decide',
+          decision: {
+            proposalId: precedent.id,
+            revision: 1,
+            decisionId: randomUUID(),
+            action: 'accept',
+          },
+        });
+        assert.equal(saved.type, 'gate-rules', JSON.stringify(saved));
+        const stored = saved.overview.proposals.find(
+          item => item.id === precedent.id,
+        );
+        assert.equal(stored.status, 'accepted', JSON.stringify(saved));
+        const file = join(workflowRoot, 'decisions', stored.ruleId + '.md');
+        assert.match(
+          await readFile(file, 'utf8'),
+          /The operator chose Approve at choose-review\. Option manual/,
+        );
+        const definitions = await host.request('list-workflow-definitions', {
+          directory: repository,
+        });
+        assert.equal(definitions.catalog.precedents[0].provenance.run, run.id);
+        assert.equal(
+          definitions.catalog.precedents[0].provenance.review.id,
+          gate.reviewId,
+        );
+        const undone = await host.request('workflow-assistant-undo', {
+          conversationId: run.sessionId,
+          changeId: stored.changeId,
+        });
+        assert.equal(undone.result.status, 'undone', JSON.stringify(undone));
+        await assert.rejects(readFile(file, 'utf8'), { code: 'ENOENT' });
       },
     );
 

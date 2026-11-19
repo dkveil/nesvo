@@ -31,6 +31,7 @@ export const assistantChangeKindSchema = z.enum([
   'automation',
   'lesson',
   'gate-rule',
+  'decision',
   'project-profile',
 ]);
 export const assistantChangeOpSchema = z.enum(['create', 'update', 'delete']);
@@ -50,7 +51,7 @@ export const assistantChangeTargetSchema = z.discriminatedUnion('type', [
     path: z
       .string()
       .regex(
-        /^(?:(?:steps|workflows|lessons|gate-rules)\/[a-z0-9]+(?:-[a-z0-9]+)*\.md|project\.md)$/,
+        /^(?:(?:steps|workflows|lessons|gate-rules|decisions)\/[a-z0-9]+(?:-[a-z0-9]+)*\.md|project\.md)$/,
       )
       .max(assistantChangeLimits.relativePath),
     name: stepNameSchema,

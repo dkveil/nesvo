@@ -45,6 +45,7 @@ import {
   type AutomationInput,
   type InspectorIssue,
 } from './inspector';
+import { WorkflowMemory } from './workflow-memory';
 import { InspectorGateRules } from './inspector/gate-rules';
 import type { EditorState } from './use-editor-state';
 
@@ -110,17 +111,19 @@ export function InspectorPanel({
   const header: { icon: LucideIcon; title: string; meta?: string } =
     selection.kind === 'draft'
       ? { icon: SquarePen, title: 'New step' }
-      : node
-        ? {
-            icon: showResult ? Play : SquarePen,
-            title: showResult ? 'Last run' : 'Step',
-            meta: node.id,
-          }
-        : edge
-          ? { icon: GitBranch, title: 'Connection', meta: edge.id }
-          : selection.kind === 'start'
-            ? { icon: Zap, title: 'Start' }
-            : { icon: FileText, title: 'Workflow settings' };
+      : selection.kind === 'memory'
+        ? { icon: FileText, title: 'Lessons & decisions' }
+        : node
+          ? {
+              icon: showResult ? Play : SquarePen,
+              title: showResult ? 'Last run' : 'Step',
+              meta: node.id,
+            }
+          : edge
+            ? { icon: GitBranch, title: 'Connection', meta: edge.id }
+            : selection.kind === 'start'
+              ? { icon: Zap, title: 'Start' }
+              : { icon: FileText, title: 'Workflow settings' };
   const workflowIssues = state.issues.filter(issue => issue.steps.length === 0);
   const gateRules = node?.step.type === 'agent' && (
     <InspectorGateRules
@@ -247,6 +250,17 @@ export function InspectorPanel({
             />
           </PanelBody>
         )}
+        {selection.kind === 'memory' && (
+          <PanelBody>
+            <WorkflowMemory
+              hostId={hostId}
+              directory={directory}
+              name={document.name}
+              steps={document.nodes.map(node => node.id)}
+              onSession={onSession}
+            />
+          </PanelBody>
+        )}
         {selection.kind === 'workflow' && (
           <PanelBody>
             <Field
@@ -291,6 +305,32 @@ export function InspectorPanel({
                         {item.id}
                       </SelectItem>
                     ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field
+              id="workflow-decision-memory"
+              label="Decision memory"
+              className="px-3 pb-3"
+            >
+              <Select
+                value={document.decisionMemory ?? 'inherit'}
+                onValueChange={value =>
+                  state.setWorkflowFields({
+                    decisionMemory:
+                      value === 'review' || value === 'automatic'
+                        ? value
+                        : undefined,
+                  })
+                }
+              >
+                <SelectTrigger id="workflow-decision-memory">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="inherit">Use host setting</SelectItem>
+                  <SelectItem value="review">Propose for review</SelectItem>
+                  <SelectItem value="automatic">Save automatically</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

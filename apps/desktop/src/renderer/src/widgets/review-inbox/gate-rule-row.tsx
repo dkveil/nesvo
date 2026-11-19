@@ -47,6 +47,15 @@ export function GateRuleRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const { proposal } = row;
+  const precedent = row.origin === 'precedent';
+  const learned = row.origin === 'mapping' || row.origin === 'route';
+  const label = precedent
+    ? 'Decision precedent'
+    : row.origin === 'mapping'
+      ? 'Project command mapping'
+      : row.origin === 'route'
+        ? 'Workflow route proposal'
+        : 'Gate rule proposal';
 
   const decide = async (
     decisionFields:
@@ -84,13 +93,11 @@ export function GateRuleRow({
   };
 
   return (
-    <article aria-label="Gate rule proposal" data-host-id={hostId}>
+    <article aria-label={label} data-host-id={hostId}>
       <DecisionRow
         heading={
           <>
-            <p className="font-medium text-muted-foreground">
-              Gate rule proposal
-            </p>
+            <p className="font-medium text-muted-foreground">{label}</p>
             <Button
               variant="link"
               size="inline"
@@ -109,11 +116,19 @@ export function GateRuleRow({
           <>
             <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
               <span>
-                Proposes a gate rule for {proposal.steps.join(', ')} ·{' '}
-                {row.workflow}
+                {precedent
+                  ? 'Decision at'
+                  : learned
+                    ? 'Workflow evidence from'
+                    : 'Proposes a gate rule for'}{' '}
+                {proposal.steps.join(', ')} · {row.workflow}
               </span>
               <Badge size="xs">
-                {proposal.kind === 'check' ? 'Check suggestion' : 'Instruction'}
+                {precedent
+                  ? 'Precedent'
+                  : proposal.kind === 'check'
+                    ? 'Check suggestion'
+                    : 'Instruction'}
               </Badge>
               <span>{row.scope === 'project' ? 'Project' : 'Global'}</span>
               <time dateTime={row.createdAt}>
@@ -129,15 +144,20 @@ export function GateRuleRow({
               {proposal.body.rule}
             </p>
             <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-              From your {row.decisionKind === 'fix' ? 'Fix' : 'Reject'} comment:
-              “{proposal.quote}”
+              From your{' '}
+              {row.decisionKind === 'accept'
+                ? 'Approve'
+                : row.decisionKind === 'fix'
+                  ? 'Fix'
+                  : 'Reject'}{' '}
+              decision: “{proposal.quote}”
             </p>
             {proposal.kind === 'check' && (
               <div className="space-y-1 text-xs text-muted-foreground">
                 <p className="font-mono [overflow-wrap:anywhere]">
                   {proposal.body.check}
                 </p>
-                <p>Apply the check in your project when ready.</p>
+                {!learned && <p>Apply the check in your project when ready.</p>}
                 {/\b(?:curl|wget|gh\s+pr|git\s+push|rm\s+-rf)\b/i.test(
                   proposal.body.check,
                 ) && (
@@ -164,7 +184,7 @@ export function GateRuleRow({
                 size="inline"
                 onClick={() => onSession(hostKey(row.sessionId, hostId))}
               >
-                Open proposal session
+                {row.origin ? 'Open source session' : 'Open proposal session'}
               </Button>
             </NativeDisclosure>
           </>

@@ -70,6 +70,7 @@ export type AgentStepPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<string | null>;
+  precedents?: (run: WorkflowRun) => RuleDelivery;
   lessons?: (
     run: WorkflowRun, step: string, paths: readonly string[], budget: number,
   ) => RuleDelivery | null;
@@ -516,7 +517,8 @@ export const createAgentExecutor =
       run, step.name, review?.diff.files.map(file => file.path) ?? [],
       gateRuleLimits.promptCharacters - (gateRules.block?.length ?? 0) - 4,
     );
-    const delivered = [...gateRules.entries, ...(lessons?.entries ?? [])];
+    const precedents = ports.precedents?.(execution.run);
+    const delivered = [...gateRules.entries, ...(lessons?.entries ?? []), ...(precedents?.entries ?? [])].slice(0, 24);
     const deliveredIds = new Set(delivered.map(item => item.id));
     let recordedDelivery = false;
     const prompt = verdictPrompt({
@@ -527,7 +529,7 @@ export const createAgentExecutor =
       skill: definition.prompt_skill?.name ?? definition.skill,
       probeFindings: findings,
       gateRules: gateRules.block,
-      lessons: lessons?.block ?? null,
+      lessons: [lessons?.block, precedents?.block].filter(Boolean).join('\n\n') || null,
     });
 
     const input: CreateSessionInput = {
