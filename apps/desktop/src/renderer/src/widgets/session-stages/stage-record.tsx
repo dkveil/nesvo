@@ -48,7 +48,7 @@ export function StageRecord({ session, record, actions }: Props) {
       <section
         id={`plan-${record.planId}`}
         aria-label="Plan"
-        className="space-y-3 rounded-surface border bg-card p-4"
+        className="space-y-3 border-t border-border pt-3"
       >
         <h2 className="text-sm font-medium">
           {record.round > 0 ? `Revised plan ${record.round + 1}` : 'Plan'}
@@ -114,7 +114,7 @@ export function StageRecord({ session, record, actions }: Props) {
     <section
       id={`question-${record.id}`}
       aria-label="Question"
-      className="space-y-3 rounded-surface border bg-card p-4"
+      className="space-y-3 border-t border-border pt-3"
     >
       <p className="text-2xs text-muted-foreground">
         {question.kind === 'product'

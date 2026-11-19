@@ -1,27 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { SquareTerminal, X } from 'lucide-react';
 import type { Session } from '@/entities/session';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { Panel, PanelAction, PanelBody, PanelHeader } from '@/shared/ui/panel';
 import { StatusMessage } from '@/shared/ui/status-message';
-
-function TerminalPath({ path }: { path: string }) {
-  const middle = Math.max(
-    Math.floor(path.length / 2),
-    path.lastIndexOf('/') + 1,
-    path.lastIndexOf('\\') + 1,
-  );
-  return (
-    <span className="flex min-w-0" title={path}>
-      <span className="min-w-0 truncate">{path.slice(0, middle)}</span>
-      <span
-        className="max-w-1/2 shrink-0 overflow-hidden whitespace-nowrap"
-        dir="rtl"
-      >
-        <bdi dir="ltr">{path.slice(middle)}</bdi>
-      </span>
-    </span>
-  );
-}
 
 export function ClaudeTerminal({
   session,
@@ -88,7 +70,7 @@ export function ClaudeTerminal({
                       .split('\n')
                       .map((line, index) =>
                         item.paths.includes(line) ? (
-                          <TerminalPath key={index} path={line} />
+                          <MiddleTruncatedText key={index} value={line} />
                         ) : (
                           <div key={index}>{line}</div>
                         ),
@@ -96,7 +78,7 @@ export function ClaudeTerminal({
               </div>
             )}
             {item.output && (
-              <pre className="rounded-surface border bg-background p-2 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              <pre className="rounded-surface bg-code-background p-2 whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {item.kind === 'file-change'
                   ? item.output.split('\n').map((line, index) => (
                       <span

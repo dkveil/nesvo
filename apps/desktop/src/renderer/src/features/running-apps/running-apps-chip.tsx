@@ -121,7 +121,7 @@ export function RunningAppsChip(props: Props) {
       <PopoverContent
         align="start"
         aria-label="Servers"
-        surface="panel"
+        surface="solid"
         size="md"
         padding="sm"
         scroll

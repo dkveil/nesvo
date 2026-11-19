@@ -78,6 +78,7 @@ export function ModeSwitch({
         </PopoverTrigger>
       </Hint>
       <PopoverContent
+        surface="solid"
         side="top"
         align="start"
         collisionPadding={12}

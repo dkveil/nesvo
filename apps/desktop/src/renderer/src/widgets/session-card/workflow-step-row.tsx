@@ -96,7 +96,7 @@ export function WorkflowStepRow({
           align="start"
           sideOffset={12}
           collisionPadding={12}
-          surface="card"
+          surface="solid"
           size="md"
           padding="none"
           aria-label={`${step.definition.name} result`}

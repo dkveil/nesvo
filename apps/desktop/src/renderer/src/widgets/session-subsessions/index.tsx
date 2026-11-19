@@ -71,7 +71,7 @@ export function SubsessionBar({
         side="top"
         align="start"
         size="trigger"
-        surface="panel"
+        surface="solid"
         padding="sm"
         scroll
         aria-label="Agents"

@@ -36,13 +36,16 @@ export function WorkerPlan({
     onDecision('correct', trimmed);
   };
   return (
-    <section aria-label="Worker plan" className="space-y-3">
+    <section
+      aria-label="Worker plan"
+      className="space-y-2 border-t border-border py-2"
+    >
       <h4 className="text-xs text-muted-foreground">
         {round > 1 ? `Revised plan ${round}` : 'Proposed plan'}
       </h4>
       <MessageBody
         body={plan || 'The worker returned an empty plan.'}
-        className="rounded-surface border bg-background/60 p-3 text-sm"
+        className="text-ui"
       />
       <div className="flex flex-wrap gap-2">
         <Button

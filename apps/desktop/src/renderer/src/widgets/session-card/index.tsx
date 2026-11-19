@@ -18,7 +18,7 @@ import {
 import { cn } from '@/shared/lib/cn';
 import type { WorkflowRun } from '@/entities/workflow';
 import type { Session } from '@/entities/session';
-import { cardSection, infoPanelSurface } from '@/shared/ui/card-row-styles';
+import { cardSection, cardSurface } from '@/shared/ui/card-row-styles';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { SectionLabel } from '@/shared/ui/section-label';
@@ -160,11 +160,13 @@ export function SessionCard({
       aria-label="Session details"
       onKeyDown={moveBetweenRows}
       className={cn(
-        infoPanelSurface,
-        'z-20 flex max-h-[calc(100%-1rem)] w-60 flex-col divide-y divide-info-panel-divider overflow-y-auto outline-none',
+        'z-20 flex w-60 flex-col divide-y divide-border overflow-y-auto outline-none',
         docked
-          ? 'order-last m-2 shrink-0 self-start'
-          : 'absolute top-2 right-3 shadow-(--popover-shadow)',
+          ? 'order-last shrink-0 self-stretch border-l border-border'
+          : cn(
+              cardSurface,
+              'absolute top-2 right-3 max-h-[calc(100%-1rem)] shadow-(--popover-shadow)',
+            ),
       )}
     >
       <div className={cn(cardSection, 'flex min-w-0 items-center gap-1')}>

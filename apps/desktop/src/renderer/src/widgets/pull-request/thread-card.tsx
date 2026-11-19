@@ -53,12 +53,12 @@ export function ThreadCard({
     <article
       aria-label={`Review thread on ${thread.path}${thread.line ? ` line ${thread.line}` : ''}`}
       data-thread-id={thread.id}
-      className="my-1.5 overflow-hidden border-y border-border bg-info-panel font-sans text-foreground"
+      className="border-t border-border font-sans text-foreground"
     >
       <Disclosure
         open={open}
         onOpenChange={setOpen}
-        contentClassName="border-t p-0 text-foreground"
+        contentClassName="p-0 pl-7 text-foreground"
         title={
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 font-medium">
@@ -96,7 +96,7 @@ export function ThreadCard({
       >
         <ol className="divide-y">
           {thread.comments.map(comment => (
-            <li key={comment.id} className="px-3 py-2">
+            <li key={comment.id} className="py-2 pr-3">
               <p className="mb-1 flex items-center gap-2 text-2xs text-muted-foreground">
                 <span className="font-medium text-foreground">
                   {comment.author?.login ?? 'unknown'}
@@ -123,10 +123,10 @@ export function ThreadCard({
             onSubmit={() => void submitReply()}
             onCancel={() => setReplying(false)}
             autoFocus
-            className="m-2"
+            className="my-2 mr-2"
           />
         ) : (
-          <div className="flex flex-wrap items-center gap-1 border-t px-2 py-1.5">
+          <div className="flex flex-wrap items-center gap-1 py-1.5">
             {thread.viewerCanReply && (
               <DisabledHint reason={blockedReason}>
                 <Button

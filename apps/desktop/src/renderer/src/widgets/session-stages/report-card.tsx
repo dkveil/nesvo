@@ -17,7 +17,7 @@ export function ReportCard({ id, report, source }: Props) {
     <section
       id={id}
       aria-label="Report"
-      className="space-y-3 rounded-surface border bg-card p-4"
+      className="space-y-3 border-t border-border pt-3"
     >
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-medium">Report</h2>
