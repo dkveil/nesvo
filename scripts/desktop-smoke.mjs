@@ -2267,7 +2267,6 @@ async function smokeDesktop() {
     'default-session-folder',
     'worktree-recipes',
     'session-control',
-    'coordinator-orchestration',
     'workflow-sharing',
     'workflow-child-sessions',
     'session-stages',
@@ -2295,6 +2294,7 @@ async function smokeDesktop() {
     'readonly-integration-grants',
     'external-session-messages',
     'session-message-watchers',
+    'coordinator-orchestration',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
@@ -3816,6 +3816,7 @@ async function smokeDesktop() {
   const runningChildA = childCards.getByRole('button', {
     name: /^Fixture worker A Running/,
   });
+  await runningChildA.waitFor();
   await childCards
     .getByRole('button', { name: /^Fixture worker B Running/ })
     .waitFor();

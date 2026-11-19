@@ -103,6 +103,7 @@ test(
     assert.equal(
       inspection.type,
       'session-message-watchers',
+      'coordinator-orchestration',
       JSON.stringify(inspection),
     );
     await call({
@@ -4673,7 +4674,6 @@ test(
         'default-session-folder',
         'worktree-recipes',
         'session-control',
-        'coordinator-orchestration',
         'workflow-sharing',
         'workflow-child-sessions',
         'session-stages',
@@ -4701,6 +4701,7 @@ test(
         'readonly-integration-grants',
         'external-session-messages',
         'session-message-watchers',
+        'coordinator-orchestration',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -10334,7 +10335,6 @@ test(
       'default-session-folder',
       'worktree-recipes',
       'session-control',
-      'coordinator-orchestration',
       'workflow-sharing',
       'workflow-child-sessions',
       'session-stages',
@@ -10362,6 +10362,7 @@ test(
       'readonly-integration-grants',
       'external-session-messages',
       'session-message-watchers',
+      'coordinator-orchestration',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -33296,7 +33297,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-14), [
+  assert.deepEqual(capabilities.slice(-15), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -33311,6 +33312,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'readonly-integration-grants',
     'external-session-messages',
     'session-message-watchers',
+    'coordinator-orchestration',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

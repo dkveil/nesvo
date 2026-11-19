@@ -288,8 +288,6 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to set a default session folder.',
   'worktree-recipes':
     'Update this computer’s Nesvo host and reconnect to use worktree recipes.',
-  'coordinator-orchestration':
-    'Update the host on this computer to use coordinator updates, child feedback and history.',
   'session-control':
     'Update this computer’s Nesvo host and reconnect to let sessions coordinate other sessions.',
   'workflow-sharing':
@@ -346,6 +344,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage external session messages.',
   'session-message-watchers':
     'Update this computer’s Nesvo host and reconnect to manage session message watchers.',
+  'coordinator-orchestration':
+    'Update the host on this computer to use coordinator updates, child feedback and history.',
 };
 
 const hasFileAttachments = (input: unknown) =>
