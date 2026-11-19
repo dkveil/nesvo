@@ -285,7 +285,6 @@ import {
   McpRepositoryNotice,
   RepositoryDecision,
 } from '@/features/session-mcp/mcp-repository-notice';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { PanelBody } from '@/shared/ui/panel';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
 import {
