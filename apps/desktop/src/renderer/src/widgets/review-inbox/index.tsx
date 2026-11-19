@@ -135,7 +135,6 @@ type Props = ReviewDecisionProps & {
   routeOf: (session: Session) => DecisionRoute;
 };
 
-
 type AssistantSelection = {
   hostId: HostId;
   subject: ConfigurationInboxSubject | null;
@@ -192,7 +191,6 @@ function assistantSubject(row: ActionRow): AssistantSelection | null {
     }
   }
 }
-
 function FullText({ text, children }: { text: string; children: ReactNode }) {
   return (
     <Tooltip>

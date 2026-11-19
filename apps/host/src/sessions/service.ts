@@ -5662,8 +5662,14 @@ export class SessionService {
                 fingerprint: null,
               };
         baseline = null;
-        await this.settleInboxRules(session);
-        await this.saveTerminal(session, diff, questions, active.resultRoute);
+        const held = await this.settleInboxRules(session);
+        await this.saveTerminal(
+          session,
+          diff,
+          questions,
+          active.resultRoute,
+          held,
+        );
         this.announceStage(session, stageRecords);
       })
       .catch(async () => {
@@ -5761,8 +5767,8 @@ export class SessionService {
     return result;
   }
 
-  private async settleInboxRules(session: Session): Promise<void> {
-    if (!session.runId) return;
+  private async settleInboxRules(session: Session): Promise<boolean> {
+    if (!session.runId) return false;
     let held = false;
     try {
       held =
@@ -5771,13 +5777,8 @@ export class SessionService {
     } catch {
       held = false;
     }
-    if (held) {
-      try {
-        this.holdQueueFor(session.id);
-      } catch {
-        session.revision += 1;
-      }
-    }
+    if (held) holdQueue(session);
+    return held;
   }
 
   private notifyFinished(session: Session): void {
@@ -5807,6 +5808,7 @@ export class SessionService {
     diff: ReviewDiff,
     questions?: TurnQuestion,
     resultRoute?: Review['route'],
+    held = false,
   ): Promise<void> {
     const resultless = session.runId
       ? this.resultlessRuns.delete(session.runId)
@@ -5843,8 +5845,8 @@ export class SessionService {
             }
           : reason
             ? { kind: 'result-to-review' }
-            : { kind: 'done' };
-      if (reply.outcome.kind === 'question-for-you') holdQueue(session);
+            : { kind: held ? 'decision-needed' : 'done' };
+      if (reply.outcome?.kind === 'question-for-you') holdQueue(session);
     }
     const reviews =
       session.status === 'completed' &&

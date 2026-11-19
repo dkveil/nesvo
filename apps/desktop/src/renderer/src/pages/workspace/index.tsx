@@ -4594,18 +4594,23 @@ ${text}`
                 {sessionAttention || sessionStatusLabel(selected)}
               </span>
             )}
-          {!browsing && !creating && !wakeControl.state?.pending && selected?.coordinatorWait && (
-            <CoordinatorWait
-              key={selectedKey}
-              session={selected}
-              sessions={workers}
-              enabled={
-                store.hostReady(selectedHostId) &&
-                !!selectedComputer?.capabilities.includes('coordinator-workers')
-              }
-              onContinue={() => continueCoordinator(selected)}
-            />
-          )}
+          {!browsing &&
+            !creating &&
+            !wakeControl.state?.pending &&
+            selected?.coordinatorWait && (
+              <CoordinatorWait
+                key={selectedKey}
+                session={selected}
+                sessions={workers}
+                enabled={
+                  store.hostReady(selectedHostId) &&
+                  !!selectedComputer?.capabilities.includes(
+                    'coordinator-workers',
+                  )
+                }
+                onContinue={() => continueCoordinator(selected)}
+              />
+            )}
           {finishingWorktree && headerWorktree && selected && window.nesvo && (
             <FinishWorktreeDialog
               key={selectedKey}
