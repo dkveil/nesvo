@@ -4454,17 +4454,15 @@ try {
     .click();
   await editor.waitFor();
   const editorDock = editor.locator('[data-slot="editor-dock"]');
-  await editorDock
-    .getByRole('button', { name: 'Open assistant', exact: true })
-    .waitFor();
-  await bothShots('collapsed');
-  await editorDock
-    .getByRole('button', { name: 'Open assistant', exact: true })
-    .click();
-  const assistantDock = editorDock.getByRole('region', {
-    name: 'Assistant',
-    exact: true,
+  const openAssistant = editorDock.getByRole('button', {
+    name: /^Open assistant(?:,|$)/,
   });
+  await openAssistant.waitFor();
+  await bothShots('collapsed');
+  await openAssistant.click();
+  const assistantDock = editor.locator(
+    '[data-slot="side-panel"][data-assistant-dock]',
+  );
   await assistantDock.waitFor();
   await assistantDock.getByText(/^Describe a change to smoke\./).waitFor();
   await bothShots('empty');
@@ -4596,9 +4594,7 @@ try {
   await editor.waitFor();
   for (const name of ['lint-check', 'check', 'approve'])
     await editor.locator(`[data-editor-node="${name}"]`).waitFor();
-  await editorDock
-    .getByRole('button', { name: 'Open assistant', exact: true })
-    .click();
+  await openAssistant.click();
   await assistantDock.waitFor();
   await assistantDock
     .getByText(/^Describe a change to assistant-flow\./)
@@ -4610,6 +4606,7 @@ try {
     .getByRole('button', { name: 'Edit smoke', exact: true })
     .click();
   await editor.waitFor();
+  await openAssistant.click();
   await assistantDock
     .getByRole('button', { name: 'Open session', exact: true })
     .click();
