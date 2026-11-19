@@ -240,8 +240,6 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
   'conversation-import':
     'This computer runs an older Nesvo host without conversation import. Update the host, then reconnect.',
-  'manager-import':
-    'Update this computer’s Nesvo host and reconnect to import from other apps.',
   'session-worktrees':
     'This computer runs an older Nesvo host without session worktrees. Update the host, then reconnect.',
   'session-worktree-tools':
@@ -326,6 +324,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage MCP authorization.',
   'group-cost-budgets':
     'Update this computer’s Nesvo host to use session group budgets.',
+  'manager-import':
+    'Update this computer’s Nesvo host and reconnect to import from other apps.',
 };
 
 const hasFileAttachments = (input: unknown) =>

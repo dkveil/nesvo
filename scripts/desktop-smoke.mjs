@@ -1082,7 +1082,6 @@ try {
     'costs',
     'mcp-servers',
     'conversation-import',
-    'manager-import',
     'scheduled-job-change-triggers',
     'database-backup',
     'claude-approvals',
@@ -1122,6 +1121,7 @@ try {
     'worker-restart',
     'mcp-auth',
     'group-cost-budgets',
+    'manager-import',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

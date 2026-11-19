@@ -40,6 +40,8 @@ export async function smokeManagerImport() {
           ...process.env,
           ELECTRON_RUN_AS_NODE: undefined,
           NESVO_DATA_DIR: directory,
+          NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
+          NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
           NESVO_SMOKE_TEST: '1',
           NESVO_TEST_MODE: '1',
           NESVO_TEST_SHOW_ONBOARDING: show ? '1' : '0',
