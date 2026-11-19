@@ -455,9 +455,10 @@ if (args.length === 1 && args[0] === '--version') {
   const permissionMode = values.get('--permission-mode');
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
   const summaryMode = values.get('--tools') === '';
-  if (values.has('--append-system-prompt'))
-    assert.equal(permissionMode, summaryMode ? 'plan' : 'dontAsk');
   const hostPrompts = values.get('--permission-prompt-tool') === 'stdio';
+  const systemPrompt = values.get('--append-system-prompt');
+  if (systemPrompt && !hostPrompts)
+    assert.equal(permissionMode, summaryMode ? 'plan' : 'dontAsk');
   const inputFormat = values.get('--input-format');
   assert.ok(['text', 'stream-json'].includes(inputFormat), inputFormat);
   const streamInput = inputFormat === 'stream-json';
@@ -465,7 +466,6 @@ if (args.length === 1 && args[0] === '--version') {
     assert.ok(streamInput);
     assert.ok(['plan', 'acceptEdits', 'auto'].includes(permissionMode));
     assert.equal(values.has('--json-schema'), false);
-    assert.equal(values.has('--append-system-prompt'), false);
   } else assert.equal(values.has('--permission-prompt-tool'), false);
   const offersQuestion = values
     .get('--tools')
@@ -660,6 +660,18 @@ if (args.length === 1 && args[0] === '--version') {
         [...controlTools].sort(),
         config.tools.map(tool => tool.name).sort(),
       );
+      const coordinates =
+        permissionMode === 'plan' &&
+        !presentsPlan &&
+        controlTools.includes('session_create');
+      assert.equal(!!systemPrompt, coordinates);
+      if (coordinates) {
+        assert.match(systemPrompt, /Plan mode keeps the workspace read-only/);
+        assert.match(
+          systemPrompt,
+          /including creating allowed children in Plan mode/,
+        );
+      }
       if (process.env.NESVO_FIXTURE_CONTROL_LOG)
         writeFileSync(
           process.env.NESVO_FIXTURE_CONTROL_LOG,
@@ -670,7 +682,7 @@ if (args.length === 1 && args[0] === '--version') {
           }) + '\n',
           { flag: 'a' },
         );
-    }
+    } else assert.equal(systemPrompt, undefined);
   } else {
     for await (const chunk of process.stdin) prompt += chunk;
     if (streamInput) {
@@ -886,6 +898,8 @@ if (args.length === 1 && args[0] === '--version') {
       ...(process.env.NESVO_FIXTURE_PLAN_GRANTS && config.mcpServers.fixture
         ? ['mcp__fixture__lookup']
         : []),
+
+      ...(controlTools ?? []).map(tool => `mcp__nesvo__${tool}`),
     ],
     mcp_servers: [
       ...(process.env.NESVO_FIXTURE_PLAN_GRANTS && config.mcpServers.fixture

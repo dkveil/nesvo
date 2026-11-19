@@ -1680,8 +1680,17 @@ export function startClaude(options: {
       if (options.effort) args.push('--effort', options.effort);
       if (options.browser) args.push('--chrome');
       if (options.ephemeral) args.push('--no-session-persistence');
+      const coordinatorInstructions =
+        controlled &&
+        readOnly &&
+        !presentsPlan &&
+        options.control?.tools.some(tool => tool.name === 'session_create')
+          ? 'Claude Code Plan mode keeps the workspace read-only. The operator separately enabled Nesvo session control for this coordinator. The available mcp__nesvo__ tools are authorized for coordinating child sessions, including creating allowed children in Plan mode. Call the appropriate Nesvo tool when asked to coordinate work. Nesvo enforces the host policy and child permissions for each call. Keep the workspace read-only and stay in Plan mode.'
+          : undefined;
       const systemInstructions =
-        options.summaryInstructions ?? options.assistantPrompt;
+        options.summaryInstructions ??
+        options.assistantPrompt ??
+        coordinatorInstructions;
       if (systemInstructions)
         args.push('--append-system-prompt', systemInstructions);
       if (options.outputSchema)
