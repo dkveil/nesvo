@@ -82,6 +82,13 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     runSessionWorktreeSetup: input =>
       api.runSessionWorktreeSetup(input, hostId),
     sendMessage: input => api.sendMessage(input, hostId),
+    readCoordinatorWake: input => api.readCoordinatorWake(input, hostId),
+    setCoordinatorWake: input => api.setCoordinatorWake(input, hostId),
+    continueCoordinatorDelivery: input =>
+      api.continueCoordinatorDelivery(input, hostId),
+    steerChildSession: input => api.steerChildSession(input, hostId),
+    decideChildSteering: input => api.decideChildSteering(input, hostId),
+    readChildWork: input => api.readChildWork(input, hostId),
     stopRun: input => api.stopRun(input, hostId),
     respondApproval: input => api.respondApproval(input, hostId),
     decideDelegation: input => api.decideDelegation(input, hostId),

@@ -76,6 +76,16 @@ import {
   validateInboxRuleSchema,
   answerSessionQuestionSchema,
   coordinatorPolicySchema,
+  coordinatorWakeTargetSchema,
+  coordinatorWakeStateSchema,
+  setCoordinatorWakeSchema,
+  continueCoordinatorDeliverySchema,
+  coordinatorDeliveryReceiptSchema,
+  ownerSteerInputSchema,
+  sessionSteerResultSchema,
+  decideSteeringInputSchema,
+  ownerChildWorkInputSchema,
+  childWorkPageSchema,
   decideReviewSchema,
   hostHealthSchema,
   assignSessionWorkflowSchema,
@@ -1458,6 +1468,54 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:decide-lesson',
         decideLessonSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readCoordinatorWake: async (input, hostId) =>
+    coordinatorWakeStateSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-coordinator-wake',
+        coordinatorWakeTargetSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  setCoordinatorWake: async (input, hostId) =>
+    coordinatorWakeStateSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-coordinator-wake',
+        setCoordinatorWakeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  continueCoordinatorDelivery: async (input, hostId) =>
+    coordinatorDeliveryReceiptSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:continue-coordinator-delivery',
+        continueCoordinatorDeliverySchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  steerChildSession: async (input, hostId) =>
+    sessionSteerResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:steer-child-session',
+        ownerSteerInputSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  decideChildSteering: async (input, hostId) =>
+    sessionSteerResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-child-steering',
+        decideSteeringInputSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readChildWork: async (input, hostId) =>
+    childWorkPageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-child-work',
+        ownerChildWorkInputSchema.parse(input),
         route(hostId),
       ),
     ),

@@ -45,6 +45,7 @@ type Props = {
   usage: ReactNode;
   servers?: ReactNode;
   context: ReactNode;
+  coordination?: ReactNode;
   changes?: ReactNode;
   onComputers: () => void;
   onFiles: () => void;
@@ -124,6 +125,7 @@ export function SessionCard({
   usage,
   servers,
   context,
+  coordination,
   changes,
   onComputers,
   onFiles,
@@ -218,6 +220,7 @@ export function SessionCard({
             />
           </div>
         )}
+        {coordination}
         {session && <LifecycleSection session={session} />}
         {pullRequest}
         {changes && (

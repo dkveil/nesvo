@@ -117,12 +117,22 @@ type Props = {
   messageTarget: { id: string } | null;
   workers: Session[];
   activityBar?: ReactNode;
+  coordinationFooter?: ReactNode;
+  coordinatorRecovery?: boolean;
   delegations: ReactNode;
   preparation?: ReactNode;
   messageLinks?: MessageLinkScope;
   turnReviews: Review[];
   onOpenTurnDiff: (id: string, path?: string) => void;
   onOpenChild: (session: Session) => void;
+  onInspectChild?: (
+    session: Session,
+    trigger: HTMLElement,
+    runId?: string,
+  ) => void;
+  steeringFeedback?: { text: string; warning: boolean };
+  canSteer?: boolean;
+  parentTitle?: string;
   draft: string;
   selectedSkill: SelectedSkill | null;
   connected: boolean;
@@ -174,12 +184,18 @@ export function Conversation({
   messageTarget,
   workers,
   activityBar,
+  coordinationFooter,
+  coordinatorRecovery,
   delegations,
   preparation,
   messageLinks,
   turnReviews,
   onOpenTurnDiff,
   onOpenChild,
+  onInspectChild,
+  steeringFeedback,
+  canSteer,
+  parentTitle,
   draft,
   selectedSkill,
   connected,
@@ -532,13 +548,15 @@ export function Conversation({
   const queueButton = (
     <Hint
       label={
-        running
-          ? 'Send when this turn ends'
-          : 'Keep queued until you choose Send now'
+        canSteer
+          ? 'Deliver feedback to the active turn'
+          : running
+            ? 'Send when this turn ends'
+            : 'Keep queued until you choose Send now'
       }
     >
       <ComposerSend
-        label="Queue message"
+        label={canSteer ? 'Steer' : 'Queue message'}
         tooltip={false}
         disabled={!draft.trim() || !canQueue || !attachmentsReady}
       >
@@ -652,14 +670,16 @@ export function Conversation({
           {mcpNotice}
           {waitingLabel ? (
             <div className="flex min-h-7 items-center justify-between gap-2 text-xs text-muted-foreground">
-              <p
-                role="status"
-                title={waitingLabel + ' · ' + waitingTitles}
-                className="min-w-0 truncate"
-              >
-                <span className="text-foreground">{waitingLabel}</span> ·{' '}
-                {waitingTitles}
-              </p>
+              {activityBar ?? (
+                <p
+                  role="status"
+                  title={waitingLabel + ' · ' + waitingTitles}
+                  className="min-w-0 truncate"
+                >
+                  <span className="text-foreground">{waitingLabel}</span> ·{' '}
+                  {waitingTitles}
+                </p>
+              )}
               <Button
                 size="xs"
                 variant="ghost"
@@ -674,6 +694,7 @@ export function Conversation({
           ) : (
             activityBar
           )}
+          {coordinationFooter}
           {anchor(
             <Composer
               className={cn(
@@ -934,6 +955,14 @@ export function Conversation({
             </Composer>,
           )}
           {notice}
+          {steeringFeedback && (
+            <StatusMessage
+              tone={steeringFeedback.warning ? 'warning' : 'success'}
+              className="px-3"
+            >
+              {steeringFeedback.text}
+            </StatusMessage>
+          )}
           {(attachments.notice || attachmentFailed) && (
             <StatusMessage tone="warning" className="px-3">
               {attachments.notice ||
@@ -1120,6 +1149,15 @@ export function Conversation({
                           sent.has(child.id),
                       )
                     : [];
+                  const wakeTitles =
+                    message.origin === 'coordinator-wake'
+                      ? workersByAge
+                          .filter(child => message.body.includes(child.id))
+                          .map(child => child.title)
+                      : [];
+                  const wakeSnippet = wakeTitles.length
+                    ? `Updates from ${new Intl.ListFormat('en').format(wakeTitles)}.`
+                    : undefined;
                   const showActivity =
                     message.origin !== 'imported' &&
                     firstAgents.get(message.runId) === message.id &&
@@ -1135,6 +1173,16 @@ export function Conversation({
                       <MessageArticle
                         message={message}
                         provider={session.provider}
+                        actor={
+                          message.origin === 'coordinator-wake'
+                            ? 'Nesvo'
+                            : message.steering
+                              ? message.steering.senderSessionId
+                                ? (parentTitle ?? 'Coordinator')
+                                : 'You'
+                              : undefined
+                        }
+                        displayBody={wakeSnippet}
                         live={live}
                         deferred={
                           !live &&
@@ -1171,6 +1219,25 @@ export function Conversation({
                         <TurnChildren
                           children={children}
                           onOpen={onOpenChild}
+                          onInspect={
+                            onInspectChild &&
+                            ((child, trigger) =>
+                              onInspectChild(
+                                child,
+                                trigger,
+                                session.turnChildren
+                                  ?.find(turn => turn.runId === message.runId)
+                                  ?.childRuns?.find(
+                                    link => link.sessionId === child.id,
+                                  )?.runId ??
+                                  session.delegations.find(
+                                    proposal =>
+                                      proposal.runId === message.runId &&
+                                      proposal.childSessionId === child.id,
+                                  )?.childRunId ??
+                                  undefined,
+                              ))
+                          }
                         />
                       )}
                       {review && (
@@ -1229,7 +1296,7 @@ export function Conversation({
                     : session.error ||
                       'The last outcome is unconfirmed. Review the current state before continuing.'}
                 </StatusMessage>
-                {session.coordinatorWait ? (
+                {coordinatorRecovery ? null : session.coordinatorWait ? (
                   <p className="text-xs text-muted-foreground">
                     Use Continue coordinator in the session header. Resume
                     interrupted workers from their rows.

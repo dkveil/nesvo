@@ -36,6 +36,8 @@ const codeCommentsKey = (message: Message) =>
 type MessageArticleProps = {
   message: Message;
   provider: Provider;
+  actor?: string;
+  displayBody?: string;
   live: boolean;
   deferred: boolean;
   suppressBody: boolean;
@@ -110,6 +112,8 @@ function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
   return (
     sameActivity(previous.activity, next.activity) &&
     previous.provider === next.provider &&
+    previous.actor === next.actor &&
+    previous.displayBody === next.displayBody &&
     previous.live === next.live &&
     previous.suppressBody === next.suppressBody &&
     previous.deferred === next.deferred &&
@@ -124,6 +128,8 @@ function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
 export const MessageArticle = memo(function MessageArticle({
   message,
   provider,
+  actor,
+  displayBody,
   live,
   deferred,
   suppressBody,
@@ -172,7 +178,7 @@ export const MessageArticle = memo(function MessageArticle({
         ref={article}
         id={`message-${message.id}`}
         data-message-id={message.id}
-        aria-label={message.author === 'operator' ? 'You' : provider}
+        aria-label={actor ?? (message.author === 'operator' ? 'You' : provider)}
         data-author={message.author}
         aria-busy={live || undefined}
         className={cn(
@@ -184,6 +190,12 @@ export const MessageArticle = memo(function MessageArticle({
         {visibleContent ? (
           <>
             <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
+              {actor && (
+                <span className="text-muted-foreground">
+                  {actor}
+                  {message.steering ? ' · Steered' : ''}
+                </span>
+              )}
               {message.author === 'operator' &&
                 (message.skill || message.skillId) && (
                   <Chip
@@ -251,7 +263,7 @@ export const MessageArticle = memo(function MessageArticle({
                 isLongPrompt(message.body) ? (
                   <ClampedPrompt>
                     <MessageBody
-                      body={message.body}
+                      body={displayBody ?? message.body}
                       attachments={message.attachments}
                       renderAttachment={renderInlineAttachment}
                       className="rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
@@ -259,7 +271,7 @@ export const MessageArticle = memo(function MessageArticle({
                   </ClampedPrompt>
                 ) : (
                   <MessageBody
-                    body={message.body}
+                    body={displayBody ?? message.body}
                     attachments={message.attachments}
                     renderAttachment={renderInlineAttachment}
                     className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
@@ -267,7 +279,7 @@ export const MessageArticle = memo(function MessageArticle({
                 )
               ) : (
                 <MessageBody
-                  body={message.body}
+                  body={displayBody ?? message.body}
                   streaming={live}
                   className="w-full text-ui leading-relaxed"
                 />
@@ -281,7 +293,7 @@ export const MessageArticle = memo(function MessageArticle({
               !live &&
               message.body && (
                 <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
-                  <CopyMessageButton body={message.body} />
+                  <CopyMessageButton body={displayBody ?? message.body} />
                 </div>
               )}
             {message.interruption && showInterruption && (

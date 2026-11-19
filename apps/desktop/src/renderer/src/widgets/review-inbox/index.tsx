@@ -43,6 +43,10 @@ import {
   modelLabel,
   type Session,
 } from '@/entities/session';
+import {
+  SteeringDecisionActions,
+  type SteeringRequest,
+} from '@/features/session-mode/steering-decision-actions';
 import { ApprovalActions } from '@/features/session-mode/approval-actions';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
@@ -144,6 +148,13 @@ type ActionRow =
       id: string;
     }
   | { type: 'coordinator-wait'; session: Session; at: string; id: string }
+  | {
+      type: 'steering';
+      session: Session;
+      request: SteeringRequest;
+      at: string;
+      id: string;
+    }
   | { type: 'review'; review: Review; at: string; id: string }
   | {
       type: 'turn-question';
@@ -641,6 +652,19 @@ export function ReviewInbox({
   if (filter !== 'history')
     for (const session of sessions) {
       const key = entityKey(session);
+      for (const request of session.steeringRequests ?? [])
+        if (
+          session.status === 'running' &&
+          session.runId === request.runId &&
+          routesToInbox(request.route)
+        )
+          rows.push({
+            type: 'steering',
+            session,
+            request,
+            at: request.createdAt,
+            id: `${key}/${request.id}`,
+          });
       if (inInbox(session) && session.plan?.status === 'plan-ready')
         rows.push({
           type: 'plan',
@@ -807,6 +831,7 @@ export function ReviewInbox({
               row.type === 'plan' ||
               row.type === 'question' ||
               row.type === 'turn-question' ||
+              row.type === 'steering' ||
               row.type === 'automation',
           ) && (
             <StatusMessage className="mb-3 px-2">
@@ -941,6 +966,34 @@ export function ReviewInbox({
                     }
                     actionsPlacement="visible"
                   />,
+                );
+              }
+              if (row.type === 'steering') {
+                const { session, request } = row;
+                return (
+                  <ActionItem
+                    key={row.id}
+                    title={session.title}
+                    location={location(session.hostId)}
+                    aria-label={`Approve feedback: ${session.title}`}
+                    data-inbox-kind="decision-needed"
+                    onOpen={() => onSession(entityKey(session))}
+                    why="Send feedback to the worker's active run"
+                    summary={
+                      <NativeDisclosure title="Feedback text">
+                        <p className="whitespace-pre-wrap break-words text-ui">
+                          {request.text}
+                        </p>
+                      </NativeDisclosure>
+                    }
+                    meta={reviewDate(request.createdAt)}
+                  >
+                    <SteeringDecisionActions
+                      child={session}
+                      request={request}
+                      enabled={operationEnabled && isOperationEnabled(session)}
+                    />
+                  </ActionItem>
                 );
               }
               if (row.type === 'turn-question') {

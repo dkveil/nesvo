@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 
 const PANEL_KINDS = [
   'files-tree',
+  'child-work',
   'files-editor',
   'diff',
   'skills',

@@ -25,6 +25,8 @@ import { TurnQuestionReply } from '@/features/review-decision/turn-question-repl
 import { entityKey } from '@/shared/lib/host-key';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
+import { SteeringDecisionActions } from '@/features/session-mode/steering-decision-actions';
+import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { ListRow } from '@/shared/ui/list-row';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -130,6 +132,16 @@ export function ChildDecisions({
   const children = allChildren.filter(session =>
     routesToParent(routeOf(session)),
   );
+  const steering = allChildren.flatMap(child =>
+    (child.steeringRequests ?? [])
+      .filter(
+        request =>
+          child.status === 'running' &&
+          child.runId === request.runId &&
+          routesToParent(request.route),
+      )
+      .map(request => ({ child, request })),
+  );
   const turnQuestions = allChildren.flatMap(child => {
     const question = pendingTurnQuestion(child);
     return question && routesToParent(question.route)
@@ -167,6 +179,7 @@ export function ChildDecisions({
     plans.length +
     questions.length +
     turnQuestions.length +
+    steering.length +
     results.length;
   if (!count) return null;
   return (
@@ -180,6 +193,32 @@ export function ChildDecisions({
           : `${count} child decisions wait for you`}
       </SectionLabel>
       <div className="space-y-px">
+        {steering.map(({ child, request }) => (
+          <article
+            key={request.id}
+            aria-label={`Approve feedback: ${child.title}`}
+          >
+            <ListRow density="block" columns={COLUMNS}>
+              <div className="min-w-0 space-y-1">
+                <CardHeader
+                  title={child.title}
+                  what="Approve feedback"
+                  onOpen={() => onOpen(entityKey(child))}
+                />
+                <NativeDisclosure title="Feedback text">
+                  <p className="whitespace-pre-wrap break-words text-ui">
+                    {request.text}
+                  </p>
+                </NativeDisclosure>
+              </div>
+              <SteeringDecisionActions
+                child={child}
+                request={request}
+                enabled={enabled}
+              />
+            </ListRow>
+          </article>
+        ))}
         {turnQuestions.map(({ child, question }) => (
           <article
             key={question.messageId}

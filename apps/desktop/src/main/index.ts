@@ -91,6 +91,12 @@ import {
   validateInboxRuleSchema,
   answerSessionQuestionSchema,
   coordinatorPolicySchema,
+  coordinatorWakeTargetSchema,
+  setCoordinatorWakeSchema,
+  continueCoordinatorDeliverySchema,
+  ownerSteerInputSchema,
+  decideSteeringInputSchema,
+  ownerChildWorkInputSchema,
   decideReviewSchema,
   respondApprovalSchema,
   getSessionSchema,
@@ -1251,6 +1257,36 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  const childOrchestrationCalls = [
+    [
+      'nesvo:read-coordinator-wake',
+      'read-coordinator-wake',
+      coordinatorWakeTargetSchema,
+    ],
+    [
+      'nesvo:set-coordinator-wake',
+      'set-coordinator-wake',
+      setCoordinatorWakeSchema,
+    ],
+    [
+      'nesvo:continue-coordinator-delivery',
+      'continue-coordinator-delivery',
+      continueCoordinatorDeliverySchema,
+    ],
+    ['nesvo:steer-child-session', 'steer-child-session', ownerSteerInputSchema],
+    [
+      'nesvo:decide-child-steering',
+      'decide-child-steering',
+      decideSteeringInputSchema,
+    ],
+    ['nesvo:read-child-work', 'read-child-work', ownerChildWorkInputSchema],
+  ] as const;
+  for (const [channel, method, schema] of childOrchestrationCalls) {
+    handle(channel, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(method, schema.parse(input), route(hostId));
+    });
+  }
   const inboxRuleCalls = [
     [
       'nesvo:inspect-config-draft',

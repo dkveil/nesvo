@@ -285,6 +285,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to set a default session folder.',
   'worktree-recipes':
     'Update this computer’s Nesvo host and reconnect to use worktree recipes.',
+  'coordinator-orchestration':
+    'Update the host on this computer to use coordinator updates, child feedback and history.',
   'session-control':
     'Update this computer’s Nesvo host and reconnect to let sessions coordinate other sessions.',
   'workflow-sharing':
@@ -435,6 +437,15 @@ function requiredCapability(
     method === 'decide-session-parent'
   )
     return 'session-control';
+  if (
+    method === 'read-coordinator-wake' ||
+    method === 'set-coordinator-wake' ||
+    method === 'continue-coordinator-delivery' ||
+    method === 'steer-child-session' ||
+    method === 'decide-child-steering' ||
+    method === 'read-child-work'
+  )
+    return 'coordinator-orchestration';
   if (method === 'continue-worker') return 'worker-restart';
   if (method === 'continue-coordinator' || method === 'worker-worktree')
     return 'coordinator-workers';
@@ -1338,6 +1349,12 @@ export class ComputerManager {
       'decide-session-parent': 'session',
       'decide-session-plan': 'session',
       'answer-session-question': 'session',
+      'read-coordinator-wake': 'coordinator-wake',
+      'set-coordinator-wake': 'coordinator-wake',
+      'continue-coordinator-delivery': 'coordinator-delivery',
+      'steer-child-session': 'child-steering',
+      'decide-child-steering': 'child-steering',
+      'read-child-work': 'child-work',
       'read-session-control-policy': 'session-control-policy',
       'save-session-control-policy': 'session-control-policy',
       'decide-review': 'review',
@@ -1531,6 +1548,13 @@ export class ComputerManager {
         return response.run;
       case 'worker-worktree':
         return response.result;
+      case 'coordinator-wake':
+        return response.state;
+      case 'child-steering':
+      case 'coordinator-delivery':
+        return response.receipt;
+      case 'child-work':
+        return response.page;
       case 'session-control-policy':
         return response.policy;
       case 'lessons':

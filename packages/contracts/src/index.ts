@@ -573,6 +573,15 @@ import {
   sessionSteerResultSchema,
   coordinatorWakeTargetSchema,
   coordinatorWakeStateSchema,
+  type CoordinatorWakeState,
+  type SetCoordinatorWakeInput,
+  type CoordinatorDeliveryReceipt,
+  type ContinueCoordinatorDeliveryInput,
+  type SessionSteerResult,
+  type OwnerSteerInput,
+  type DecideSteeringInput,
+  type ChildWorkPage,
+  type OwnerChildWorkInput,
   setCoordinatorWakeSchema,
   continueCoordinatorDeliverySchema,
   coordinatorDeliveryReceiptSchema,
@@ -2971,6 +2980,30 @@ export type DesktopApi = {
     input: AnswerSessionQuestionInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  readCoordinatorWake: (
+    input: { sessionId: string | null },
+    hostId?: HostId,
+  ) => Promise<CoordinatorWakeState>;
+  setCoordinatorWake: (
+    input: SetCoordinatorWakeInput,
+    hostId?: HostId,
+  ) => Promise<CoordinatorWakeState>;
+  continueCoordinatorDelivery: (
+    input: ContinueCoordinatorDeliveryInput,
+    hostId?: HostId,
+  ) => Promise<CoordinatorDeliveryReceipt>;
+  steerChildSession: (
+    input: OwnerSteerInput,
+    hostId?: HostId,
+  ) => Promise<SessionSteerResult>;
+  decideChildSteering: (
+    input: DecideSteeringInput,
+    hostId?: HostId,
+  ) => Promise<SessionSteerResult>;
+  readChildWork: (
+    input: OwnerChildWorkInput,
+    hostId?: HostId,
+  ) => Promise<ChildWorkPage>;
   readSessionControlPolicy: (hostId?: HostId) => Promise<CoordinatorPolicy>;
   saveSessionControlPolicy: (
     policy: CoordinatorPolicy,

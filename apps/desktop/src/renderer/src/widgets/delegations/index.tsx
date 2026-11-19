@@ -74,6 +74,15 @@ export function Delegations({
   const current = session.delegations.filter(
     delegation => delegation.runId === session.runId,
   );
+  const cards = new Set(
+    (session.turnChildren ?? [])
+      .filter(turn =>
+        session.messages.some(
+          message => message.runId === turn.runId && message.author === 'agent',
+        ),
+      )
+      .flatMap(turn => turn.sessionIds),
+  );
   const displayed = current.filter(
     delegation =>
       delegation.status !== 'running' ||
@@ -83,6 +92,7 @@ export function Delegations({
   const previousChildren = children.filter(
     child =>
       !inlineIds.has(child.id) &&
+      (child.role === 'worker' || !cards.has(child.id)) &&
       !current.some(delegation => delegation.childSessionId === child.id),
   );
   if (displayed.length === 0 && previousChildren.length === 0 && !restartError)

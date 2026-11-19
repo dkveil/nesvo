@@ -159,6 +159,12 @@ import { StatusMessage } from '@/shared/ui/status-message';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import type { FileTarget } from '@/widgets/conversation/message-link-target';
 import { Delegations } from '@/widgets/delegations';
+import { ChildWorkDrawer } from '@/widgets/delegations/child-work-drawer';
+import {
+  CoordinatorWakeFooter,
+  CoordinatorWakeSetting,
+} from '@/widgets/delegations/coordinator-wake';
+import { useCoordinatorWake } from '@/widgets/delegations/use-coordinator-wake';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
@@ -469,8 +475,20 @@ export function Workspace({
     | 'terminal'
     | 'details'
     | 'context'
+    | 'child-work'
     | null
   >(location.diff ? 'diff' : null);
+  const [childWork, setChildWork] = useState<{
+    hostId: string;
+    coordinatorId: string;
+    childId: string;
+    runId: string | null;
+  } | null>(null);
+  const [feedbackNotice, setFeedbackNotice] = useState<{
+    key: string;
+    text: string;
+    warning: boolean;
+  } | null>(null);
   const [pullRequestsView, setPullRequestsView] = useState(false);
   const [pullRequestHandoff, setPullRequestHandoff] = useState<Session | null>(
     null,
@@ -1241,6 +1259,49 @@ export function Workspace({
   const selectedComputer = store.computers.find(
     computer => computer.id === selectedHostId,
   );
+  const orchestration = !!selectedComputer?.capabilities.includes(
+    'coordinator-orchestration',
+  );
+  const coordinatorChildren = selected
+    ? store.sessions.filter(
+        child =>
+          child.hostId === selected.hostId && child.parentId === selected.id,
+      )
+    : [];
+  const wakeControl = useCoordinatorWake(
+    orchestration &&
+      selected &&
+      coordinatorChildren.length &&
+      store.hostReady(selectedHostId)
+      ? window.nesvo
+      : undefined,
+    selectedHostId,
+    selected?.id ?? null,
+  );
+  const inspectedChild =
+    childWork &&
+    store.sessions.find(
+      child =>
+        child.hostId === childWork.hostId &&
+        child.id === childWork.childId &&
+        child.parentId === childWork.coordinatorId,
+    );
+  const inspectChild = (
+    child: Session,
+    trigger: HTMLElement,
+    runId?: string,
+  ) => {
+    if (!selected || !orchestration || child.parentId !== selected.id) return;
+    diffTrigger.current = trigger;
+    setDiffTarget(null);
+    setChildWork({
+      hostId: selected.hostId,
+      coordinatorId: selected.id,
+      childId: child.id,
+      runId: runId ?? child.runId,
+    });
+    setPanel('child-work');
+  };
   const usageTerminal =
     store.sessions
       .filter(
@@ -1924,6 +1985,7 @@ export function Workspace({
     if (!selected || sendingRef.current || connection !== 'ready') return;
     if (
       !folderBusy &&
+      selected.status !== 'running' &&
       (selectedProviderState?.status?.status !== 'ready' ||
         selectedProviderState.loading ||
         selectedProviderState.error)
@@ -1948,6 +2010,60 @@ export function Workspace({
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
     const selection = modelSelections[sessionKey] ?? null;
     const mode = pendingModeOf(selected);
+    const running =
+      selected.status === 'running' || selected.status === 'stopping';
+    if (
+      orchestration &&
+      selected.parentId &&
+      selected.runId &&
+      selected.status === 'running' &&
+      !skill &&
+      !selection &&
+      !mode &&
+      !attachments.length &&
+      !codeComments.length
+    ) {
+      sendingRef.current = true;
+      setSending(true);
+      setFeedbackNotice(null);
+      try {
+        const result = await window.nesvo.steerChildSession(
+          {
+            sessionId: selected.id,
+            expectedRunId: selected.runId,
+            text,
+            fallback: 'queue',
+            actionId: crypto.randomUUID(),
+          },
+          selected.hostId,
+        );
+        const warning = result.status === 'delivery-unknown';
+        setFeedbackNotice({
+          key: sessionKey,
+          warning,
+          text:
+            result.status === 'steered'
+              ? 'Steered'
+              : result.status === 'queued'
+                ? `Queued. ${result.reason}`
+                : warning
+                  ? 'Delivery unconfirmed'
+                  : 'Feedback is waiting for a decision.',
+        });
+        if ((draftVersions.current[sessionKey] ?? 0) === version)
+          setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
+      } catch (error) {
+        setFeedbackNotice({
+          key: sessionKey,
+          warning: true,
+          text: errorDetail(error),
+        });
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+      }
+      return;
+    }
     await deliver(
       selected,
       text,
@@ -1962,7 +2078,7 @@ export function Workspace({
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
         }
       },
-      folderBusy,
+      folderBusy || running,
       selection,
       mode,
       attachments,
@@ -3409,7 +3525,55 @@ ${text}`
   };
   const paletteSessionActions = (key: string) => {
     const session = store.sessions.find(item => entityKey(item) === key);
-    return session ? sessionCommands(session) : [];
+    if (!session) return [];
+    const commands = sessionCommands(session);
+    const host = store.computers.find(
+      computer => computer.id === session.hostId,
+    );
+    if (
+      !session.parentId &&
+      !session.workflowRunId &&
+      !session.workflowStepId &&
+      !session.scheduledJobId &&
+      !session.archivedAt &&
+      !store.sessions.some(
+        child =>
+          child.hostId === session.hostId && child.parentId === session.id,
+      ) &&
+      host?.capabilities.includes('coordinator-orchestration') &&
+      store.hostReady(session.hostId)
+    ) {
+      commands.push({
+        id: 'enable-coordinator-wake',
+        label: 'Resume when children finish',
+        icon: <FolderOpen />,
+        run: () => {
+          void (async () => {
+            const target = { sessionId: session.id };
+            const state = await window.nesvo.readCoordinatorWake(
+              target,
+              session.hostId,
+            );
+            if (!state.enabled)
+              await window.nesvo.setCoordinatorWake(
+                {
+                  ...target,
+                  enabled: true,
+                  actionId: crypto.randomUUID(),
+                  expectedRevision: state.revision,
+                },
+                session.hostId,
+              );
+          })().catch(error =>
+            setErrors(previous => ({
+              ...previous,
+              [entityKey(session)]: errorDetail(error),
+            })),
+          );
+        },
+      });
+    }
+    return commands;
   };
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
   const runningApps = useRunningApps(
@@ -4422,7 +4586,7 @@ ${text}`
                 {sessionAttention || sessionStatusLabel(selected)}
               </span>
             )}
-          {!browsing && !creating && selected?.coordinatorWait && (
+          {!browsing && !creating && !wakeControl.state?.pending && selected?.coordinatorWait && (
             <CoordinatorWait
               key={selectedKey}
               session={selected}
@@ -5053,6 +5217,43 @@ ${text}`
                 )}
                 onOpenTurnDiff={openDiff}
                 onOpenChild={child => select(entityKey(child))}
+                coordinatorRecovery={!!wakeControl.state?.continueRequired}
+                coordinationFooter={
+                  wakeControl.state?.pending || wakeControl.state?.effective ? (
+                    <CoordinatorWakeFooter
+                      key={selectedKey}
+                      session={selected}
+                      children={coordinatorChildren}
+                      control={wakeControl}
+                    />
+                  ) : undefined
+                }
+                onInspectChild={orchestration ? inspectChild : undefined}
+                parentTitle={
+                  selected.parentId
+                    ? store.sessions.find(
+                        parent =>
+                          parent.id === selected.parentId &&
+                          parent.hostId === selected.hostId,
+                      )?.title
+                    : undefined
+                }
+                steeringFeedback={
+                  feedbackNotice?.key === selectedKey
+                    ? feedbackNotice
+                    : undefined
+                }
+                canSteer={
+                  orchestration &&
+                  !!selected.parentId &&
+                  selected.provider === 'Codex' &&
+                  selected.status === 'running' &&
+                  !selected.pendingApprovals.length &&
+                  !pendingModeOf(selected) &&
+                  !modelSelections[selectedKey] &&
+                  !selectedSkills[selectedKey] &&
+                  !composerAttachments.items(selectedKey).length
+                }
                 activityBar={
                   subsessionActivity?.visible && (
                     <SubsessionBar
@@ -5627,6 +5828,16 @@ ${text}`
               connected={store.hostReady(selectedHostId)}
             />
           }
+          coordination={
+            orchestration &&
+            coordinatorChildren.length > 0 && (
+              <CoordinatorWakeSetting
+                id="session-coordinator-wake"
+                label="Resume when children finish"
+                control={wakeControl}
+              />
+            )
+          }
           context={
             cardSession && (
               <ContextSection
@@ -5637,6 +5848,36 @@ ${text}`
           }
         />
       )}
+      {panel === 'child-work' &&
+        selected &&
+        childWork &&
+        inspectedChild &&
+        childWork.coordinatorId === selected.id &&
+        childWork.hostId === selected.hostId && (
+          <ChildWorkDrawer
+            key={entityKey(inspectedChild) + ':' + childWork.runId}
+            coordinator={selected}
+            child={inspectedChild}
+            runId={childWork.runId}
+            api={window.nesvo}
+            connected={store.hostReady(childWork.hostId)}
+            review={store.reviews.find(
+              review =>
+                review.hostId === childWork.hostId &&
+                review.sessionId === childWork.childId &&
+                review.runId === childWork.runId,
+            )}
+            onClose={closeDiff}
+            onOpen={messageId => {
+              selectNow(entityKey(inspectedChild));
+              if (messageId) setMessageTarget({ id: messageId });
+            }}
+            onDiff={review => {
+              selectNow(entityKey(inspectedChild));
+              openDiff(review.id);
+            }}
+          />
+        )}
       {panel === 'context' && !browsing && !creating && selected && (
         <SidePanel
           kind="context"

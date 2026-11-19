@@ -13,13 +13,19 @@ import { Input } from '@/shared/ui/input';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { CoordinatorWakeSetting } from '@/widgets/delegations/coordinator-wake';
+import { useCoordinatorWake } from '@/widgets/delegations/use-coordinator-wake';
 import { Switch } from '@/shared/ui/switch';
 
 type SessionControlSettingsProps = {
   computer: Computer | undefined;
   api: Pick<
     DesktopApi,
-    'readSessionControlPolicy' | 'saveSessionControlPolicy'
+    | 'readSessionControlPolicy'
+    | 'saveSessionControlPolicy'
+    | 'readCoordinatorWake'
+    | 'setCoordinatorWake'
+    | 'continueCoordinatorDelivery'
   >;
 };
 
@@ -55,6 +61,14 @@ export function SessionControlSettings({
 }: SessionControlSettingsProps) {
   const unavailable = unavailableReason(computer);
   const hostId = computer?.id ?? 'local';
+  const orchestration = computer?.capabilities.includes(
+    'coordinator-orchestration',
+  );
+  const wake = useCoordinatorWake(
+    orchestration && !unavailable ? api : undefined,
+    hostId,
+    null,
+  );
   const [policy, setPolicy] = useState<CoordinatorPolicy | null>(null);
   const [models, setModels] = useState('');
   const [pending, setPending] = useState(false);
@@ -128,6 +142,13 @@ export function SessionControlSettings({
             onCheckedChange={enabled => void save({ ...policy, enabled })}
           />
         </SettingsRow>
+        {orchestration && (
+          <CoordinatorWakeSetting
+            id="computer-coordinator-wake"
+            label="Resume coordinators when children finish"
+            control={wake}
+          />
+        )}
         {workersAvailable && (
           <>
             <SettingsRow

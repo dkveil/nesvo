@@ -21,6 +21,7 @@ const wideWidth = (viewport: number) => Math.min(1000, viewport * 0.56);
 
 const defaultWidths: Record<PanelKind, (viewport: number) => number> = {
   'files-tree': compactWidth,
+  'child-work': diffWidth,
   'files-editor': wideWidth,
   diff: diffWidth,
   changes: diffWidth,
