@@ -63,6 +63,8 @@ export const requestTimeoutMs = (
   method: HostRequest['method'],
   input?: unknown,
 ) => {
+  if (method === 'list-manager-import' || method === 'adopt-manager-import')
+    return TRANSCRIPT_COST_REQUEST_TIMEOUT_MS;
   if (
     method === 'fork-session' &&
     typeof input === 'object' &&

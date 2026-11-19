@@ -26,6 +26,149 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { automaticPersistence } from '../src/process/test-command-audit.ts';
 import { createProfileDirectory } from './provider-profile-directory.mjs';
+import { t3ImportFixture } from './manager-import-fixture.mjs';
+
+test(
+  'manager import reads WAL-only rows and adopts a verified native thread once',
+  { timeout: 60000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-manager-import-'));
+    const root = join(directory, 't3');
+    const pidFile = join(directory, 'provider.pid');
+    const fixture = await t3ImportFixture(
+      root,
+      join(directory, 'claude-config'),
+    );
+    const environment = { T3CODE_HOME: root };
+    const request = { source: 't3-code' };
+    const digest = async path =>
+      createHash('sha256')
+        .update(await readFile(path))
+        .digest('hex');
+    const hashes = () =>
+      Promise.all(
+        [
+          fixture.path,
+          fixture.path + '-wal',
+          fixture.transcript,
+          fixture.duplicateTranscript,
+        ].map(digest),
+      );
+    const selected = rows =>
+      rows.map(({ key, revision }) => ({ key, revision }));
+    let host;
+    try {
+      host = launch(directory, pidFile, environment);
+      const existing = (
+        await host.request('adopt-conversation', {
+          provider: 'Claude Code',
+          providerSessionId: fixture.duplicateId,
+          requestId: randomUUID(),
+        })
+      ).session;
+      const before = await hashes();
+      const first = (await host.request('list-manager-import', request))
+        .catalog;
+      assert.equal(first.status, 'ready');
+      assert.equal(first.sessionCount, 5);
+      assert.equal(first.groupCount, 1);
+      assert.equal(
+        first.rows.filter(row => row.disposition === 'existing').length,
+        1,
+      );
+      const archived = first.rows.find(row => row.title === 'Release notes');
+      assert.equal(archived.disposition, 'ready');
+      assert.match(
+        first.rows.find(row => row.title === 'Old worktree').reason,
+        /worktree is missing/,
+      );
+      assert.match(
+        first.rows.find(row => row.title === 'Test results').reason,
+        /transcript is missing/,
+      );
+      assert.match(
+        first.rows.find(row => row.title === 'Build in progress').reason,
+        /unsettled/,
+      );
+      assert.deepEqual(await hashes(), before);
+
+      fixture.db.exec(
+        "UPDATE orchestration_v2_projection_threads SET title = 'Release notes v2' WHERE thread_id = 'archived'",
+      );
+      const changed = await hashes();
+      const stale = await host.request('adopt-manager-import', {
+        ...request,
+        requestId: randomUUID(),
+        selected: selected([archived]),
+      });
+      assert.equal(stale.result.outcomes[0].status, 'skipped');
+      assert.match(stale.result.outcomes[0].reason, /changed/);
+      const refreshed = (await host.request('list-manager-import', request))
+        .catalog;
+      const input = {
+        ...request,
+        requestId: randomUUID(),
+        selected: selected(
+          refreshed.rows.filter(
+            row => row.kind === 'group' || row.disposition !== 'blocked',
+          ),
+        ),
+      };
+      const [adopted, repeated] = await Promise.all([
+        host.request('adopt-manager-import', input),
+        host.request('adopt-manager-import', input),
+      ]);
+      assert.deepEqual(adopted.result, repeated.result);
+      assert.deepEqual(adopted.result.outcomes.map(row => row.status).sort(), [
+        'created',
+        'created',
+        'existing',
+      ]);
+      const firstList = (await host.request('list-sessions')).sessions;
+      assert.equal(firstList.length, 2);
+      assert.deepEqual(
+        firstList.find(session => session.id === existing.id),
+        existing,
+      );
+      const session = firstList.find(session => session.id !== existing.id);
+      assert.equal(session.providerSessionId, fixture.nativeId);
+      assert.equal(session.mode, 'read-only');
+      assert.equal(session.archivedAt, fixture.archivedAt);
+      assert.equal(session.createdAt, fixture.createdAt);
+      assert.equal(session.directory, await realpath(fixture.worktree));
+      assert.equal(session.messages[0].origin, 'imported');
+      assert.ok(session.groupId);
+      assert.deepEqual(await hashes(), changed);
+
+      await host.stop();
+      host = launch(directory, pidFile, environment);
+      const restored = (await host.request('list-sessions')).sessions;
+      assert.deepEqual(
+        restored.find(item => item.id === session.id),
+        session,
+      );
+      const retry = await host.request('adopt-manager-import', {
+        ...input,
+        requestId: randomUUID(),
+      });
+      assert.ok(retry.result.outcomes.every(row => row.status === 'existing'));
+      const duplicate = await host.request('adopt-conversation', {
+        provider: 'Claude Code',
+        providerSessionId: fixture.nativeId,
+        requestId: randomUUID(),
+      });
+      assert.match(duplicate.message, /already been adopted/);
+      assert.deepEqual(await hashes(), changed);
+      assert.ok(
+        !(await readdir(directory)).some(name => name.startsWith('.import-')),
+      );
+    } finally {
+      await host?.stop();
+      fixture.db.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test('Nesvo sources do not register persistence or automate other apps', async () => {
   for (const root of ['apps/desktop/src', 'apps/host/src']) {
@@ -21523,7 +21666,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 32);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 33);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -21718,7 +21861,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 32);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 33);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',

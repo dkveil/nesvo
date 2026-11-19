@@ -41,6 +41,16 @@ import {
   type ListConversationsInput,
 } from './conversation-import';
 import {
+  adoptManagerImportSchema,
+  listManagerImportSchema,
+  managerImportCatalogSchema,
+  managerImportResultSchema,
+  type AdoptManagerImportInput,
+  type ListManagerImportInput,
+  type ManagerImportCatalog,
+  type ManagerImportResult,
+} from './manager-import';
+import {
   setSessionTerminalSchema,
   type OpenSessionTerminalInput,
   type SetSessionTerminalInput,
@@ -548,6 +558,7 @@ export * from './session-changes';
 export * from './code-comments';
 export * from './history-search';
 export * from './conversation-import';
+export * from './manager-import';
 export * from './terminal-handoff';
 export * from './transcript-search';
 export * from './skills';
@@ -717,6 +728,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('adopt-conversation'),
     input: adoptConversationSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-manager-import'),
+    input: listManagerImportSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('adopt-manager-import'),
+    input: adoptManagerImportSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-reviews') }),
   z.strictObject({
@@ -1558,6 +1579,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     catalog: conversationImportCatalogSchema,
   }),
   z.strictObject({
+    type: z.literal('manager-import-catalog'),
+    id: z.uuid(),
+    catalog: managerImportCatalogSchema,
+  }),
+  z.strictObject({
+    type: z.literal('manager-import-result'),
+    id: z.uuid(),
+    result: managerImportResultSchema,
+  }),
+  z.strictObject({
     type: z.literal('transcript-search'),
     id: z.uuid(),
     search: transcriptSearchPageSchema,
@@ -2174,6 +2205,14 @@ export type DesktopApi = {
     input: AdoptConversationInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  listManagerImport: (
+    input: ListManagerImportInput,
+    hostId?: HostId,
+  ) => Promise<ManagerImportCatalog>;
+  adoptManagerImport: (
+    input: AdoptManagerImportInput,
+    hostId?: HostId,
+  ) => Promise<ManagerImportResult>;
   trustRepositoryMcp: (
     input: TrustRepositoryMcpInput,
     hostId?: HostId,

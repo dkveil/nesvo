@@ -240,6 +240,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
   'conversation-import':
     'This computer runs an older Nesvo host without conversation import. Update the host, then reconnect.',
+  'manager-import':
+    'Update this computer’s Nesvo host and reconnect to import from other apps.',
   'session-worktrees':
     'This computer runs an older Nesvo host without session worktrees. Update the host, then reconnect.',
   'session-worktree-tools':
@@ -452,6 +454,8 @@ function requiredCapability(
   if (method === 'set-session-terminal') return 'terminal-handoff';
   if (method === 'list-conversations' || method === 'adopt-conversation')
     return 'conversation-import';
+  if (method === 'list-manager-import' || method === 'adopt-manager-import')
+    return 'manager-import';
   if (Object.hasOwn(sessionDeletionResponses, method)) return 'session-delete';
   if (Object.hasOwn(sessionGroupResponses, method)) return 'session-groups';
   if (
@@ -1288,6 +1292,8 @@ export class ComputerManager {
       'set-session-terminal': 'session',
       'list-conversations': 'conversation-import-catalog',
       'adopt-conversation': 'session',
+      'list-manager-import': 'manager-import-catalog',
+      'adopt-manager-import': 'manager-import-result',
       'get-transcript-retention': 'transcript-retention',
       'set-transcript-retention': 'transcript-retention',
       'purge-transcripts': 'transcript-retention',
@@ -1447,7 +1453,10 @@ export class ComputerManager {
       case 'session-change-patch':
         return response.patch;
       case 'conversation-import-catalog':
+      case 'manager-import-catalog':
         return response.catalog;
+      case 'manager-import-result':
+        return response.result;
       case 'session-worktree-status':
         return response.worktree;
       case 'session-worktree-setup':

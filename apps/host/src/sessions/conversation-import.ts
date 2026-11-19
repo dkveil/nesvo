@@ -2,15 +2,16 @@
 import type {
   AdoptConversationInput,
   ConversationImportCatalog,
+  CreateSessionInput,
   ListConversationsInput,
   Provider,
   Session,
 } from '@nesvo/contracts';
 import type { ProviderProfiles } from '../providers/profiles';
 import { resolveFolder } from '../workspace/folder';
-import { scanConversations } from './conversation-transcripts';
+import { scanConversations, type Transcript } from './conversation-transcripts';
 import { SessionError, type SessionService } from './service';
-import type { SessionStore } from './store';
+import type { SessionOrigin, SessionStore } from './store';
 
 export class ConversationImport {
   constructor(
@@ -115,17 +116,34 @@ export class ConversationImport {
         'not-found',
         'The conversation is missing or could not be read. Refresh the conversation list and try again.',
       );
-    const { conversation, messages } = transcript;
+    const { conversation } = transcript;
     const directory = await resolveFolder(conversation.directory, this.signal);
     this.signal.throwIfAborted();
     const concurrent = this.previousAdoption(input);
     if (concurrent) return concurrent;
+    return this.adoptTranscript(transcript, directory, {
+      sessionId: input.requestId,
+      profileId: input.profileId,
+    });
+  }
+
+  adoptTranscript(
+    { conversation, messages }: Transcript,
+    directory: string,
+    input: Pick<CreateSessionInput, 'profileId' | 'groupId'> &
+      Partial<Pick<CreateSessionInput, 'title'>> &
+      Pick<
+        Extract<SessionOrigin, { kind: 'import' }>,
+        'sessionId' | 'presentation' | 'writeRelated'
+      >,
+  ): Session {
     let runId = randomUUID();
     return this.sessions.adoptConversation(
       {
-        provider: input.provider,
+        provider: conversation.provider,
         profileId: input.profileId,
-        title: conversation.title,
+        groupId: input.groupId,
+        title: input.title ?? conversation.title,
         model: 'default',
         mode: 'read-only',
         directory,
@@ -133,8 +151,10 @@ export class ConversationImport {
       directory,
       {
         kind: 'import',
-        sessionId: input.requestId,
+        sessionId: input.sessionId,
         providerSessionId: conversation.providerSessionId,
+        presentation: input.presentation,
+        writeRelated: input.writeRelated,
         messages: messages.map(message => {
           if (message.author === 'operator') runId = randomUUID();
           return {

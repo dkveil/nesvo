@@ -105,6 +105,10 @@ import {
   transcriptSearchPageSchema,
   conversationImportCatalogSchema,
   adoptConversationSchema,
+  adoptManagerImportSchema,
+  listManagerImportSchema,
+  managerImportCatalogSchema,
+  managerImportResultSchema,
   providerProfileListSchema,
   codeReviewSettingsSchema,
   saveReviewerProfileSchema,
@@ -1688,6 +1692,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:read-git-branch',
         readGitBranchSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listManagerImport: async (input, hostId) =>
+    managerImportCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-manager-import',
+        listManagerImportSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  adoptManagerImport: async (input, hostId) =>
+    managerImportResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:adopt-manager-import',
+        adoptManagerImportSchema.parse(input),
         route(hostId),
       ),
     ),

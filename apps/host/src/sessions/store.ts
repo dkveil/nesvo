@@ -30,6 +30,9 @@ export type SessionOrigin =
       sessionId: string;
       providerSessionId: string;
       messages: Session['messages'];
+      presentation?: Pick<Session, 'archivedAt' | 'order'> &
+        Partial<Pick<Session, 'createdAt' | 'updatedAt'>>;
+      writeRelated?: (sessionId: string) => void;
     }
   | { kind: 'workflow-assistant' }
   | { kind: 'workflow-gate-rule-proposal'; runId: string; stepId: string }
@@ -227,6 +230,7 @@ export class SessionStore {
   }
 
   providerConversations(): {
+    id: string;
     provider: Session['provider'];
     providerSessionId: string;
     adopted: boolean;
@@ -234,10 +238,11 @@ export class SessionStore {
   }[] {
     return this.database
       .prepare(
-        "SELECT json_extract(document, '$.provider') AS provider, json_extract(document, '$.providerSessionId') AS providerSessionId, profile_id AS profileId, json_extract(document, '$.messages[0].origin') = 'imported' AS adopted FROM sessions WHERE providerSessionId IS NOT NULL",
+        "SELECT id, json_extract(document, '$.provider') AS provider, json_extract(document, '$.providerSessionId') AS providerSessionId, profile_id AS profileId, json_extract(document, '$.messages[0].origin') = 'imported' AS adopted FROM sessions WHERE providerSessionId IS NOT NULL",
       )
       .all()
       .map(row => ({
+        id: String(row.id),
         provider: providerSchema.parse(row.provider),
         providerSessionId: String(row.providerSessionId),
         adopted: row.adopted === 1,
@@ -310,16 +315,23 @@ export class SessionStore {
   ): Session {
     const session = this.newSession(input, directory, origin, worktree);
     if (parentId) session.parentId = parentId;
+    if (origin?.kind === 'import' && origin.presentation)
+      Object.assign(session, origin.presentation);
     const { requestId } = input;
     this.saveMany(
       [session],
-      requestId
+      requestId || origin?.kind === 'import'
         ? () => {
-            this.database
-              .prepare('UPDATE sessions SET create_request_id = ? WHERE id = ?')
-              .run(requestId, session.id);
+            if (requestId)
+              this.database
+                .prepare(
+                  'UPDATE sessions SET create_request_id = ? WHERE id = ?',
+                )
+                .run(requestId, session.id);
+            if (origin?.kind === 'import') origin.writeRelated?.(session.id);
           }
         : undefined,
+      { touch: origin?.kind !== 'import' || !origin.presentation?.updatedAt },
     );
     return session;
   }

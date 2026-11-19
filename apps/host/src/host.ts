@@ -30,6 +30,7 @@ import { SessionService, SessionError } from './sessions/service';
 import { AttachmentError } from './sessions/attachments';
 import { SessionStore } from './sessions/store';
 import { ConversationImport } from './sessions/conversation-import';
+import { ManagerImport } from './sessions/manager-import';
 import { HistorySearch } from './sessions/history-search';
 import { TranscriptIndex } from './sessions/transcript-index';
 import { SessionGroupStore } from './sessions/group-store';
@@ -144,6 +145,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'publish-pull-request-review',
   'create-session',
   'adopt-conversation',
+  'adopt-manager-import',
   'finish-session-worktree',
   'run-session-worktree-setup',
   'remove-orphaned-session-worktree',
@@ -1036,6 +1038,16 @@ export const serveHost = ({
         probes.controller.signal,
         profiles,
       );
+      const managerImport = new ManagerImport(
+        database,
+        store,
+        groupStore,
+        conversationImport,
+        profiles,
+        directory,
+        probes.controller.signal,
+        () => emit({ type: 'session-groups-changed', list: groupStore.list() }),
+      );
       const transcriptIndex = new TranscriptIndex(
         database,
         store,
@@ -1633,7 +1645,9 @@ export const serveHost = ({
         }
         if (
           request.method === 'list-conversations' ||
-          request.method === 'adopt-conversation'
+          request.method === 'adopt-conversation' ||
+          request.method === 'list-manager-import' ||
+          request.method === 'adopt-manager-import'
         ) {
           if (conversationRequests >= 2) {
             yield* Effect.tryPromise(() =>
@@ -1647,18 +1661,34 @@ export const serveHost = ({
             continue;
           }
           conversationRequests++;
-          const operation = async (): Promise<HostReply> =>
-            request.method === 'list-conversations'
-              ? {
+          const operation = async (): Promise<HostReply> => {
+            switch (request.method) {
+              case 'list-conversations':
+                return {
                   type: 'conversation-import-catalog',
                   id: request.id,
                   catalog: await conversationImport.list(request.input),
-                }
-              : {
+                };
+              case 'adopt-conversation':
+                return {
                   type: 'session',
                   id: request.id,
                   session: await conversationImport.adopt(request.input),
                 };
+              case 'list-manager-import':
+                return {
+                  type: 'manager-import-catalog',
+                  id: request.id,
+                  catalog: await managerImport.list(request.input),
+                };
+              case 'adopt-manager-import':
+                return {
+                  type: 'manager-import-result',
+                  id: request.id,
+                  result: await managerImport.adopt(request.input),
+                };
+            }
+          };
           const pending = operation()
             .then(send)
             .catch(error => {

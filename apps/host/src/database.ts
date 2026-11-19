@@ -16,7 +16,7 @@ import { installSessionControlTables } from './session-control/store';
 import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 
-const DATABASE_VERSION = 32;
+const DATABASE_VERSION = 33;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -419,7 +419,22 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         'CREATE TABLE IF NOT EXISTS mcp_repository_trust (provider TEXT NOT NULL, repository TEXT NOT NULL, fingerprint TEXT NOT NULL, definitions TEXT NOT NULL CHECK (json_valid(definitions)), trusted INTEGER NOT NULL CHECK (trusted IN (0, 1)), PRIMARY KEY (provider, repository))',
       );
-      database.exec(`PRAGMA user_version = ${DATABASE_VERSION}; COMMIT`);
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS manager_import_provenance (
+          source_key TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK (kind IN ('group', 'session')),
+          source TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          branch TEXT
+        );
+        CREATE TABLE IF NOT EXISTS manager_import_requests (
+          id TEXT PRIMARY KEY,
+          fingerprint TEXT NOT NULL,
+          result TEXT NOT NULL CHECK (json_valid(result))
+        );
+        PRAGMA user_version = ${DATABASE_VERSION};
+        COMMIT;
+      `);
     } catch (error) {
       database.exec('ROLLBACK');
       throw error;

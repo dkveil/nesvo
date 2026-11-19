@@ -118,6 +118,8 @@ import {
   terminalResume,
   transcriptSearchInputSchema,
   adoptConversationSchema,
+  adoptManagerImportSchema,
+  listManagerImportSchema,
   createProviderProfileSchema,
   renameProviderProfileSchema,
   removeProviderProfileSchema,
@@ -1407,6 +1409,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'find-session-pull-request',
         findSessionPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:list-manager-import',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-manager-import',
+        listManagerImportSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:adopt-manager-import',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'adopt-manager-import',
+        adoptManagerImportSchema.parse(input),
         route(hostId),
       );
     },
