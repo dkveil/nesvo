@@ -326,7 +326,7 @@ async function smokeConfigurationProfile(app, page) {
     ),
   );
   assert.ok(enrollment.token);
-  const cli = async args => {
+  const cli = async (args, token = enrollment.token) => {
     const { stdout } = await promisify(execFile)(
       process.execPath,
       ['apps/host/dist/cli.js', 'config', ...args, '--json'],
@@ -334,7 +334,7 @@ async function smokeConfigurationProfile(app, page) {
         windowsHide: true,
         env: {
           ...env,
-          NESVO_CONFIG_TOKEN: enrollment.token,
+          NESVO_CONFIG_TOKEN: token,
           NESVO_CONFIG_SSH: '',
           NESVO_CONFIG_CONFIG: '',
         },
@@ -735,10 +735,27 @@ async function smokeConfigurationProfile(app, page) {
   );
   assert.equal(updated.mode, 'supervised');
   assert.equal(updated.messageCount, 0);
+  const authorityDevice = await page.evaluate(() =>
+    window.nesvo.configuration.enroll(
+      {
+        name: 'Fixture authority device',
+        grants: [
+          {
+            area: 'authority',
+            verbs: ['read', 'propose'],
+            global: true,
+            projects: [],
+          },
+        ],
+      },
+      'local',
+    ),
+  );
+  const authorityCli = args => cli(args, authorityDevice.token);
   const proposeAuthority = async (id, value) => {
-    const { target } = await cli(['get', 'authority', id]);
+    const { target } = await authorityCli(['get', 'authority', id]);
     await writeFile(input, JSON.stringify({ kind: 'authority', value }));
-    const proposed = await cli([
+    const proposed = await authorityCli([
       'propose',
       'authority',
       id,
@@ -966,8 +983,11 @@ async function smokeConfigurationProfile(app, page) {
     .getByRole('button', { name: 'Close settings', exact: true })
     .click();
   await page.evaluate(
-    id => window.nesvo.configuration.revoke(id, 'local'),
-    enrollment.device.id,
+    async ids => {
+      for (const id of ids)
+        await window.nesvo.configuration.revoke(id, 'local');
+    },
+    [enrollment.device.id, authorityDevice.device.id],
   );
   console.log(
     JSON.stringify({
@@ -5277,19 +5297,19 @@ async function smokeDesktop() {
   await connectSteps('smoke-check', 'smoke-report');
   const reportEdge = edgeInspector('smoke-check', 'smoke-report');
   await reportEdge
+    .getByRole('button', { name: 'On success', exact: true, pressed: true })
+    .waitFor();
+  await reportEdge
     .getByRole('button', { name: 'On failure', exact: true })
-    .click();
+    .press('Space');
+  await reportEdge
+    .getByRole('button', { name: 'On failure', exact: true, pressed: true })
+    .waitFor();
   await editor
     .locator(
       '[data-editor-edge-label="smoke-check -> smoke-report on failure"]',
     )
     .waitFor();
-  assert.equal(
-    await reportEdge
-      .getByRole('button', { name: 'On failure', exact: true })
-      .getAttribute('aria-pressed'),
-    'true',
-  );
   await editorShot('inspector-edge-dark');
   await editor.getByRole('button', { name: 'Save', exact: true }).click();
   await restartedPage
