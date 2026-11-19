@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import {
+  ArrowLeft,
   ArrowUpRight,
+  Clock,
   Copy,
   Lock,
   MoreHorizontal,
@@ -38,7 +40,12 @@ import { IconButton } from '@/shared/ui/icon-button';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 import { Label } from '@/shared/ui/label';
 import { ListRow } from '@/shared/ui/list-row';
-import { ScrollArea } from '@/shared/ui/scroll-area';
+import { PanelBody } from '@/shared/ui/panel';
+import {
+  SidePanel,
+  SidePanelFooter,
+  SidePanelHeader,
+} from '@/shared/ui/side-panel';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
@@ -62,6 +69,7 @@ type Props = {
   onInbox: () => void;
   onSetActive: (active: boolean) => void;
   onEdit: () => void;
+  onClose: () => void;
   onDuplicate: () => void;
   onDelete: () => Promise<boolean>;
   onStop: (run: ScheduledJobRun) => void;
@@ -96,6 +104,14 @@ const nextRuns = (job: ScheduledJob, now: number) => {
   }
 };
 
+const runProblem = (run: ScheduledJobRun) =>
+  run.detail ||
+  (run.status === 'interrupted'
+    ? 'The run ended before it reported a result. Open the session to check its last activity.'
+    : run.status === 'failed'
+      ? 'The run did not complete. Open the session to see what failed.'
+      : '');
+
 export function AutomationDetail({
   job,
   computer,
@@ -112,6 +128,7 @@ export function AutomationDetail({
   onInbox,
   onSetActive,
   onEdit,
+  onClose,
   onDuplicate,
   onDelete,
   onStop,
@@ -121,6 +138,7 @@ export function AutomationDetail({
 }: Props) {
   const now = useNow(30_000);
   const [confirming, setConfirming] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
   const activeRun = runs.find(isActiveRun);
   const check = job.lastCheck;
   const checkStatus = check && checkStatuses[check.status];
@@ -132,19 +150,147 @@ export function AutomationDetail({
           review => review.id === run.reviewId && review.hostId === run.hostId,
         )
       : undefined;
-  return (
-    <ScrollArea className="min-h-0 min-w-0 flex-1">
-      <section
-        aria-label={`Automation: ${job.name}`}
-        data-automation-id={job.id}
-        className="mx-auto w-full max-w-5xl space-y-5 px-5 py-4 xl:ml-5"
+  const selectedRun = runs.find(run => run.id === runId);
+  const selectedReview = selectedRun && reviewOf(selectedRun);
+  const selectedSession = selectedRun?.sessionId
+    ? hostKey(selectedRun.sessionId, selectedRun.hostId)
+    : null;
+  if (selectedRun) {
+    const at =
+      selectedRun.startedAt ??
+      selectedRun.scheduledFor ??
+      selectedRun.finishedAt;
+    const duration = formatDuration(selectedRun, now);
+    return (
+      <SidePanel
+        key={selectedRun.id}
+        kind="automation"
+        resizeLabel="Resize automation panel"
+        aria-label="Automation run"
+        focusOnOpen
+        onEscape={onClose}
       >
+        <SidePanelHeader
+          icon={Clock}
+          title="Automation run"
+          meta={job.name}
+          closeLabel="Close automation"
+          onClose={onClose}
+        >
+          <IconButton label="Back to automation" onClick={() => setRunId(null)}>
+            <ArrowLeft />
+          </IconButton>
+        </SidePanelHeader>
+        <PanelBody className="space-y-3 overscroll-contain p-3">
+          <RunStatus run={selectedRun} className="text-ui" />
+          <KeyValueList
+            entries={[
+              {
+                key: 'trigger',
+                label: 'Trigger',
+                value:
+                  selectedRun.trigger === 'manual' ? 'Run now' : 'Scheduled',
+              },
+              ...(at
+                ? [
+                    {
+                      key: 'time',
+                      label: 'Run time',
+                      value: <time dateTime={at}>{formatRunTime(at)}</time>,
+                    },
+                  ]
+                : []),
+              ...(duration
+                ? [{ key: 'duration', label: 'Duration', value: duration }]
+                : []),
+              ...(selectedReview
+                ? [
+                    {
+                      key: 'review',
+                      label: 'Review',
+                      value: reviewStates[selectedReview.status],
+                    },
+                  ]
+                : []),
+            ]}
+          />
+          {runProblem(selectedRun) && (
+            <StatusMessage
+              tone={selectedRun.status === 'interrupted' ? 'warning' : 'error'}
+            >
+              {runProblem(selectedRun)}
+            </StatusMessage>
+          )}
+          {selectedRun.report && (
+            <section
+              aria-label="Run report"
+              className="space-y-2 border-t pt-3"
+            >
+              <SectionLabel className="px-0">Report</SectionLabel>
+              <p className="text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
+                {selectedRun.report}
+              </p>
+              {selectedRun.changes && (
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <p>
+                    {selectedRun.changes.summaryChanged
+                      ? 'Changed since the previous run'
+                      : 'No change since the previous run'}
+                  </p>
+                  {selectedRun.changes.added.map(item => (
+                    <p key={item}>New: {item}</p>
+                  ))}
+                  {selectedRun.changes.resolved.map(item => (
+                    <p key={item}>Resolved: {item}</p>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+        </PanelBody>
+        {selectedSession && (
+          <SidePanelFooter label="Run actions" className="justify-end gap-2">
+            {isActiveRun(selectedRun) &&
+              (selectedRun.runId || selectedRun.workflowRunId) && (
+                <Button
+                  variant="outline"
+                  disabled={!connected}
+                  onClick={() => onStop(selectedRun)}
+                >
+                  Stop
+                </Button>
+              )}
+            <Button
+              variant="secondary"
+              onClick={() => onSession(selectedSession)}
+            >
+              Open session <ArrowUpRight />
+            </Button>
+          </SidePanelFooter>
+        )}
+      </SidePanel>
+    );
+  }
+  return (
+    <SidePanel
+      key={job.id}
+      kind="automation"
+      resizeLabel="Resize automation panel"
+      aria-label={`Automation: ${job.name}`}
+      data-automation-id={job.id}
+      focusOnOpen
+      onEscape={onClose}
+    >
+      <SidePanelHeader
+        icon={Clock}
+        title={job.name}
+        closeLabel="Close automation"
+        onClose={onClose}
+      />
+      <PanelBody className="space-y-4 overscroll-contain p-3">
         <header className="space-y-3 px-2">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
-              <h2 className="truncate text-title font-semibold tracking-tight">
-                {job.name}
-              </h2>
               <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                 <ScheduleChip job={job} />
                 <ComputerChip computer={computer} />
@@ -168,68 +314,6 @@ export function AutomationDetail({
                   </Badge>
                 </Hint>
               </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <div className="flex items-center gap-2 pr-1">
-                <Switch
-                  id="automation-active"
-                  checked={job.active}
-                  disabled={pending || !connected}
-                  onCheckedChange={onSetActive}
-                />
-                <Label
-                  htmlFor="automation-active"
-                  className="text-xs text-muted-foreground"
-                >
-                  Active
-                </Label>
-              </div>
-              <DisabledHint reason={runBlockedReason}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={pending || !!runBlockedReason || !!activeRun}
-                  onClick={onRunNow}
-                >
-                  <Zap />
-                  Run now
-                </Button>
-              </DisabledHint>
-              <DisabledHint reason={editBlockedReason}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={!!editBlockedReason}
-                  onClick={onEdit}
-                >
-                  <Pencil />
-                  Edit
-                </Button>
-              </DisabledHint>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <IconButton label="More actions">
-                    <MoreHorizontal />
-                  </IconButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuItem
-                    disabled={!!editBlockedReason}
-                    onSelect={onDuplicate}
-                  >
-                    <Copy />
-                    Duplicate
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    disabled={!connected || !!activeRun}
-                    onSelect={() => setConfirming(true)}
-                  >
-                    <Trash2 />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
           </div>
           <p className="text-xs text-muted-foreground">{nextRuns(job, now)}</p>
@@ -368,6 +452,12 @@ export function AutomationDetail({
                       actionsPlacement="visible"
                       actions={
                         <span className="flex items-center gap-1">
+                          <IconButton
+                            label="Open run details"
+                            onClick={() => setRunId(run.id)}
+                          >
+                            <ArrowUpRight />
+                          </IconButton>
                           {isActiveRun(run) &&
                             run.sessionId &&
                             (run.runId || run.workflowRunId) && (
@@ -384,42 +474,20 @@ export function AutomationDetail({
                         </span>
                       }
                     />
-                    {(run.detail ||
-                      run.status === 'interrupted' ||
-                      run.status === 'failed') && (
+                    {runProblem(run) && (
                       <StatusMessage
                         tone={
                           run.status === 'interrupted' ? 'warning' : 'error'
                         }
                         className="px-3 pb-2"
                       >
-                        {run.detail ||
-                          (run.status === 'interrupted'
-                            ? 'The run ended before it reported a result. Open the session to check its last activity.'
-                            : 'The run did not complete. Open the session to see what failed.')}
+                        {runProblem(run)}
                       </StatusMessage>
                     )}
                     {run.report && (
-                      <div className="space-y-1 px-3 pb-2 text-xs text-muted-foreground">
-                        <p className="line-clamp-3 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                          {run.report}
-                        </p>
-                        {run.changes && (
-                          <>
-                            <p>
-                              {run.changes.summaryChanged
-                                ? 'Changed since the previous run'
-                                : 'No change since the previous run'}
-                            </p>
-                            {run.changes.added.map(item => (
-                              <p key={item}>New: {item}</p>
-                            ))}
-                            {run.changes.resolved.map(item => (
-                              <p key={item}>Resolved: {item}</p>
-                            ))}
-                          </>
-                        )}
-                      </div>
+                      <p className="line-clamp-2 px-3 pb-2 text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                        {run.report}
+                      </p>
                     )}
                   </li>
                 );
@@ -444,7 +512,69 @@ export function AutomationDetail({
             </Button>
           )}
         </section>
-      </section>
+      </PanelBody>
+      <SidePanelFooter label="Automation actions" className="justify-end gap-2">
+        <div className="flex items-center gap-2 pr-1">
+          <Switch
+            id="automation-active"
+            checked={job.active}
+            disabled={pending || !connected}
+            onCheckedChange={onSetActive}
+          />
+          <Label
+            htmlFor="automation-active"
+            className="text-xs text-muted-foreground"
+          >
+            Active
+          </Label>
+        </div>
+        <DisabledHint reason={runBlockedReason}>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={pending || !!runBlockedReason || !!activeRun}
+            onClick={onRunNow}
+          >
+            <Zap />
+            Run now
+          </Button>
+        </DisabledHint>
+        <DisabledHint reason={editBlockedReason}>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!!editBlockedReason}
+            onClick={onEdit}
+          >
+            <Pencil />
+            Edit
+          </Button>
+        </DisabledHint>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton label="More actions">
+              <MoreHorizontal />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuItem
+              disabled={!!editBlockedReason}
+              onSelect={onDuplicate}
+            >
+              <Copy />
+              Duplicate
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!connected || !!activeRun}
+              onSelect={() => setConfirming(true)}
+            >
+              <Trash2 />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidePanelFooter>
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -454,6 +584,6 @@ export function AutomationDetail({
         pendingLabel="Deleting…"
         onConfirm={onDelete}
       />
-    </ScrollArea>
+    </SidePanel>
   );
 }

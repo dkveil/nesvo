@@ -12,7 +12,11 @@ import { Disclosure } from '@/shared/ui/disclosure';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { KeyValueList, type KeyValueEntry } from '@/shared/ui/key-value-list';
 import { PanelAction, PanelSearch } from '@/shared/ui/panel';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import {
+  SidePanel,
+  SidePanelFooter,
+  SidePanelHeader,
+} from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
@@ -321,7 +325,10 @@ function Catalog({
           </Disclosure>
         )}
       </div>
-      <footer className="shrink-0 border-t px-3 py-2.5 text-2xs text-muted-foreground">
+      <SidePanelFooter
+        label="Skills information"
+        className="h-auto min-h-10 py-2 text-2xs text-muted-foreground"
+      >
         {catalog?.method === 'filesystem'
           ? 'File metadata only. Provider availability is not verified. '
           : ''}
@@ -330,7 +337,7 @@ function Catalog({
           : catalog?.invocationSupported
             ? 'Type / in your message or choose Skills in the composer to select one skill.'
             : 'Skill invocation is unavailable for this connection.'}
-      </footer>
+      </SidePanelFooter>
     </>
   );
 }

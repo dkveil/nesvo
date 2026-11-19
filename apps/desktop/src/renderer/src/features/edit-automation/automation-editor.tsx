@@ -1,13 +1,11 @@
-import { useRef, type ReactNode } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
+import { Clock } from 'lucide-react';
+import { PanelBody } from '@/shared/ui/panel';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
-import { ScrollArea } from '@/shared/ui/scroll-area';
+  SidePanel,
+  SidePanelHeader,
+  SidePanelFooter,
+} from '@/shared/ui/side-panel';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { RitualTemplates } from './ritual-templates';
 import {
@@ -51,67 +49,79 @@ function EditorGroup({
 
 export function AutomationEditor(props: AutomationEditorProps) {
   const form = useRef<HTMLFormElement>(null);
+  const descriptionId = useId();
   const editor = useAutomationEditor(props, form);
   return (
-    <Dialog
-      open
-      onOpenChange={open => {
-        if (!open && !editor.pending) editor.close();
-      }}
+    <SidePanel
+      kind="automation-editor"
+      resizeLabel="Resize automation editor"
+      role="dialog"
+      aria-label={automationEditorTitle(editor.editing)}
+      aria-describedby={descriptionId}
+      data-automation-editor=""
+      focusOnOpen
+      onEscape={editor.pending ? undefined : editor.close}
     >
-      <DialogContent
-        data-automation-editor=""
-        showCloseButton={!editor.pending}
-
-        className="flex h-[min(calc(100dvh-2rem),52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+      <SidePanelHeader
+        icon={Clock}
+        title={automationEditorTitle(editor.editing)}
+        closeLabel="Close automation editor"
+        closeDisabled={editor.pending}
+        onClose={editor.close}
+      />
+      <form
+        ref={form}
+        noValidate
+        className="flex min-h-0 flex-1 flex-col"
+        onSubmit={event => {
+          event.preventDefault();
+          void editor.save();
+        }}
       >
-        <DialogHeader className="border-b border-border px-5 py-2.5">
-          <DialogTitle>{automationEditorTitle(editor.editing)}</DialogTitle>
-          <DialogDescription>
+        <PanelBody className="@container overscroll-contain">
+          <p
+            id={descriptionId}
+            className="px-3 pt-3 text-xs text-muted-foreground"
+          >
             {automationEditorDescription(editor.values)}
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          ref={form}
-          noValidate
-          className="flex min-h-0 flex-1 flex-col"
-          onSubmit={event => {
-            event.preventDefault();
-            void editor.save();
-          }}
-        >
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="px-5 pt-2.5">
-              <RitualTemplates editor={editor} />
+          </p>
+          <div className="px-3 pt-3">
+            <RitualTemplates editor={editor} />
+          </div>
+          <div className="grid gap-3 p-3 @2xl:grid-cols-2">
+            <div className="min-w-0 space-y-3">
+              <EditorGroup title="Task">
+                <AutomationNameField editor={editor} />
+              </EditorGroup>
+              <EditorGroup title="Computer and model">
+                <AutomationLocationField editor={editor} />
+                <AutomationModelField editor={editor} />
+              </EditorGroup>
+              <AutomationTaskFields editor={editor} />
             </div>
-            <div className="grid gap-x-6 gap-y-3 px-5 py-3 md:grid-cols-2">
-              <div className="min-w-0 space-y-3">
-                <EditorGroup title="Task">
-                  <AutomationNameField editor={editor} />
-                </EditorGroup>
-                <EditorGroup title="Computer and model">
-                  <AutomationLocationField editor={editor} />
-                  <AutomationModelField editor={editor} />
-                </EditorGroup>
-                <AutomationTaskFields editor={editor} />
-              </div>
-              <div className="min-w-0 space-y-3">
-                <EditorGroup title="Schedule">
-                  <AutomationScheduleField editor={editor} />
-                </EditorGroup>
-                <EditorGroup title="Condition and limits">
-                  <AutomationTriggerFields editor={editor} />
-                  <AutomationLimitFields editor={editor} />
-                </EditorGroup>
-              </div>
+            <div className="min-w-0 space-y-3">
+              <EditorGroup title="Schedule">
+                <AutomationScheduleField editor={editor} />
+              </EditorGroup>
+              <EditorGroup title="Condition and limits">
+                <AutomationTriggerFields editor={editor} />
+                <AutomationLimitFields editor={editor} />
+              </EditorGroup>
             </div>
-          </ScrollArea>
-          <DialogFooter className="flex-wrap border-t border-border px-6 py-4 sm:flex-wrap">
+          </div>
+        </PanelBody>
+        {(editor.error || editor.blockedReason || editor.stale) && (
+          <div className="shrink-0 px-3 pb-2">
             <AutomationEditorMessages editor={editor} />
-            <AutomationEditorButtons editor={editor} />
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </div>
+        )}
+        <SidePanelFooter
+          label="Automation actions"
+          className="justify-end gap-2"
+        >
+          <AutomationEditorButtons editor={editor} />
+        </SidePanelFooter>
+      </form>
+    </SidePanel>
   );
 }

@@ -60,7 +60,7 @@ import {
 } from '@/shared/ui/side-panel';
 import {
   Sheet,
-  SheetContent,
+  LeftSheetContent,
   SheetDescription,
   SheetFooter,
   SheetHeader,
@@ -365,7 +365,7 @@ export function OverlaysSection() {
       <Specimen title="ConfirmDialog" source="shared/ui/confirm-dialog.tsx">
         <ConfirmSpecimens />
       </Specimen>
-      <Specimen title="Dialog and Sheet" source="dialog.tsx · sheet.tsx">
+      <Specimen title="Dialog and left sheet" source="dialog.tsx · sheet.tsx">
         <div className="flex flex-wrap items-center gap-2">
           <Dialog>
             <DialogTrigger asChild>
@@ -447,13 +447,14 @@ export function OverlaysSection() {
           </Dialog>
           <Sheet>
             <SheetTrigger asChild>
-              <Button variant="outline">Open sheet</Button>
+              <Button variant="outline">Open left sheet</Button>
             </SheetTrigger>
-            <SheetContent className="sm:max-w-md">
+            <LeftSheetContent className="sm:max-w-md">
               <SheetHeader>
                 <SheetTitle>Sample sheet</SheetTitle>
                 <SheetDescription>
-                  Sheets share the dialog overlay and a bordered header.
+                  The left navigation sheet uses a dialog overlay and a bordered
+                  header.
                 </SheetDescription>
               </SheetHeader>
               <div className="flex-1 px-5 py-4 text-xs text-muted-foreground">
@@ -465,7 +466,7 @@ export function OverlaysSection() {
                 </Button>
                 <Button size="md">Save</Button>
               </SheetFooter>
-            </SheetContent>
+            </LeftSheetContent>
           </Sheet>
         </div>
       </Specimen>

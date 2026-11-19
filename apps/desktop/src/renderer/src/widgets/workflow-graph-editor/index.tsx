@@ -62,6 +62,9 @@ type Props = {
 };
 
 export type EditorDockContext = {
+  drawerHost: HTMLDivElement | null;
+  open: boolean;
+  onDrawerOpenChange: (open: boolean) => void;
   workflowName: string | null;
   document: WorkflowAssistantDocument | null;
   selection: string[];
@@ -112,6 +115,8 @@ export default function WorkflowGraphEditor({
     api,
   });
   const section = useRef<HTMLElement>(null);
+  const [drawerHost, setDrawerHost] = useState<HTMLDivElement | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [overlayOn, setOverlayOn] = useState(true);
   const [closing, setClosing] = useState(false);
@@ -128,6 +133,7 @@ export default function WorkflowGraphEditor({
   const editorState = {
     ...state,
     select: (next: Parameters<typeof state.select>[0]) => {
+      if (next.kind !== 'none') setAssistantOpen(false);
       if (next.kind === 'node') markReviewed(next.id);
       state.select(next);
     },
@@ -288,7 +294,10 @@ export default function WorkflowGraphEditor({
           banner={state.banner}
           open={issuesOpen}
         />
-        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-x-clip">
+        <div
+          ref={setDrawerHost}
+          className="relative flex min-h-0 min-w-0 flex-1 overflow-x-clip"
+        >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1">
               <EditorCanvas
@@ -310,11 +319,14 @@ export default function WorkflowGraphEditor({
             </div>
             <div
               data-slot="editor-dock"
-              className="absolute right-3 bottom-3 z-10 has-[[data-assistant-dock]]:static has-[[data-assistant-dock]]:shrink-0 has-[[data-assistant-dock]]:border-t [&_[data-assistant-dock]]:max-h-[min(43vh,23rem)] [&_[data-assistant-dock]]:w-full! [&_[data-assistant-dock]]:max-w-none [&_[data-assistant-dock]]:rounded-none [&_[data-assistant-dock]]:border-0 [&_[data-assistant-dock]]:bg-popover! [&_[data-assistant-dock]]:backdrop-filter-none!"
+              className="pointer-events-none absolute right-3 bottom-3 z-10 [&>*]:pointer-events-auto"
             >
               {dock && (
                 <EditorDock
                   render={dock}
+                  drawerHost={drawerHost}
+                  open={assistantOpen}
+                  onDrawerOpenChange={setAssistantOpen}
                   workflowName={
                     savedDocument?.name ??
                     workflowName ??
@@ -330,35 +342,43 @@ export default function WorkflowGraphEditor({
               )}
             </div>
           </div>
-          <InspectorPanel
-            state={editorState}
-            hostId={hostId}
-            directory={directory}
-            automations={automations}
-            specs={state.catalog.specs}
-            computers={computers}
-            statuses={statuses}
-            onSaveAutomation={async (input, expectedRevision) => {
-              await scheduledJobsApi.save(hostId, input, expectedRevision);
-              setJobsVersion(version => version + 1);
-            }}
-            onRefreshAutomations={() => setJobsVersion(version => version + 1)}
-            overlay={overlayOn && runOverlay ? runOverlay : null}
-            api={api}
-            onInbox={onInbox}
-            onSession={onSession}
-          />
+          {!assistantOpen && (
+            <InspectorPanel
+              state={editorState}
+              hostId={hostId}
+              directory={directory}
+              automations={automations}
+              specs={state.catalog.specs}
+              computers={computers}
+              statuses={statuses}
+              onSaveAutomation={async (input, expectedRevision) => {
+                await scheduledJobsApi.save(hostId, input, expectedRevision);
+                setJobsVersion(version => version + 1);
+              }}
+              onRefreshAutomations={() =>
+                setJobsVersion(version => version + 1)
+              }
+              overlay={overlayOn && runOverlay ? runOverlay : null}
+              api={api}
+              onInbox={onInbox}
+              onSession={onSession}
+            />
+          )}
         </div>
       </ReactFlowProvider>
       <NodePicker
         request={addRequest}
         steps={state.catalog.steps}
         inWorkflow={document.nodes.map(node => node.id)}
-        onPickStep={(step, origin) => state.addCatalogStep(step, origin)}
-        onNewStep={(type, phase, origin) =>
-          state.startDraft({ type, phase: phase ?? undefined, origin })
-        }
-        onAddSchedule={() => state.select({ kind: 'start' })}
+        onPickStep={(step, origin) => {
+          setAssistantOpen(false);
+          state.addCatalogStep(step, origin);
+        }}
+        onNewStep={(type, phase, origin) => {
+          setAssistantOpen(false);
+          state.startDraft({ type, phase: phase ?? undefined, origin });
+        }}
+        onAddSchedule={() => editorState.select({ kind: 'start' })}
         onClose={() => setAddRequest(null)}
       />
       <ConflictDialog

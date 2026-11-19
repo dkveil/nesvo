@@ -11,11 +11,9 @@ export type AssistantConversation = {
   title: string;
   at: string;
 };
-export type AssistantSize = { width: number; height: number };
 
 type Saved = {
   collapsed: boolean;
-  size: AssistantSize | null;
   picks: Record<string, AssistantPick>;
   sessions: Record<string, string>;
   conversations: Record<string, AssistantConversation[]>;
@@ -29,18 +27,9 @@ const maxConversations = 20;
 const maxTurns = 40;
 const maxText = 8000;
 const maxTitle = 120;
-export const assistantSizeLimits = {
-  minWidth: 340,
-  maxWidth: 760,
-  minHeight: 380,
-  maxHeight: 960,
-  defaultWidth: 420,
-  defaultHeight: 560,
-} as const;
 
 const empty = (): Saved => ({
   collapsed: true,
-  size: null,
   picks: {},
   sessions: {},
   conversations: {},
@@ -66,27 +55,6 @@ const pickFrom = (value: unknown): AssistantPick | null => {
       }
     : null;
 };
-
-const sizeFrom = (value: unknown): AssistantSize | null => {
-  const item = record(value);
-  return typeof item.width === 'number' &&
-    typeof item.height === 'number' &&
-    Number.isFinite(item.width) &&
-    Number.isFinite(item.height)
-    ? clampSize({ width: item.width, height: item.height })
-    : null;
-};
-
-export const clampSize = (size: AssistantSize): AssistantSize => ({
-  width: Math.min(
-    assistantSizeLimits.maxWidth,
-    Math.max(assistantSizeLimits.minWidth, Math.round(size.width)),
-  ),
-  height: Math.min(
-    assistantSizeLimits.maxHeight,
-    Math.max(assistantSizeLimits.minHeight, Math.round(size.height)),
-  ),
-});
 
 const turnsFrom = (value: unknown): AssistantTurn[] =>
   (Array.isArray(value) ? value : [])
@@ -130,7 +98,6 @@ function read(): Saved {
     const value = record(JSON.parse(raw));
     const saved = empty();
     if (typeof value.collapsed === 'boolean') saved.collapsed = value.collapsed;
-    saved.size = sizeFrom(value.size);
     for (const [host, pick] of Object.entries(record(value.picks))) {
       const valid = pickFrom(pick);
       if (valid) saved.picks[host] = valid;
@@ -190,17 +157,6 @@ export const readCollapsed = () => read().collapsed;
 export const saveCollapsed = (collapsed: boolean) =>
   update(saved => {
     saved.collapsed = collapsed;
-  });
-
-export const readSize = (): AssistantSize =>
-  read().size ?? {
-    width: assistantSizeLimits.defaultWidth,
-    height: assistantSizeLimits.defaultHeight,
-  };
-
-export const saveSize = (size: AssistantSize) =>
-  update(saved => {
-    saved.size = clampSize(size);
   });
 
 export const readPick = (hostId: string) => read().picks[hostId] ?? null;

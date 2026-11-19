@@ -11,7 +11,7 @@ import {
   PANEL_MIN_WIDTH_PX,
   usePanelWidth,
   type PanelKind,
-} from '@/shared/lib/use-panel-width';
+} from '../lib/use-panel-width';
 import { Panel, PanelAction, PanelHeader, Toolbar } from './panel';
 import { PanelResizer } from './panel-resizer';
 
@@ -31,6 +31,10 @@ const defaultWidths: Record<PanelKind, (viewport: number) => number> = {
   details: compactWidth,
   context: compactWidth,
   terminal: viewport => Math.min(576, viewport * 0.42),
+  automation: diffWidth,
+  'automation-editor': wideWidth,
+  'workflow-editor': viewport => Math.min(536, viewport * 0.42),
+  assistant: viewport => Math.min(536, viewport * 0.42),
 };
 
 type SidePanelProps = Omit<ComponentProps<typeof Panel>, 'ref'> & {
@@ -63,7 +67,9 @@ export function SidePanel({
     [attach],
   );
   useEffect(() => {
-    if (focusOnOpen) focusRef.current?.focus({ preventScroll: true });
+    const panel = focusRef.current;
+    if (focusOnOpen && panel && !panel.contains(document.activeElement))
+      panel.focus({ preventScroll: true });
   }, [focusOnOpen]);
   return (
     <Panel
@@ -104,16 +110,23 @@ export function SidePanelHeader({
   onClose,
   closeLabel,
   closeRef,
+  closeDisabled,
   ...props
 }: ComponentProps<typeof PanelHeader> & {
   onClose: () => void;
   closeLabel: string;
   closeRef?: Ref<HTMLButtonElement>;
+  closeDisabled?: boolean;
 }) {
   return (
     <PanelHeader titleBar={titleBar} {...props}>
       {children}
-      <PanelAction ref={closeRef} label={closeLabel} onClick={onClose}>
+      <PanelAction
+        ref={closeRef}
+        label={closeLabel}
+        onClick={onClose}
+        disabled={closeDisabled}
+      >
         <X />
       </PanelAction>
     </PanelHeader>

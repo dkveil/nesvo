@@ -80,7 +80,7 @@ export function ScheduleChip({ job }: { job: ScheduledJob }) {
       size="sm"
       interactive={false}
       icon={<CalendarClock aria-hidden="true" />}
-      className="max-w-none px-0"
+      className="h-auto min-h-6 max-w-full px-0 [&>span]:whitespace-normal"
     >
       <span>{scheduleSummary(job)}</span>
     </Chip>

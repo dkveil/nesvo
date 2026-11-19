@@ -12,6 +12,10 @@ const PANEL_KINDS = [
   'details',
   'context',
   'terminal',
+  'automation',
+  'automation-editor',
+  'workflow-editor',
+  'assistant',
 ] as const;
 
 export type PanelKind = (typeof PANEL_KINDS)[number];

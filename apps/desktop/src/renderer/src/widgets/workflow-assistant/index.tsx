@@ -1,4 +1,5 @@
 import type { PromptSkill } from '@nesvo/contracts';
+import { createPortal } from 'react-dom';
 import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
 import { pendingSkillQuery } from '@/features/select-skill/skill-command';
 import {
@@ -16,7 +17,6 @@ import type {
   DesktopSession,
 } from '@nesvo/contracts';
 import {
-  ChevronDown,
   History,
   MessageSquareText,
   Sparkles,
@@ -44,8 +44,12 @@ import { Composer, ComposerSend, ComposerToolbar } from '@/shared/ui/composer';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
-import { PanelHeader } from '@/shared/ui/panel';
-import { ResizeHandle, type ResizeOffset } from '@/shared/ui/resize-handle';
+import { PanelBody } from '@/shared/ui/panel';
+import {
+  SidePanel,
+  SidePanelHeader,
+  SidePanelFooter,
+} from '@/shared/ui/side-panel';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -56,15 +60,11 @@ import {
   type AssistantContext,
 } from './assistant-context';
 import {
-  clampSize,
   readCollapsed,
   readPick,
-  readSize,
   saveCollapsed,
   savePick,
-  saveSize,
   type AssistantPick,
-  type AssistantSize,
 } from './assistant-storage';
 import { ChangeCard, RefusalCard } from './change-card';
 import { ProposalCard, type ProposalDecision } from './proposal-card';
@@ -80,6 +80,10 @@ export type { AssistantContext, AssistantView } from './assistant-context';
 type Props = {
   hostId: string;
   directory: string;
+  drawerHost: HTMLElement | null;
+  blocked?: boolean;
+  open?: boolean;
+  onDrawerOpenChange?: (open: boolean) => void;
   context: AssistantContext;
   statuses: ProviderStates;
   computers: Computer[];
@@ -99,7 +103,6 @@ type Props = {
 };
 
 const textLimit = 8000;
-const ASSISTANT_RESIZE_STEP_PX = 24;
 
 function lastAuthor(sessions: DesktopSession[], hostId: string) {
   return (
@@ -167,6 +170,10 @@ export default function WorkflowAssistantDock({
   hostId,
   directory,
   context,
+  drawerHost,
+  blocked = false,
+  open,
+  onDrawerOpenChange,
   statuses,
   computers,
   sessions,
@@ -183,8 +190,8 @@ export default function WorkflowAssistantDock({
   canOpenChange,
   onLoadChanges,
 }: Props) {
-  const [collapsed, setCollapsed] = useState(readCollapsed);
-  const [size, setSize] = useState<AssistantSize>(readSize);
+  const [storedCollapsed, setCollapsed] = useState(readCollapsed);
+  const collapsed = blocked || (open === undefined ? storedCollapsed : !open);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedPicks, setSavedPicks] = useState<
     Record<string, AssistantPick | null>
@@ -207,7 +214,7 @@ export default function WorkflowAssistantDock({
   );
   const list = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const panel = useRef<HTMLElement>(null);
+  const toggleButton = useRef<HTMLButtonElement>(null);
   const now = useNow(30_000);
   const saved = useMemo(
     () =>
@@ -286,6 +293,7 @@ export default function WorkflowAssistantDock({
   const toggle = (next: boolean) => {
     setCollapsed(next);
     saveCollapsed(next);
+    onDrawerOpenChange?.(!next);
     setSeen(previous => new Set([...previous, ...proposalKeys, ...changeKeys]));
     if (!next) requestAnimationFrame(() => input.current?.focus());
   };
@@ -330,33 +338,7 @@ export default function WorkflowAssistantDock({
     }
     event.preventDefault();
     toggle(true);
-    requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLButtonElement>('[data-assistant-toggle]')
-        ?.focus(),
-    );
-  };
-  const resizeStart = useRef<AssistantSize>(size);
-  const draggedSize = useRef<AssistantSize | null>(null);
-  const resizeBy = (offset: ResizeOffset) => {
-    const next = clampSize({
-      width: resizeStart.current.width - offset.x,
-      height: resizeStart.current.height - offset.y,
-    });
-    draggedSize.current = next;
-    setSize(next);
-  };
-  const finishResize = () => {
-    if (draggedSize.current) saveSize(draggedSize.current);
-    draggedSize.current = null;
-  };
-  const stepSize = (direction: ResizeOffset) => {
-    const next = clampSize({
-      width: size.width - direction.x * ASSISTANT_RESIZE_STEP_PX,
-      height: size.height - direction.y * ASSISTANT_RESIZE_STEP_PX,
-    });
-    setSize(next);
-    saveSize(next);
+    requestAnimationFrame(() => toggleButton.current?.focus());
   };
   const decide = (key: string, decision: ProposalDecision) =>
     setDecisions(previous => ({ ...previous, [key]: decision }));
@@ -507,12 +489,14 @@ export default function WorkflowAssistantDock({
       </li>
     );
   };
+  if (blocked || !drawerHost) return null;
   if (collapsed)
     return (
       <IconButton
         size={40}
         shape="round"
         data-assistant-toggle
+        ref={toggleButton}
         label={
           unseen > 0
             ? `Open assistant, ${unseen} new ${unseen === 1 ? 'update' : 'updates'}`
@@ -540,18 +524,26 @@ export default function WorkflowAssistantDock({
         )}
       </IconButton>
     );
-  const subject = assistantSubject(context);
-  return (
-    <section
-      ref={panel}
-      role="region"
+  const close = () => {
+    toggle(true);
+    requestAnimationFrame(() => toggleButton.current?.focus());
+  };
+  return createPortal(
+    <SidePanel
+      kind="assistant"
+      resizeLabel="Resize assistant"
       aria-label="Assistant"
       data-assistant-dock
       onKeyDown={onPanelKeyDown}
-      style={{ width: size.width, height: size.height }}
-      className="glass-popover relative flex max-h-[calc(100vh-7rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-overlay border"
     >
-      <PanelHeader icon={Sparkles} title="Assistant" meta={subject}>
+      <SidePanelHeader
+        titleBar={false}
+        icon={Sparkles}
+        title="Assistant"
+        meta={assistantSubject(context)}
+        closeLabel="Close assistant"
+        onClose={close}
+      >
         <IconButton
           label="New chat"
           disabled={!assistant.sessionId || assistant.pending !== null}
@@ -580,29 +572,9 @@ export default function WorkflowAssistantDock({
         >
           <MessageSquareText />
         </IconButton>
-        <IconButton
-          label="Collapse assistant"
-          shortcut="Esc"
-          onClick={() => toggle(true)}
-        >
-          <ChevronDown />
-        </IconButton>
-      </PanelHeader>
-      <ResizeHandle
-        variant="corner"
-        corner="top-left"
-        label="Resize assistant"
-        hint="Drag to resize. Arrow keys resize too."
-        onResizeStart={() => {
-          resizeStart.current = size;
-        }}
-        onResize={resizeBy}
-        onResizeEnd={finishResize}
-        onStep={stepSize}
-        className="z-10"
-      />
+      </SidePanelHeader>
       {historyOpen ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+        <PanelBody className="p-3 overscroll-contain">
           <SectionLabel>Conversations</SectionLabel>
           <ol aria-label="Earlier conversations" className="space-y-px">
             {assistant.conversations.map(conversation => (
@@ -622,9 +594,9 @@ export default function WorkflowAssistantDock({
               </li>
             ))}
           </ol>
-        </div>
+        </PanelBody>
       ) : (
-        <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <PanelBody ref={list} className="overscroll-contain p-3">
           {assistant.entries.length === 0 && assistant.pending === null ? (
             <div className="flex h-full flex-col items-center justify-center gap-2">
               <EmptyState
@@ -672,110 +644,116 @@ export default function WorkflowAssistantDock({
               )}
             </ol>
           )}
-        </div>
+        </PanelBody>
       )}
-      <form
-        className="shrink-0 space-y-1.5 p-2 pt-0"
-        onSubmit={event => {
-          event.preventDefault();
-          void submit();
-        }}
+      <SidePanelFooter
+        label="Assistant actions"
+        className="h-auto min-h-10 items-stretch py-2"
       >
-        {(assistant.notice || stopError) && (
-          <StatusMessage tone="error" className="px-1">
-            {assistant.notice || stopError}
-          </StatusMessage>
-        )}
-        <Composer variant="compact">
-          <label htmlFor="workflow-assistant-input" className="sr-only">
-            Message the assistant
-          </label>
-          <PromptTextarea
-            inputRef={input}
-            variant="ghost"
-            rows={1}
-            data-slot="composer-input"
-            id="workflow-assistant-input"
-            value={draft}
-            maxLength={textLimit}
-            placeholder={
-              context.view === 'automations'
-                ? 'Describe what to run and when'
-                : 'Ask for a step or a workflow change'
-            }
-            disabled={!!blockedReason && !draft}
-            skill={skill}
-            scope={{
-              hostId,
-              provider: pick.provider,
-              input: { provider: pick.provider, directory: directory.trim() },
-            }}
-            available={connected && !!directory.trim()}
-            onChange={(value, nextSkill) => {
-              setDraft(value);
-              setSkill(nextSkill);
-            }}
-            onKeyDown={onComposerKeyDown}
-            className="max-h-40 min-h-10 px-0.5"
-          />
-          <ComposerToolbar
-            start={
-              <>
-                <ModelPicker
-                  provider={pick.provider}
-                  model={pick.model}
-                  effort={pick.effort}
-                  statuses={statuses}
-                  disabled={!connected || assistant.pending !== null}
-                  onChange={(provider, model, effort) => {
-                    const next = { provider, model, effort };
-                    savePick(hostId, next);
-                    setSavedPicks(previous => ({
-                      ...previous,
-                      [hostId]: next,
-                    }));
-                  }}
-                  onRefreshProvider={onRefreshProvider}
-                />
-                <span role="status" className="min-w-0 truncate">
-                  {blockedReason ||
-                    (assistant.newConversation
-                      ? 'Starts a new conversation with this model.'
-                      : assistant.running
-                        ? 'Working…'
-                        : '')}
-                </span>
-              </>
-            }
-            end={
-              assistant.running ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="rounded-full"
-                  disabled={stopping || !connected}
-                  aria-label="Stop the assistant"
-                  onClick={() => void stop()}
-                >
-                  <Square className="fill-current" />
-                  {stopping ? 'Stopping…' : 'Stop'}
-                </Button>
-              ) : (
-                <ComposerSend
-                  label="Send to assistant"
-                  shortcut="Enter"
-                  disabled={
-                    !!blockedReason ||
-                    assistant.pending !== null ||
-                    !draft.trim() ||
-                    pendingSkillQuery(draft)
-                  }
-                />
-              )
-            }
-          />
-        </Composer>
-      </form>
-    </section>
+        <form
+          className="min-w-0 flex-1 space-y-1.5"
+          onSubmit={event => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          {(assistant.notice || stopError) && (
+            <StatusMessage tone="error" className="px-1">
+              {assistant.notice || stopError}
+            </StatusMessage>
+          )}
+          <Composer variant="compact">
+            <label htmlFor="workflow-assistant-input" className="sr-only">
+              Message the assistant
+            </label>
+            <PromptTextarea
+              inputRef={input}
+              variant="ghost"
+              rows={1}
+              data-slot="composer-input"
+              id="workflow-assistant-input"
+              value={draft}
+              maxLength={textLimit}
+              placeholder={
+                context.view === 'automations'
+                  ? 'Describe what to run and when'
+                  : 'Ask for a step or a workflow change'
+              }
+              disabled={!!blockedReason && !draft}
+              skill={skill}
+              scope={{
+                hostId,
+                provider: pick.provider,
+                input: { provider: pick.provider, directory: directory.trim() },
+              }}
+              available={connected && !!directory.trim()}
+              onChange={(value, nextSkill) => {
+                setDraft(value);
+                setSkill(nextSkill);
+              }}
+              onKeyDown={onComposerKeyDown}
+              className="max-h-40 min-h-10 px-0.5"
+            />
+            <ComposerToolbar
+              start={
+                <>
+                  <ModelPicker
+                    provider={pick.provider}
+                    model={pick.model}
+                    effort={pick.effort}
+                    statuses={statuses}
+                    disabled={!connected || assistant.pending !== null}
+                    onChange={(provider, model, effort) => {
+                      const next = { provider, model, effort };
+                      savePick(hostId, next);
+                      setSavedPicks(previous => ({
+                        ...previous,
+                        [hostId]: next,
+                      }));
+                    }}
+                    onRefreshProvider={onRefreshProvider}
+                  />
+                  <span role="status" className="min-w-0 truncate">
+                    {blockedReason ||
+                      (assistant.newConversation
+                        ? 'Starts a new conversation with this model.'
+                        : assistant.running
+                          ? 'Working…'
+                          : '')}
+                  </span>
+                </>
+              }
+              end={
+                assistant.running ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full"
+                    disabled={stopping || !connected}
+                    aria-label="Stop the assistant"
+                    onClick={() => void stop()}
+                  >
+                    <Square className="fill-current" />
+                    {stopping ? 'Stopping…' : 'Stop'}
+                  </Button>
+                ) : (
+                  <ComposerSend
+                    label="Send to assistant"
+                    shortcut="Enter"
+                    disabled={
+                      !!blockedReason ||
+                      assistant.pending !== null ||
+                      !draft.trim() ||
+                      pendingSkillQuery(draft)
+                    }
+                  />
+                )
+              }
+            />
+          </Composer>
+        </form>
+      </SidePanelFooter>
+    </SidePanel>,
+    drawerHost,
   );
 }

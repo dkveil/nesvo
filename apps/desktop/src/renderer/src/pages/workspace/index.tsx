@@ -80,9 +80,9 @@ import type { EditorTarget } from '@/widgets/workflow-definitions';
 import type { AssistantContext } from '@/widgets/workflow-assistant';
 import type { AssistantChange } from '@nesvo/contracts';
 import {
-  NewWorkflowSheet,
+  NewWorkflowDrawer,
   type NewWorkflowDraft,
-} from '@/features/new-workflow/new-workflow-sheet';
+} from '@/features/new-workflow/new-workflow-drawer';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import {
   applyNewSessionDefaults,
@@ -149,7 +149,7 @@ import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Separator } from '@/shared/ui/separator';
 import {
   Sheet,
-  SheetContent,
+  LeftSheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
@@ -388,9 +388,12 @@ export function Workspace({
   const [costsView, setCostsView] = useState(false);
   const [showBudgets, setShowBudgets] = useState(false);
   const [automation, setAutomation] = useState(location.automation);
+  const [assistantDrawerHost, setAssistantDrawerHost] =
+    useState<HTMLDivElement | null>(null);
   const [editor, setEditor] = useState<{
     initial: AutomationValues;
     jobKey: string;
+    navigation: number;
   } | null>(null);
   const [automationPending, setAutomationPending] = useState<
     Record<string, boolean>
@@ -709,6 +712,10 @@ export function Workspace({
           hostId={hostId}
           directory={directory}
           context={context}
+          drawerHost={assistantDrawerHost}
+          blocked={
+            !!editor || !!newWorkflow || (!!automation && automation !== 'list')
+          }
           statuses={store.providerStates(hostId)}
           computers={store.computers}
           sessions={store.sessions}
@@ -737,9 +744,11 @@ export function Workspace({
     void automations.reload(hostId);
   };
   const createWorkflow = async (draft: NewWorkflowDraft) => {
+    const navigation = navigationVersion.current;
     const catalog = await window.nesvo.workflows.listDefinitions(draft.hostId, {
       directory: draft.directory,
     });
+    if (navigationVersion.current !== navigation) return;
     setWorkflowsSource({ hostId: draft.hostId, directory: draft.directory });
     setWorkflowsEditor({
       hostId: draft.hostId,
@@ -1337,7 +1346,11 @@ export function Workspace({
         step => step.runId === selectedRun.id && step.hostId === selectedHostId,
       )
     : [];
-  const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
+  const visiblePanel =
+    editor ||
+    newWorkflow ||
+    (automation && automation !== 'list') ||
+    (panel === 'diff' && !diffReview ? null : panel);
   const cardSession = !browsing && !creating && selected ? selected : null;
   const panelBesideSession =
     !!cardSession && !!visiblePanel && viewportWidth >= 1200;
@@ -1552,6 +1565,8 @@ export function Workspace({
     guardEditor(() => selectNow(id, targetId));
   };
   const selectNow = (id: string, targetId = '') => {
+    setEditor(null);
+    setNewWorkflow(null);
     navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
@@ -1589,6 +1604,8 @@ export function Workspace({
     ]);
   };
   const openInboxNow = () => {
+    setEditor(null);
+    setNewWorkflow(null);
     navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
@@ -1603,6 +1620,8 @@ export function Workspace({
   const openWorkflows = () => guardEditor(() => openWorkflowsNow());
   const openFlows = () => guardEditor(() => openWorkflowsNow('flows'));
   const openWorkflowsNow = (page: 'workflows' | 'flows' = 'workflows') => {
+    setEditor(null);
+    setNewWorkflow(null);
     navigationVersion.current += 1;
     setWorkflowsSource(
       creating || !selected
@@ -1622,6 +1641,8 @@ export function Workspace({
   };
   const openPullRequests = () => guardEditor(openPullRequestsNow);
   const openPullRequestsNow = (handoff: Session | null = null) => {
+    setEditor(null);
+    setNewWorkflow(null);
     navigationVersion.current += 1;
     if (handoff || panel !== 'pull-request') setPanel(null);
     setDiffTarget(null);
@@ -1655,6 +1676,8 @@ export function Workspace({
   const openAutomations = (target = 'list') =>
     guardEditor(() => openAutomationsNow(target));
   const openAutomationsNow = (target: string) => {
+    setEditor(null);
+    setNewWorkflow(null);
     navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
@@ -2657,7 +2680,7 @@ export function Workspace({
     automationComputers.find(computer => store.hostReady(computer.id))?.id ??
     'local';
   const openAutomationEditor = (initial: AutomationValues, jobKey = '') =>
-    setEditor({ initial, jobKey });
+    setEditor({ initial, jobKey, navigation: ++navigationVersion.current });
   const createAutomation = () => {
     const states = store.providerStates(defaultAutomationHost);
     openAutomationEditor(
@@ -4069,13 +4092,13 @@ ${text}`
                 <Menu />
               </IconButton>
             </SheetTrigger>
-            <SheetContent side="left" className="w-72">
+            <LeftSheetContent className="w-72">
               <SheetHeader className="sr-only">
                 <SheetTitle>Navigation</SheetTitle>
                 <SheetDescription>Sessions and inbox.</SheetDescription>
               </SheetHeader>
               <SessionSidebar {...sidebarProps} />
-            </SheetContent>
+            </LeftSheetContent>
           </Sheet>
           {parentSession && !browsing && !creating && (
             <IconButton
@@ -4578,6 +4601,9 @@ ${text}`
                 dock={context => (
                   <Suspense fallback={null}>
                     <WorkflowAssistantDock
+                      drawerHost={context.drawerHost}
+                      open={context.open}
+                      onDrawerOpenChange={context.onDrawerOpenChange}
                       hostId={workflowsEditor.hostId}
                       directory={workflowsEditor.directory}
                       context={{
@@ -4662,7 +4688,10 @@ ${text}`
                 </StatusMessage>
               }
             >
-              <div className="relative flex min-h-0 min-w-0 flex-1">
+              <div
+                ref={setAssistantDrawerHost}
+                className="relative flex min-h-0 min-w-0 flex-1 overflow-x-clip"
+              >
                 <WorkflowDefinitions
                   computers={store.computers}
                   hostId={workflowsSource.hostId}
@@ -4673,6 +4702,7 @@ ${text}`
                   onSourceChange={setWorkflowsSource}
                   onFlows={() => setWorkflowPage('flows')}
                   onEdit={target => {
+                    setNewWorkflow(null);
                     setWorkflowsSource({
                       hostId: target.hostId,
                       directory: target.directory,
@@ -4822,49 +4852,11 @@ ${text}`
                 </div>
               ))}
             />
-          ) : automationView === 'detail' && automationJob ? (
-            <AutomationDetail
-              key={automation}
-              job={automationJob}
-              computer={store.computers.find(
-                computer => computer.id === automationJob.hostId,
-              )}
-              runs={automations.runs(automationJob).runs}
-              runsLoading={automations.runs(automationJob).loading}
-              runsError={automations.runs(automationJob).error}
-              hasMoreRuns={!!automations.runs(automationJob).nextCursor}
-              reviews={store.reviews}
-              pending={!!automationPending[automation]}
-              error={automationErrors[automation] ?? ''}
-              runBlockedReason={runBlockedReason(automationJob)}
-              editBlockedReason={hostOffline(automationJob.hostId)}
-              onRunNow={() => void runAutomationNow(automationJob)}
-              onInbox={openInbox}
-              onSetActive={active =>
-                void setAutomationActive(automationJob, active)
-              }
-              onEdit={() =>
-                openAutomationEditor(
-                  automationValues(automationJob),
-                  entityKey(automationJob),
-                )
-              }
-              onDuplicate={() =>
-                openAutomationEditor(duplicateValues(automationJob))
-              }
-              onDelete={() => deleteAutomation(automationJob)}
-              onStop={run => void stopAutomationRun(automationJob, run)}
-              onSession={select}
-              onLoadMore={() =>
-                void automations.loadRuns(
-                  automationJob,
-                  automations.runs(automationJob).nextCursor,
-                )
-              }
-              onRetryRuns={() => void automations.loadRuns(automationJob)}
-            />
-          ) : automationView === 'list' ? (
-            <div className="relative flex min-h-0 min-w-0 flex-1">
+          ) : automationView ? (
+            <div
+              ref={setAssistantDrawerHost}
+              className="relative flex min-h-0 min-w-0 flex-1 overflow-x-clip"
+            >
               <AutomationList
                 jobs={automations.jobs}
                 computers={store.computers}
@@ -5296,6 +5288,49 @@ ${text}`
           )}
         </main>
       </div>
+      {automationView === 'detail' && automationJob && !editor && (
+        <AutomationDetail
+          key={automation}
+          job={automationJob}
+          onClose={() => openAutomations()}
+          computer={store.computers.find(
+            computer => computer.id === automationJob.hostId,
+          )}
+          runs={automations.runs(automationJob).runs}
+          runsLoading={automations.runs(automationJob).loading}
+          runsError={automations.runs(automationJob).error}
+          hasMoreRuns={!!automations.runs(automationJob).nextCursor}
+          reviews={store.reviews}
+          pending={!!automationPending[automation]}
+          error={automationErrors[automation] ?? ''}
+          runBlockedReason={runBlockedReason(automationJob)}
+          editBlockedReason={hostOffline(automationJob.hostId)}
+          onRunNow={() => void runAutomationNow(automationJob)}
+          onInbox={openInbox}
+          onSetActive={active =>
+            void setAutomationActive(automationJob, active)
+          }
+          onEdit={() =>
+            openAutomationEditor(
+              automationValues(automationJob),
+              entityKey(automationJob),
+            )
+          }
+          onDuplicate={() =>
+            openAutomationEditor(duplicateValues(automationJob))
+          }
+          onDelete={() => deleteAutomation(automationJob)}
+          onStop={run => void stopAutomationRun(automationJob, run)}
+          onSession={select}
+          onLoadMore={() =>
+            void automations.loadRuns(
+              automationJob,
+              automations.runs(automationJob).nextCursor,
+            )
+          }
+          onRetryRuns={() => void automations.loadRuns(automationJob)}
+        />
+      )}
       {cardOpen && (
         <SessionCard
           id="session-card"
@@ -5728,7 +5763,7 @@ ${text}`
         }}
       />
       {newWorkflow && (
-        <NewWorkflowSheet
+        <NewWorkflowDrawer
           hostId={newWorkflow.hostId}
           directory={newWorkflow.directory}
           computers={store.computers}
@@ -5768,6 +5803,7 @@ ${text}`
           }}
           onSaved={job => {
             automations.mergeJobs([job]);
+            if (navigationVersion.current !== editor.navigation) return;
             setEditor(null);
             openAutomations(entityKey(job));
           }}

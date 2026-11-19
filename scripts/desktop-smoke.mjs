@@ -4563,7 +4563,7 @@ try {
   );
   const assistantSessionTitle = 'Workflow assistant · smoke';
   await assistantDock
-    .getByRole('button', { name: 'Collapse assistant', exact: true })
+    .getByRole('button', { name: 'Close assistant', exact: true })
     .click();
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
