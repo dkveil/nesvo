@@ -68,6 +68,7 @@ export type EditorDockContext = {
   workflowName: string | null;
   document: WorkflowAssistantDocument | null;
   selection: string[];
+  humanGate: string | null;
   onApplied: () => void;
   onFocusStep: (name: string) => void;
 };
@@ -334,6 +335,13 @@ export default function WorkflowGraphEditor({
                   }
                   document={savedDocument}
                   selection={dockSelection}
+                  humanGate={
+                    document.nodes.find(
+                      node =>
+                        node.id === dockSelection[0] &&
+                        node.step.type === 'human',
+                    )?.id ?? null
+                  }
                   onApplied={() => void state.reload()}
                   onFocusStep={name =>
                     editorState.select({ kind: 'node', id: name })

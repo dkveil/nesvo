@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { autonomyLevelSchema } from './autonomy';
 import { definitionHashSchema, stepNameSchema } from './definitions';
 import { githubRepositorySchema } from '../pull-requests';
 import { workflowLaneSchema } from './lanes';
@@ -28,12 +29,16 @@ export const gateRecommendationOutputSchema = z.strictObject({
   recommendation: z.enum(['approve', 'escalate']),
   reason: z.string().trim().min(1).max(600),
   references: z.array(stepNameSchema).max(16),
+  uncertainPaths: z.array(z.string().min(1).max(4096)).max(100).optional(),
 });
 
 export const gateRecommendationSchema = z.strictObject({
   outcome: z.enum(['would-approve', 'needs-approval']),
   reason: z.string().min(1).max(800),
-  policy: stepNameSchema,
+  policy: stepNameSchema.optional(),
+  level: autonomyLevelSchema.optional(),
+  precedents: z.array(stepNameSchema).max(4).optional(),
+  narrowedPaths: z.array(z.string().min(1).max(4096)).max(100).optional(),
   policyHash: definitionHashSchema.optional(),
   head: z
     .string()

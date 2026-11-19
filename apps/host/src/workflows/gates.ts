@@ -4,6 +4,7 @@ import {
   stepResultLimits,
   stepResultSchema,
   type DecideWorkflowGateInput,
+  type OverrideGatePolicyInput,
   type DesktopEvent,
   type WorkflowRun,
   type WorkflowRunStatus,
@@ -178,6 +179,67 @@ export class WorkflowGates {
     return result;
   }
 
+  async overridePolicy(
+    input: OverrideGatePolicyInput,
+    demote: (run: WorkflowRun, step: WorkflowStepRecord, at: string) => void,
+  ): Promise<WorkflowRun> {
+    const { run, step } = this.target(input.runId, input.stepId);
+    if (step.policyOverride) {
+      if (
+        step.policyOverride.id === input.overrideId &&
+        step.policyOverride.reason === input.reason
+      )
+        return run;
+      throw invalid('This policy decision already has an override.');
+    }
+    if (
+      run.status !== 'passed' ||
+      step.state !== 'passed' ||
+      step.decision?.actor !== 'policy' ||
+      !step.reviewId ||
+      !step.reviewVersion
+    )
+      throw invalid(
+        'Only the current terminal policy approval can be overridden.',
+      );
+    const at = new Date().toISOString();
+    const decided: WorkflowStepRecord = {
+      ...step,
+      revision: step.revision + 1,
+      state: 'failed',
+      updatedAt: at,
+      policyOverride: { id: input.overrideId, reason: input.reason, at },
+      result: operatorResult(step, {
+        status: 'fail',
+        summary: 'The operator overrode the policy approval',
+        note: input.reason,
+        at,
+      }),
+    };
+    const next: WorkflowRun = {
+      ...run,
+      revision: run.revision + 1,
+      status: 'rejected',
+      updatedAt: at,
+      finishedAt: at,
+    };
+    await this.ports.reviews.decide(
+      {
+        reviewId: step.reviewId,
+        version: step.reviewVersion,
+        decisionId: input.overrideId,
+        decision: 'reject',
+        feedback: input.reason,
+        overridePolicy: true,
+      },
+      () => {
+        this.replace(step, decided, run, next);
+        demote(run, step, at);
+      },
+    );
+    return this.advance(next, [decided]);
+  }
+
   skip(input: SkipWorkflowStepInput): WorkflowRun {
     const { run, step, latest } = this.target(input.runId, input.stepId);
     const uncertain = [...latest.values()].find(
@@ -345,7 +407,7 @@ export class WorkflowGates {
       input.decision === 'accept' &&
       !validateHumanAnswer(step.decisionForm, input.answer)
     )
-      throw invalid('The decision does not match this gate?s declared input.');
+      throw invalid('The decision does not match the declared input for this gate.');
     if (input.decision === 'fix' && !run.sessionId)
       throw invalid('This run has no task session to correct.');
     if (

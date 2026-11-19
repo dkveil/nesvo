@@ -31,7 +31,7 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
-const currentDatabaseVersion = 40;
+const currentDatabaseVersion = 41;
 const newerDatabaseVersion = currentDatabaseVersion + 1;
 
 test(
@@ -16628,6 +16628,149 @@ test(
         });
         assert.equal(undone.result.status, 'undone', JSON.stringify(undone));
         await assert.rejects(readFile(file, 'utf8'), { code: 'ENOENT' });
+        const target = {
+          directory: repository,
+          workflow: 'typed-task',
+          gate: 'choose-review',
+        };
+        const readAutonomy = () =>
+          host.request('gate-rules', { action: 'autonomy-read', target });
+        const read = await readAutonomy();
+        assert.equal(read.overview.autonomy.settings.level, 0);
+        const setAutonomy = (revision, level) =>
+          host.request('gate-rules', {
+            action: 'autonomy-set',
+            input: {
+              target,
+              revision,
+              level,
+              minimum: 1,
+              windowDays: 30,
+              confirmed: true,
+            },
+          });
+        assert.equal((await setAutonomy(0, 2)).code, 'invalid-request');
+        const suggested = await setAutonomy(0, 0);
+        assert.equal(suggested.overview.autonomy.proposal, 1);
+        const configured = await setAutonomy(1, 1);
+        assert.equal(configured.overview.autonomy.settings.level, 1);
+        assert.equal((await setAutonomy(1, 2)).code, 'invalid-request');
+        const assisted = await started('typed-task');
+        const waiting = await waitFor(
+          assisted.id,
+          data => data.run.status === 'awaiting-human',
+          'The recommended gate did not wait',
+        );
+        const gateAgain = stepNamed(waiting, 'choose-review');
+        assert.equal(gateAgain.recommendation.level, 1);
+        assert.equal(gateAgain.recommendation.outcome, 'would-approve');
+        assert.equal(waiting.run.status, 'awaiting-human');
+        await host.request('decide-workflow-gate', {
+          runId: assisted.id,
+          stepId: gateAgain.id,
+          reviewId: gateAgain.reviewId,
+          version: gateAgain.reviewVersion,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          answer: { kind: 'choice', option: 'manual' },
+        });
+        await settled(assisted.id);
+        const stats = (await readAutonomy()).overview.autonomy;
+        assert.equal(stats.observations, 1);
+        assert.equal(stats.agreements, 1);
+        assert.equal(stats.proposal, 2);
+      },
+    );
+
+    await t.test(
+      'an owner route suggestion is reviewed and undo restores the original graph',
+      async () => {
+        const root = join(repository, '.agents', 'workflows');
+        const workflowFile = join(root, 'workflows', 'learn-route.md');
+        const document = [
+          '---',
+          'name: learn-route',
+          'steps: [prepare-route, deep-review, route-gate]',
+          'edges:',
+          '  - prepare-route -> deep-review',
+          '  - prepare-route -> route-gate',
+          '  - deep-review -> route-gate',
+          '---',
+          '',
+        ].join('\n');
+        await write(workflowFile, document);
+        await write(
+          join(root, 'steps', 'prepare-route.md'),
+          stepFile({
+            name: 'prepare-route',
+            type: 'command',
+            phase: 'pre-done',
+            body: 'echo ready',
+          }),
+        );
+        await write(
+          join(root, 'steps', 'route-gate.md'),
+          stepFile({
+            name: 'route-gate',
+            type: 'human',
+            phase: 'pre-done',
+            join: 'reached',
+            body: 'Review this route.',
+          }),
+        );
+        await write(
+          join(repository, '.agents', 'tasks', 'learn-route.md'),
+          stepFile({ workflow: 'learn-route', body: 'Review the result.' }),
+        );
+        const run = await started('learn-route');
+        const waiting = await waitFor(
+          run.id,
+          item => item.run.status === 'awaiting-human',
+          'The route gate did not wait',
+        );
+        const gate = stepNamed(waiting, 'route-gate');
+        const suggestion =
+          'prepare-route -> deep-review when stack == "typescript"';
+        const rejected = await host.request('decide-workflow-gate', {
+          runId: run.id,
+          stepId: gate.id,
+          reviewId: gate.reviewId,
+          version: gate.reviewVersion,
+          decision: 'reject',
+          decisionId: randomUUID(),
+          comment: 'Route: ' + suggestion,
+        });
+        assert.equal(rejected.run.status, 'rejected');
+        const overview = await host.request('gate-rules', {
+          action: 'read',
+          runId: run.id,
+        });
+        const route = overview.overview.proposals.find(
+          item => item.origin === 'route',
+        );
+        assert.equal(route.proposal.body.check, suggestion);
+        assert.equal(await readFile(workflowFile, 'utf8'), document);
+        const accepted = await host.request('gate-rules', {
+          action: 'decide',
+          decision: {
+            action: 'accept',
+            proposalId: route.id,
+            revision: route.revision,
+            decisionId: randomUUID(),
+          },
+        });
+        assert.equal(accepted.type, 'gate-rules', JSON.stringify(accepted));
+        const saved = accepted.overview.proposals.find(
+          item => item.id === route.id,
+        );
+        assert.equal(saved.status, 'accepted');
+        assert.match(await readFile(workflowFile, 'utf8'), /when stack/);
+        const undone = await host.request('workflow-assistant-undo', {
+          conversationId: route.sessionId,
+          changeId: saved.changeId,
+        });
+        assert.equal(undone.result.status, 'undone');
+        assert.equal(await readFile(workflowFile, 'utf8'), document);
       },
     );
 

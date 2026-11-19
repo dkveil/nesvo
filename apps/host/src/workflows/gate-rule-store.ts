@@ -5,6 +5,8 @@ import {
 } from './assistant-change-store';
 import {
   gateRuleGenerationSchema,
+  autonomySettingsSchema,
+  type AutonomySettings,
   gateRuleLimits,
   gateRuleProposalSchema,
   type DecideGateRuleInput,
@@ -65,6 +67,19 @@ export class GateRuleStore {
 
   enabledRevision(): number {
     return metadataRevision(this.database, 'gate-rule-enabled');
+  }
+
+  autonomy(key: string): AutonomySettings | null {
+    const row = this.database
+      .prepare('SELECT value FROM metadata WHERE key = ?')
+      .get(key);
+    return row
+      ? autonomySettingsSchema.parse(JSON.parse(String(row.value)))
+      : null;
+  }
+
+  setAutonomy(key: string, settings: AutonomySettings): void {
+    this.metadata(key, JSON.stringify(autonomySettingsSchema.parse(settings)));
   }
 
   decisionMemory(): boolean {

@@ -7,6 +7,7 @@ export type AssistantContext = {
   workflowName: string | null;
   document: WorkflowAssistantDocument | null;
   selection: string[];
+  humanGate?: string | null;
 };
 
 export const assistantArea = (context: AssistantContext) =>

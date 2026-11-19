@@ -378,6 +378,12 @@ Decision memory starts off. Enable **Remember workflow decisions** in Settings ?
 
 An accepted precedent lives in `decisions/` under the workflow's Project or Global root. It records the chosen outcome, bounded owner comment, gate context, source run and evidence identities. Open **Lessons & decisions** in the workflow editor to filter applicable entries by step and see usage and source links. The host delivers accepted precedents to verifiers and to policy recommendations as quoted historical data.
 
+### Gate autonomy
+
+Select a human step and open the workflow assistant to review its autonomy. Level 0 asks for a decision. Level 1 adds a read-only recommendation with applicable precedents. Level 2 can focus a file selection on the uncertain paths, with the complete changed files list available. Level 3 shows the agreement between valid recommendations and owner decisions. Level 4 requires an enabled hash-bound owner policy and can accept an eligible terminal saved result.
+
+The assistant proposes a one-level increase from the agreed decisions in the configured window. Accept each increase explicitly. If you override a policy approval, the current bound result is rejected, the previous decision remains in its audit record, and the gate drops one level with your reason.
+
 ### Routing decisions to the orchestrator
 
 A workflow file may set `decisions` to `inbox`, `parent` or `both`. Children started by a `session` or `fan-out` step of that workflow carry the route, so their plans, questions, operation approvals and rule items appear as cards in the orchestrator's conversation instead of, or as well as, the Inbox. A rule's own `route` wins over the workflow; a session group default and the computer default in Settings › Inbox rules apply when neither says.

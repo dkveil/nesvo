@@ -202,6 +202,13 @@ export const workflowStepRecordSchema = z.strictObject({
   decision: workflowStepDecisionSchema.nullable().default(null),
   decisionForm: pinnedHumanDecisionSchema.optional(),
   recommendation: gateRecommendationSchema.optional(),
+  policyOverride: z
+    .strictObject({
+      id: z.uuid(),
+      reason: z.string().max(1000),
+      at: z.iso.datetime(),
+    })
+    .optional(),
   definitionChanges: z
     .array(z.string().min(1).max(workflowLimits.directory))
     .max(workflowLimits.definitionChanges)

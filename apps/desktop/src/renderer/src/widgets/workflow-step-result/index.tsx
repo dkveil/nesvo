@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { PolicyOverride } from '@/features/workflow-gate-decision/policy-override';
 import { WorkflowGateDecision } from '@/features/workflow-gate-decision';
 import { ChildQueue } from './child-queue';
 import { CheckObservation } from './check-observation';
@@ -281,6 +282,15 @@ export function StepResult({
               : (stateNotes[state] ?? 'No result was reported.')}
         </p>
       )}
+      {record?.state === 'passed' &&
+        run.status === 'passed' &&
+        record.decision?.actor === 'policy' && (
+          <PolicyOverride
+            hostId={run.hostId}
+            runId={run.id}
+            stepId={record.id}
+          />
+        )}
       {record?.state === 'awaiting-human' && record.decisionForm && (
         <WorkflowGateDecision key={record.id} run={run} step={record} enabled />
       )}

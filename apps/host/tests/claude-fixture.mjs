@@ -802,7 +802,13 @@ if (args.length === 1 && args[0] === '--version') {
   const workflowTriage = prompt.startsWith(
     'Classify the proposed plan for this workflow.',
   );
-  if (workflowTriage) {
+  const workflowRecommendation = prompt.startsWith(
+    'Recommend a decision for this workflow gate.',
+  );
+  if (workflowRecommendation) {
+    assert.equal(values.get('--permission-mode'), 'plan');
+    assert.equal(values.get('--no-session-persistence'), true);
+  } else if (workflowTriage) {
     assert.equal(values.get('--permission-mode'), 'plan');
     assert.equal(values.get('--no-session-persistence'), true);
     assert.equal(values.get('--setting-sources'), '');
@@ -1134,6 +1140,14 @@ if (args.length === 1 && args[0] === '--version') {
       proposal,
       rationale:
         'Selected the first intended test suite in the project inventory.',
+    });
+    process.exit(0);
+  }
+  if (workflowRecommendation) {
+    verdict('Recommend approval.', {
+      recommendation: 'approve',
+      reason: 'The evidence supports this result.',
+      references: [],
     });
     process.exit(0);
   }

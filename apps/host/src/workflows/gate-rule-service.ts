@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   GATE_RULES_PER_STEP,
+  autonomyLevelSchema,
+  type AutonomyTarget,
+  type AutonomySettingsInput,
+  type OverrideGatePolicyInput,
   gateRuleLimits,
   gateRuleOutputJsonSchema,
   ruleEntryLimits,
@@ -60,6 +64,8 @@ import {
   projectProfilePath,
   projectProfileWithMapping,
 } from './project-checks';
+import { autonomyKey, autonomyStatistics, defaultAutonomy } from './autonomy';
+import { gatePolicyActivation } from './gate-policy';
 import { precedentId, precedentProposal } from './decision-memory';
 import {
   RULE_ENTRY_MAX_NUMBER,
@@ -76,6 +82,11 @@ import { quotaReason } from './steps/agent';
 
 type Ports = {
   store: GateRuleStore;
+  dataDirectory: string;
+  overridePolicy?: (
+    input: OverrideGatePolicyInput,
+    demote: (run: WorkflowRun, step: WorkflowStepRecord, at: string) => void,
+  ) => Promise<WorkflowRun>;
   runs: Pick<WorkflowRunStore, 'getRun' | 'stepsForRun' | 'listRuns'>;
   changes: Pick<
     AssistantChanges,
@@ -201,11 +212,123 @@ export class GateRuleService {
     }
   }
 
+  autonomyLevel(run: WorkflowRun, step: WorkflowStepRecord) {
+    const definition = run.workflow.steps[step.index];
+    return definition
+      ? (this.ports.store.autonomy(
+          autonomyKey(run.projectRoot, run.workflow, definition),
+        )?.level ?? null)
+      : null;
+  }
+
+  private async autonomyTarget(target: AutonomyTarget) {
+    const signal = this.controller.signal;
+    const roots = await resolveWriteRoots(target.directory, signal);
+    const workflow = (
+      await loadCatalog(roots.projectRoot, signal)
+    ).workflows.find(item => item.name === target.workflow);
+    const step = workflow?.steps.find(
+      item => item.name === target.gate && item.type === 'human',
+    );
+    if (!workflow || !step) throw invalid('This human gate is unavailable.');
+    const key = autonomyKey(roots.projectRoot, workflow, step);
+    const settings = this.ports.store.autonomy(key) ?? defaultAutonomy;
+    return { root: roots.projectRoot, workflow, step, key, settings };
+  }
+
+  private async autonomyView(
+    target: AutonomyTarget,
+    update?: AutonomySettingsInput,
+  ) {
+    const selected = await this.autonomyTarget(target);
+    const { runs, store } = this.ports;
+    let { settings } = selected;
+    if (update) {
+      if (
+        settings.revision !== update.revision ||
+        update.level > settings.level + 1
+      )
+        throw invalid('Refresh the gate and accept each level separately.');
+      if (
+        update.level === 4 &&
+        (!selected.step.delegate ||
+          !(await gatePolicyActivation(
+            selected.step.delegate,
+            this.ports.dataDirectory,
+            {
+              directory: selected.root,
+              projectRoot: selected.root,
+            },
+            selected.workflow.name,
+            selected.step.name,
+            this.controller.signal,
+          ).catch(() => null)))
+      )
+        throw invalid(
+          'Level 4 requires an enabled owner policy and its reviewed host activation.',
+        );
+      settings = {
+        ...settings,
+        revision: settings.revision + 1,
+        level: update.level,
+        minimum: update.minimum,
+        windowDays: update.windowDays,
+      };
+      store.setAutonomy(selected.key, settings);
+    }
+    const matching = (runs.listRuns(null, 50)?.runs ?? []).flatMap(run =>
+      runs.stepsForRun(run.id).filter(step => {
+        if (
+          step.type !== 'human' ||
+          step.name !== target.gate ||
+          !step.decision
+        )
+          return false;
+        const definition = run.workflow.steps[step.index];
+        return (
+          definition &&
+          autonomyKey(run.projectRoot, run.workflow, definition) ===
+            selected.key
+        );
+      }),
+    );
+    return {
+      ...this.overview(),
+      autonomy: autonomyStatistics(settings, matching),
+    };
+  }
+
+  private async override(input: OverrideGatePolicyInput) {
+    if (!this.ports.overridePolicy)
+      throw invalid('Policy overrides are unavailable on this host.');
+    const run = await this.ports.overridePolicy(input, (run, step, at) => {
+      const definition = run.workflow.steps[step.index]!;
+      const key = autonomyKey(run.projectRoot, run.workflow, definition);
+      const current = this.ports.store.autonomy(key) ?? {
+        ...defaultAutonomy,
+        level: 4 as const,
+      };
+      this.ports.store.setAutonomy(key, {
+        ...current,
+        revision: current.revision + 1,
+        level: autonomyLevelSchema.parse(Math.max(0, current.level - 1)),
+        override: { stepId: step.id, reason: input.reason, at },
+      });
+    });
+    return this.overview(run.id);
+  }
+
   async execute(input: GateRulesInput): Promise<GateRuleOverview> {
     const { store } = this.ports;
     if (input.action === 'read') return this.overview(input.runId);
     const previous = this.decisions;
     const next = previous.then(async () => {
+      if (input.action === 'autonomy-read')
+        return this.autonomyView(input.target);
+      if (input.action === 'autonomy-set')
+        return this.autonomyView(input.input.target, input.input);
+      if (input.action === 'autonomy-override')
+        return this.override(input.input);
       if (input.action === 'decision-memory') {
         store.setDecisionMemory(input.enabled);
         return this.overview();

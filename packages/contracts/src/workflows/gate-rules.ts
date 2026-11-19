@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  autonomySettingsInputSchema,
+  autonomyStatisticsSchema,
+  autonomyTargetSchema,
+  overrideGatePolicySchema,
+} from './autonomy';
 import { checkCandidateSchema } from './checks';
 import {
   ruleEntryBodySchema,
@@ -117,6 +123,7 @@ export type GateRuleGeneration = z.infer<typeof gateRuleGenerationSchema>;
 
 export const gateRuleOverviewSchema = z.strictObject({
   decisionMemory: z.boolean().optional(),
+  autonomy: autonomyStatisticsSchema.optional(),
   enabled: z.boolean(),
   proposals: z.array(gateRuleProposalSchema).max(gateRuleLimits.pending),
   generation: gateRuleGenerationSchema.nullable(),
@@ -125,6 +132,18 @@ export type GateRuleOverview = z.infer<typeof gateRuleOverviewSchema>;
 
 export const gateRulesInputSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('read'), runId: z.uuid().optional() }),
+  z.strictObject({
+    action: z.literal('autonomy-read'),
+    target: autonomyTargetSchema,
+  }),
+  z.strictObject({
+    action: z.literal('autonomy-set'),
+    input: autonomySettingsInputSchema,
+  }),
+  z.strictObject({
+    action: z.literal('autonomy-override'),
+    input: overrideGatePolicySchema,
+  }),
   z.strictObject({ action: z.literal('settings'), enabled: z.boolean() }),
   z.strictObject({
     action: z.literal('decision-memory'),

@@ -360,7 +360,7 @@ export async function smokePortableCheck({
       .getByRole('button', { name: 'Fit graph', exact: true })
       .click();
     await screenshots('d83-2-conditional-route');
-    if (['3', '4', '5'].includes(process.env.NESVO_D90_STAGE)) {
+    if (['3', '4', '5', '6'].includes(process.env.NESVO_D90_STAGE)) {
       await editor
         .getByRole('button', { name: 'Close graph editor', exact: true })
         .click();
@@ -413,7 +413,7 @@ export async function smokePortableCheck({
         .click();
       await screenshots('d83-3-light-lane');
     }
-    if (['4', '5'].includes(process.env.NESVO_D90_STAGE)) {
+    if (['4', '5', '6'].includes(process.env.NESVO_D90_STAGE)) {
       await editor
         .getByRole('button', { name: 'Close graph editor', exact: true })
         .click();
@@ -425,7 +425,7 @@ export async function smokePortableCheck({
       await write(
         home,
         'workflows/typed-smoke.md',
-        `---\nname: typed-smoke\nsteps: [choose-gate]\n${process.env.NESVO_D90_STAGE === '5' ? 'decision_memory: review\n' : ''}---\n`,
+        `---\nname: typed-smoke\nsteps: [choose-gate]\n${['5', '6'].includes(process.env.NESVO_D90_STAGE) ? 'decision_memory: review\n' : ''}---\n`,
       );
       const specPath = '.agents/tasks/typed-smoke.md';
       await write(
@@ -477,7 +477,7 @@ export async function smokePortableCheck({
       const confirmed = await settled(task.id);
       assert.equal(confirmed.run.status, 'passed');
       assert.equal(confirmed.steps[0].decision.answer.option, 'manual');
-      if (process.env.NESVO_D90_STAGE === '5') {
+      if (['5', '6'].includes(process.env.NESVO_D90_STAGE)) {
         const proposal = await page.evaluate(async runId => {
           const overview = await window.nesvo.gateRules(
             { action: 'read', runId },
@@ -513,6 +513,28 @@ export async function smokePortableCheck({
           .waitFor();
         await memory.getByRole('button', { name: 'Open source run' }).waitFor();
         await screenshots('d90-decision-memory');
+        if (process.env.NESVO_D90_STAGE === '6') {
+          await memory
+            .getByRole('combobox', { name: 'Filter by step' })
+            .click();
+          await page
+            .getByRole('option', { name: 'choose-gate', exact: true })
+            .click();
+          const autonomy = memory.getByRole('region', {
+            name: 'Gate autonomy',
+          });
+          await autonomy.getByText(/Level 0/).waitFor();
+          await autonomy.getByLabel('Minimum agreements').fill('1');
+          await autonomy
+            .getByRole('button', { name: 'Save thresholds', exact: true })
+            .click();
+          await autonomy.getByText(/Proposed level 1/).waitFor();
+          await screenshots('d90-autonomy');
+          await autonomy
+            .getByRole('button', { name: 'Accept level 1', exact: true })
+            .click();
+          await autonomy.getByText(/Level 1/).waitFor();
+        }
       }
     }
   }

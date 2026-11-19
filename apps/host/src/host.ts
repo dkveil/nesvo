@@ -11,6 +11,7 @@ import {
   toSessionWindow,
   type DefinitionCatalog,
   type WorkflowRun,
+  type WorkflowStepRecord,
   type DefinitionWriteResult,
   type DesktopEvent,
   type HostMessage,
@@ -906,6 +907,8 @@ export const serveHost = ({
       const gatePorts = {
         sessions,
         precedents: precedentsFor,
+        autonomy: (run: WorkflowRun, step: WorkflowStepRecord) =>
+          gateRules.current?.autonomyLevel(run, step) ?? null,
         pullRequests,
         steps: (id: string) => workflowRunStore.stepsForRun(id),
       };
@@ -1003,7 +1006,14 @@ export const serveHost = ({
                 }))
               )
                 return;
-              const check = () => !signal.aborted && allowed();
+              const check = () => {
+                const level = gatePorts.autonomy(run, step);
+                return (
+                  !signal.aborted &&
+                  (level === null || level === 4) &&
+                  allowed()
+                );
+              };
               await gates.decideByPolicy(
                 {
                   runId: run.id,
@@ -1648,6 +1658,9 @@ export const serveHost = ({
           () =>
             new GateRuleService({
               store: gateRuleStore,
+              dataDirectory: directory,
+              overridePolicy: (input, demote) =>
+                gates.overridePolicy(input, demote),
               appliedChange: (sessionId, changeId) => {
                 const change = assistantChangeStore.get(
                   sessionId,

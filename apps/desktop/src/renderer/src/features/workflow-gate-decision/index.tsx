@@ -8,6 +8,8 @@ import { errorDetail } from '@/entities/session';
 import type { WorkflowRun, WorkflowStepRecord } from '@/entities/workflow';
 import { Button } from '@/shared/ui/button';
 import { Composer, ComposerInput, ComposerToolbar } from '@/shared/ui/composer';
+import { Input } from '@/shared/ui/input';
+import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Decision = 'accept' | 'fix' | 'reject';
@@ -23,6 +25,7 @@ export function WorkflowGateDecision({
 }) {
   const [editing, setEditing] = useState<'fix' | 'reject' | null>(null);
   const [comment, setComment] = useState('');
+  const [approvalNote, setApprovalNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const form = step.decisionForm;
@@ -37,7 +40,7 @@ export function WorkflowGateDecision({
       decisionId: crypto.randomUUID(),
       decision,
       ...(answer ? { answer } : {}),
-      comment: decision === 'accept' ? '' : comment,
+      comment: decision === 'accept' ? approvalNote : comment,
     });
     if (!input.success) {
       setError(input.error.issues[0]?.message ?? 'Check the decision.');
@@ -66,6 +69,9 @@ export function WorkflowGateDecision({
               : 'Needs approval'}
           </span>{' '}
           {step.recommendation.reason}
+          {step.recommendation.precedents?.length
+            ? ` · Prior decisions ${step.recommendation.precedents.join(', ')}`
+            : ''}
         </p>
       )}
       <div data-inbox-actions className="flex-wrap">
@@ -98,9 +104,22 @@ export function WorkflowGateDecision({
       {typed && !editing && (
         <TypedGateInput
           decision={form}
+          narrowedPaths={step.recommendation?.narrowedPaths}
           enabled={enabled && !busy}
           onSubmit={answer => void decide('accept', answer)}
         />
+      )}
+      {!editing && (form || run.workflow.decision_memory) && (
+        <NativeDisclosure className="col-span-full" title="Approval note">
+          <Input
+            size="sm"
+            aria-label="Approval note"
+            value={approvalNote}
+            maxLength={4000}
+            onChange={event => setApprovalNote(event.target.value)}
+            disabled={!enabled || busy}
+          />
+        </NativeDisclosure>
       )}
       {editing && (
         <form className="col-span-full max-w-2xl" onSubmit={submit}>

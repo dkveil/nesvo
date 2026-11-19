@@ -4871,6 +4871,7 @@ ${text}`
                         workflowName: context.workflowName,
                         document: context.document,
                         selection: context.selection,
+                        humanGate: context.humanGate,
                       }}
                       statuses={store.providerStates(workflowsEditor.hostId)}
                       computers={store.computers}

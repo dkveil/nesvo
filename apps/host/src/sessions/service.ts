@@ -485,6 +485,7 @@ export const GATE_PENDING_MESSAGE =
 
 export type GateReviewDecision = {
   acknowledgeOnly?: true;
+  overridePolicy?: true;
   reviewId: string;
   version: number;
   decisionId: string;
@@ -1092,7 +1093,11 @@ export class SessionService {
     const { review } = this.currentReview(
       input.reviewId,
       input.version,
-      input.decision === 'accept' ? ['pending', 'accepted'] : ['pending'],
+      input.overridePolicy
+        ? ['accepted']
+        : input.decision === 'accept'
+          ? ['pending', 'accepted']
+          : ['pending'],
     );
     const controller = new AbortController();
     const release = this.claimReview(review);
@@ -1102,7 +1107,8 @@ export class SessionService {
         await this.verifyFiles(review, controller.signal);
       this.ensureDecisionOpen(controller);
       const decided =
-        review.status === 'pending' && !input.acknowledgeOnly
+        (review.status === 'pending' || input.overridePolicy) &&
+        !input.acknowledgeOnly
           ? this.reviews.change(review, {
               status: GATE_REVIEW_STATUS[input.decision],
               decision: {

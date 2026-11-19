@@ -5,6 +5,7 @@ import type {
   RuleEntryScope,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
+import { GateAutonomy } from '@/features/workflow-gate-decision/gate-autonomy';
 import { GateRuleUndo } from '@/features/gate-rules/gate-rule-undo';
 import { RuleUsage } from '@/features/gate-rules/rule-usage';
 import { hostKey } from '@/shared/lib/host-key';
@@ -125,6 +126,18 @@ export function WorkflowMemory({
           </SelectContent>
         </Select>
       </Field>
+      {step &&
+        catalog?.workflows
+          .find(item => item.name === name)
+          ?.steps.some(item => item.name === step && item.type === 'human') && (
+          <GateAutonomy
+            key={step}
+            hostId={hostId}
+            directory={directory}
+            workflow={name}
+            gate={step}
+          />
+        )}
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       {catalog && !entries.length && (
         <p className="text-ui text-muted-foreground">
@@ -136,7 +149,7 @@ export function WorkflowMemory({
           <li key={entry.key} className="space-y-1.5 py-2.5">
             <p className="text-xs text-muted-foreground">
               {entry.label}
-              {entry.provenance.step && ` ? ${entry.provenance.step}`}
+              {entry.provenance.step && ` · ${entry.provenance.step}`}
             </p>
             <p className="text-ui font-medium [overflow-wrap:anywhere]">
               {entry.body.rule}

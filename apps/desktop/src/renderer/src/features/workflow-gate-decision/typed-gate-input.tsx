@@ -18,16 +18,19 @@ import {
 
 export function TypedGateInput({
   decision,
+  narrowedPaths,
   enabled,
   onSubmit,
 }: {
   decision: PinnedHumanDecision;
+  narrowedPaths?: string[] | undefined;
   enabled: boolean;
   onSubmit: (answer: HumanDecisionAnswer) => void;
 }) {
   const id = useId();
   const [choice, setChoice] = useState('');
   const [paths, setPaths] = useState<string[]>([]);
+  const [allFiles, setAllFiles] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
   const { form } = decision;
   if (form.kind === 'binary') return null;
@@ -80,13 +83,26 @@ export function TypedGateInput({
           </Select>
         </Field>
       )}
+      {form.kind === 'files' && narrowedPaths?.length ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => setAllFiles(value => !value)}
+        >
+          {allFiles ? 'Show suggested paths' : 'Show all changed files'}
+        </Button>
+      ) : null}
       {form.kind === 'files' && (
         <div
           role="group"
           aria-label="Changed files"
           className="max-h-56 overflow-y-auto divide-y divide-border"
         >
-          {decision.files?.map((path, index) => (
+          {(narrowedPaths?.length && !allFiles
+            ? narrowedPaths
+            : decision.files
+          )?.map((path, index) => (
             <label
               key={path}
               htmlFor={`${id}-file-${index}`}
