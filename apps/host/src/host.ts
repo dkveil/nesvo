@@ -643,6 +643,7 @@ export const serveHost = ({
       recipes.current = worktreeRecipes;
       const sessionControl = new SessionControl({
         store: controlStore,
+        reviews: reviewStore,
         sessions,
         signal: probes.controller.signal,
         route: session => inbox.current?.sessionRoute(session) ?? 'inbox',
@@ -4415,6 +4416,12 @@ export const serveHost = ({
                   request.method === 'read-coordinator-wake'
                     ? sessionControl.wake.state(request.input.sessionId)
                     : sessionControl.wake.set(request.input),
+              };
+            if (request.method === 'read-child-work')
+              return {
+                type: 'child-work',
+                id: request.id,
+                page: sessionControl.readChildForOwner(request.input),
               };
             if (request.method === 'continue-coordinator-delivery')
               return {

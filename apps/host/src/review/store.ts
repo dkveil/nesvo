@@ -28,6 +28,17 @@ export class ReviewStore {
       : undefined;
   }
 
+  forRun(sessionId: string, runId: string): Review | undefined {
+    const row = this.database
+      .prepare(
+        'SELECT document FROM reviews WHERE session_id = ? AND run_id = ? ORDER BY version DESC LIMIT 1',
+      )
+      .get(sessionId, runId);
+    return row
+      ? reviewSchema.parse(JSON.parse(String(row.document)))
+      : undefined;
+  }
+
   latest(sessionId: string): Review | undefined {
     const row = this.database
       .prepare(

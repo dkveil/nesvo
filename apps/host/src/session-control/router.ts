@@ -13,6 +13,7 @@ import {
   sessionControlTools,
   stageTools,
   type CoordinatorPolicy,
+  type OwnerChildWorkInput,
   type DecisionRoute,
   type ContinueCoordinatorInput,
   type ContinueWorkerInput,
@@ -43,6 +44,8 @@ import {
   QUESTION_RECORDED_MESSAGE,
 } from '../sessions/stages';
 import type { SessionControlStore } from './store';
+import { ChildHistory, ChildReadRefusal } from './child-history';
+import type { ReviewStore } from '../review/store';
 import { ChildSteering, SteeringRefusal } from './steering';
 import { CoordinatorWake } from './wake';
 import { WorkspaceIsolationError } from '../workspace/isolation';
@@ -55,6 +58,7 @@ import type {
 
 type SessionControlParams = {
   store: SessionControlStore;
+  reviews: ReviewStore;
   sessions: SessionService;
   signal: AbortSignal;
   route: (session: Session) => DecisionRoute;
@@ -94,6 +98,16 @@ class ChildRefusal extends SessionError {
 }
 
 const refusalFor = (error: unknown): SessionControlReply => {
+  if (error instanceof ChildReadRefusal)
+    return {
+      ok: false,
+      text: JSON.stringify({
+        ok: false,
+        code: error.code,
+        message: error.message,
+        ...(error.retryAt ? { retryAt: error.retryAt } : {}),
+      }),
+    };
   if (error instanceof ProviderUsageHeld)
     return {
       ok: false,
@@ -181,12 +195,15 @@ export class SessionControl {
   private readonly inFlight = new Map<string, Promise<SessionControlReply>>();
   readonly wake: CoordinatorWake;
   readonly steering: ChildSteering;
+  readonly history: ChildHistory;
   private readonly inFlightInputs = new Map<string, string>();
   private readonly creating = new Map<string, number>();
   private readonly seenApprovals = new Set<string>();
 
   constructor(private readonly params: SessionControlParams) {
     this.steering = new ChildSteering(params);
+    const { hostId, secret } = params.store.historyIdentity();
+    this.history = new ChildHistory(hostId, secret, params.reviews);
     this.wake = new CoordinatorWake({
       ...params,
       eligible: session => {
@@ -219,6 +236,24 @@ export class SessionControl {
       return false;
     const parent = this.params.sessions.snapshot(session.parentId);
     return !!parent && isCoordinatorCandidate(parent);
+  }
+
+  readChildForOwner(input: OwnerChildWorkInput) {
+    const { coordinatorId, ...scope } = input;
+    const coordinator = this.params.sessions.snapshot(coordinatorId);
+    if (!coordinator)
+      throw new SessionError('not-found', 'Refresh the coordinator session.');
+    const child = this.child(coordinator, input.sessionId);
+    try {
+      return this.history.read(coordinatorId, child, {
+        ...scope,
+        limit: scope.limit ?? 20,
+      });
+    } catch (error) {
+      if (error instanceof ChildReadRefusal)
+        throw new SessionError('invalid-request', error.message);
+      throw error;
+    }
   }
 
   policy(): CoordinatorPolicy {
@@ -872,6 +907,7 @@ export class SessionControl {
       pullRequest: child.pullRequest,
       runId: child.runId,
       steering: this.params.sessions.steeringAvailability(child),
+      preciseHistory: true,
       ...(child.plan?.status === 'plan-ready' ? { planId: child.plan.id } : {}),
       ...(open ? { questionId: open.id } : {}),
       report: latestStageReport(child)?.report ?? null,
@@ -1227,6 +1263,16 @@ export class SessionControl {
       return success(
         await this.steering.steer(input, actionId, coordinator, signal),
       );
+    },
+    session_read: ({ coordinator, input }) => {
+      const child = this.child(coordinator, input.sessionId);
+      this.history.checkRate(coordinator.id);
+      return success(this.history.read(coordinator.id, child, input));
+    },
+    session_result: ({ coordinator, input }) => {
+      const child = this.child(coordinator, input.sessionId);
+      this.history.checkRate(coordinator.id);
+      return success(this.history.result(child, input));
     },
     session_status: ({ coordinator, input }) => {
       const sessions = input.sessionIds

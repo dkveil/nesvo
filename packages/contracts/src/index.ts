@@ -566,6 +566,8 @@ import {
   coordinatorPolicySchema,
   decideSessionParentSchema,
   workerWorktreeInputSchema,
+  ownerChildWorkInputSchema,
+  childWorkPageSchema,
   ownerSteerInputSchema,
   decideSteeringInputSchema,
   sessionSteerResultSchema,
@@ -1455,6 +1457,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('read-child-work'),
+    input: ownerChildWorkInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('steer-child-session'),
     input: ownerSteerInputSchema,
   }),
@@ -1995,6 +2002,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('worker-worktree'),
     id: z.uuid(),
     result: workerWorktreeResultSchema,
+  }),
+  z.strictObject({
+    type: z.literal('child-work'),
+    id: z.uuid(),
+    page: childWorkPageSchema,
   }),
   z.strictObject({
     type: z.literal('child-steering'),

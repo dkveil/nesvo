@@ -30264,6 +30264,112 @@ test('D87 steering stays bound to a child run and queues only after definite ref
   );
 });
 
+test('D87 reads snapshot-bound child work and resolves an earlier saved result', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-read-')),
+  );
+  const host = launch(directory, join(directory, 'fixture.pid'));
+  t.after(async () => {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  await host.request('set-coordinator-wake', {
+    sessionId: null,
+    actionId: randomUUID(),
+    expectedRevision: 0,
+    enabled: false,
+  });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Claude Code',
+      model: 'default',
+      directory,
+    })
+  ).session;
+  const token = 'github_pat_0123456789abcdefghijklmnopqrstuvwxyz';
+  const [created] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: { title: 'Child', prompt: 'fixture:say Secret ' + token },
+    },
+  ]);
+  assert.equal(created.isError, false, JSON.stringify(created));
+  const child = created.result.sessionId;
+  const first = await finishedChild(host, child);
+  const [recent, saved] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_read',
+      arguments: { sessionId: child, view: 'transcript', limit: 1 },
+    },
+    {
+      tool: 'session_result',
+      arguments: { sessionId: child, runId: first.runId },
+    },
+  ]);
+  assert.equal(recent.result.items[0].id, agent(first).id);
+  assert.ok(recent.result.items[0].body.includes('[redacted]'));
+  assert.ok(!recent.result.items[0].body.includes(token));
+  assert.equal(saved.result.status, 'saved', JSON.stringify(saved));
+  assert.equal(saved.result.version, 1);
+  assert.equal(saved.result.destination.runId, first.runId);
+  assert.ok(!saved.result.summary.includes(token));
+
+  const newTurn = await host.request('send-message', {
+    sessionId: child,
+    messageId: randomUUID(),
+    text: 'fixture:say Corrected result.',
+  });
+  await host.event(
+    item =>
+      item.id === child &&
+      item.runId === newTurn.session.runId &&
+      item.status === 'completed',
+  );
+  const scope = {
+    sessionId: child,
+    view: 'transcript',
+    cursor: recent.result.nextCursor,
+  };
+  const exact = {
+    sessionId: child,
+    runId: first.runId,
+    version: saved.result.version,
+    resultId: saved.result.resultId,
+  };
+  const [previous, wrongView, foreign, retained, wrongRun, newer] =
+    await controlTurn(host, parent.id, [
+      { tool: 'session_read', arguments: scope },
+      { tool: 'session_read', arguments: { ...scope, view: 'activity' } },
+      {
+        tool: 'session_read',
+        arguments: { sessionId: parent.id, view: 'transcript' },
+      },
+      { tool: 'session_result', arguments: exact },
+      {
+        tool: 'session_result',
+        arguments: { ...exact, runId: newTurn.session.runId },
+      },
+      {
+        tool: 'session_result',
+        arguments: { sessionId: child, runId: newTurn.session.runId },
+      },
+    ]);
+  assert.equal(previous.result.snapshot, recent.result.snapshot);
+  assert.deepEqual(
+    previous.result.items.map(item => item.id),
+    [first.messages[0].id],
+  );
+  assert.equal(previous.result.nextCursor, null);
+  assert.equal(wrongView.result.code, 'invalid');
+  assert.equal(foreign.result.code, 'not-in-subtree');
+  assert.deepEqual(retained.result.destination, saved.result.destination);
+  assert.ok(retained.result.revision > saved.result.revision);
+  assert.equal(wrongRun.result.code, 'invalid');
+  assert.equal(newer.result.version, 2);
+});
+
 test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on resume', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nesvo-control-codex-'));
   const pidFile = join(directory, 'fixture.pid');

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import {
   coordinatorPolicySchema,
@@ -128,6 +129,21 @@ const toChild = (row: Row): ControlledChild => ({
 
 export class SessionControlStore {
   constructor(private readonly database: DatabaseSync) {}
+
+  historyIdentity() {
+    const read = this.database.prepare(
+      'SELECT value FROM metadata WHERE key = ?',
+    );
+    const hostId = String(read.get('instance_id')?.value);
+    const key = 'coordinator_history_key';
+    const previous = read.get(key);
+    if (previous) return { hostId, secret: String(previous.value) };
+    const secret = randomBytes(32).toString('hex');
+    this.database
+      .prepare('INSERT INTO metadata (key, value) VALUES (?, ?)')
+      .run(key, secret);
+    return { hostId, secret };
+  }
 
   steering(id: string) {
     return this.database
