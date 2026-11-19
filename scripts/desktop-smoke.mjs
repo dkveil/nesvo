@@ -4337,12 +4337,10 @@ async function smokeDesktop() {
   );
   await page.reload();
   await openInbox();
-  await page
-    .getByRole('radiogroup', { name: 'Inbox view' })
-    .getByRole('radio', { name: 'History', exact: true })
-    .click();
+  await page.getByRole('combobox', { name: 'View', exact: true }).click();
+  await page.getByRole('option', { name: 'History', exact: true }).click();
   await reviewRow(correctedReview)
-    .getByText(`Version ${correctedReview.version}`, {
+    .getByText(`Result · v${correctedReview.version} · Accepted`, {
       exact: true,
     })
     .waitFor();
@@ -4782,9 +4780,11 @@ async function smokeDesktop() {
     exact: true,
   });
   await restartedInbox.waitFor();
-  await restartedInbox
-    .getByRole('radiogroup', { name: 'Inbox view' })
-    .getByRole('radio', { name: 'Pending', exact: true })
+  await restartedPage
+    .getByRole('combobox', { name: 'View', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('option', { name: 'Pending', exact: true })
     .click();
   await restartedInbox
     .getByRole('article', {
@@ -4793,16 +4793,18 @@ async function smokeDesktop() {
     })
     .filter({ hasText: pendingResult.summary })
     .waitFor();
-  await restartedInbox
-    .getByRole('radiogroup', { name: 'Inbox view' })
-    .getByRole('radio', { name: 'History', exact: true })
+  await restartedPage
+    .getByRole('combobox', { name: 'View', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('option', { name: 'History', exact: true })
     .click();
   const restartedAccepted = restartedInbox.getByRole('article', {
     name: `Review result: ${correctedReview.title}, version ${correctedReview.version}`,
     exact: true,
   });
   await restartedAccepted
-    .getByText(`Version ${correctedReview.version}`, {
+    .getByText(`Result · v${correctedReview.version} · Accepted`, {
       exact: true,
     })
     .waitFor();
