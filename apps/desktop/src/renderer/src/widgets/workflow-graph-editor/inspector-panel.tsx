@@ -120,7 +120,7 @@ export function InspectorPanel({
     <aside
       aria-label="Inspector"
       data-editor-inspector={selection.kind}
-      className="flex w-80 shrink-0 flex-col border-l bg-background animate-in duration-slow ease-out fade-in-0 slide-in-from-right-4 motion-reduce:animate-none"
+      className="flex w-76 shrink-0 flex-col border-l bg-background xl:w-80"
     >
       <PanelHeader icon={header.icon} title={header.title} meta={header.meta}>
         <IconButton
@@ -130,7 +130,10 @@ export function InspectorPanel({
           <X />
         </IconButton>
       </PanelHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        key={showResult ? 'last-run' : selection.kind}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
         {selection.kind === 'draft' && state.pendingDraft && (
           <StepInspector
             step={state.pendingDraft}

@@ -299,7 +299,7 @@ export default function WorkflowFlows({
     <Panel aria-label="Flows" className="flex-1">
       <PanelBody>
         {active ? (
-          <div className="mx-auto max-w-6xl space-y-4 p-5">
+          <div className="mx-auto max-w-6xl space-y-4 p-5 xl:ml-5">
             {flows.map(flow => {
               const { run } = flow;
               const rows = [...flow.rows.values()].flat();
@@ -309,13 +309,17 @@ export default function WorkflowFlows({
                 <Panel
                   key={flow.id}
                   aria-label={run.workflow.name}
-                  className="overflow-hidden rounded-surface border border-info-panel-border bg-info-panel"
+                  className="overflow-hidden border-b"
                 >
                   <PanelHeader
-                    title={run.workflow.name}
+                    title={`${run.workflow.name} · ${directoryLabel(run.projectRoot)}`}
                     meta={[
+                      run.status === 'awaiting-human'
+                        ? 'Waiting for a decision in Inbox'
+                        : run.status === 'implementing'
+                          ? 'Running'
+                          : undefined,
                       computer?.name,
-                      directoryLabel(run.projectRoot),
                       flowCounts(rows),
                       computer?.status !== 'connected' && 'Offline',
                     ]

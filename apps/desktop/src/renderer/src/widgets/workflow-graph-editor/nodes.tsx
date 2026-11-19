@@ -10,7 +10,6 @@ import { Copy, Plus, Trash2, Zap } from 'lucide-react';
 import type { StepType } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import {
-  phaseLabels,
   stepStateLabels,
   stepStateTones,
   type StepDisplayState,
@@ -170,8 +169,7 @@ export function StepNodeView({
   const tone = run ? stepStateTones[run.state] : phaseTones[step.phase];
   const routesFailure = step.type !== 'human';
   const editable = !!data.onAdd;
-  const subtitle =
-    data.summary ?? `${phaseLabels[step.phase]} · ${stepDetail(step)}`;
+  const subtitle = data.summary ?? stepDetail(step);
   return (
     <>
       {editable && (
@@ -254,7 +252,7 @@ export function StepNodeView({
           </div>
           <div
             className={cn(
-              'truncate text-muted-foreground',
+              'line-clamp-2 text-muted-foreground [overflow-wrap:anywhere]',
               editable ? 'text-2xs leading-4' : 'text-ui',
             )}
           >
@@ -373,7 +371,7 @@ export function StartNodeView({ data, selected }: NodeProps<StartNode>) {
   const { hovered, enter, leave } = useLinger();
   const triggers =
     data.automations === 0
-      ? 'Manual run from a new thread'
+      ? 'Run manually'
       : `Manual run · ${data.automations} ${data.automations === 1 ? 'automation' : 'automations'}`;
   return (
     <div

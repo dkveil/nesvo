@@ -18,7 +18,8 @@ import {
   type ResolvedWorkflow,
   type ResolvedStep,
 } from '@/entities/workflow';
-import { errorDetail } from '@/entities/session';
+import { directoryLabel, errorDetail } from '@/entities/session';
+import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { DisabledHint } from '@/shared/ui/disabled-hint';
@@ -206,7 +207,7 @@ function WorkflowDetail({ workflow }: { workflow: ResolvedWorkflow }) {
   return (
     <section
       aria-label={`${workflow.name} steps`}
-      className="min-w-0 divide-y rounded-surface border"
+      className="min-w-0 divide-y border-b"
     >
       <div className="space-y-0.5 px-3 py-3">
         <h3 className="text-ui font-semibold">{workflow.name}</h3>
@@ -215,9 +216,14 @@ function WorkflowDetail({ workflow }: { workflow: ResolvedWorkflow }) {
             {workflow.description}
           </p>
         )}
-        <p className="truncate font-mono text-2xs text-muted-foreground">
-          {scopeLabels[workflow.source.scope]} · {workflow.source.path}
-        </p>
+        <NativeDisclosure
+          title={`${scopeLabels[workflow.source.scope]} definition`}
+          triggerTone="muted"
+        >
+          <p className="text-xs break-all text-muted-foreground">
+            {workflow.source.path}
+          </p>
+        </NativeDisclosure>
         {workflow.notes.map(note => (
           <p key={note} className="text-2xs text-muted-foreground">
             {note}
@@ -396,14 +402,29 @@ export default function WorkflowDefinitions({
             label="Project folder"
             className="min-w-48 flex-1"
           >
-            <Input
-              size="md"
-              id="workflows-directory"
-              placeholder="Absolute path, or blank for global definitions"
-              value={directory}
-              maxLength={4096}
-              onChange={event => setDirectory(event.target.value)}
-            />
+            <div className="group/path relative">
+              <Input
+                size="md"
+                className={
+                  directory
+                    ? 'text-transparent focus:text-foreground'
+                    : undefined
+                }
+                id="workflows-directory"
+                placeholder="Absolute path, or blank for global definitions"
+                value={directory}
+                maxLength={4096}
+                onChange={event => setDirectory(event.target.value)}
+              />
+              {directory && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-3 right-3 flex items-center overflow-hidden text-ui group-focus-within/path:hidden"
+                >
+                  <span className="truncate">{directoryLabel(directory)}</span>
+                </span>
+              )}
+            </div>
           </Field>
           <Button
             type="submit"
@@ -434,14 +455,18 @@ export default function WorkflowDefinitions({
         )}
         {catalog && (
           <>
-            <p className="space-x-3 text-2xs text-muted-foreground">
-              <span>Global: {catalog.roots.global ?? 'none'}</span>
-              <span>Project: {catalog.roots.project ?? 'none'}</span>
-            </p>
+            <NativeDisclosure title="Workflow locations" triggerTone="muted">
+              <div className="space-y-1 text-xs break-all text-muted-foreground">
+                {catalog.roots.global && <p>Global · {catalog.roots.global}</p>}
+                {catalog.roots.project && (
+                  <p>Project · {catalog.roots.project}</p>
+                )}
+              </div>
+            </NativeDisclosure>
             <div className="grid gap-4 md:grid-cols-[18rem_minmax(0,1fr)]">
               <ul
                 aria-label="Workflow definitions"
-                className="h-fit min-w-0 space-y-px rounded-surface border p-1"
+                className="h-fit min-w-0 divide-y divide-border/55"
               >
                 {catalog.workflows.map(workflow => {
                   const count = workflowIssueCount(catalog, workflow);

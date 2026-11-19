@@ -399,7 +399,10 @@ export default function WorkflowAssistantDock({
                 <ShowReply reply={entry.reply} />
               </>
             )}
-            {entry.status === 'replied' && (
+            {entry.status === 'replied' && entry.refusals.length > 0 && (
+              <ShowReply reply={entry.reply} />
+            )}
+            {entry.status === 'replied' && entry.refusals.length === 0 && (
               <MessageBody
                 body={entry.reply || 'No response text.'}
                 className="text-xs leading-5"
@@ -459,11 +462,15 @@ export default function WorkflowAssistantDock({
             ))}
             {entry.status === 'proposal' && proposal && (
               <div className="space-y-2">
-                {proposal.message && (
-                  <MessageBody
-                    body={proposal.message}
-                    className="text-xs leading-5"
-                  />
+                {entry.refusals.length > 0 ? (
+                  <ShowReply reply={proposal.message || entry.reply} />
+                ) : (
+                  proposal.message && (
+                    <MessageBody
+                      body={proposal.message}
+                      className="text-xs leading-5"
+                    />
+                  )
                 )}
                 {proposal.changes.map((change, index) => {
                   const key = `${entry.messageId}:${index}`;

@@ -14,7 +14,7 @@ export function IssuesStrip({ issues, banner, open }: Props) {
     <div
       role={banner ? 'alert' : 'status'}
       data-editor-issues
-      className="shrink-0 border-b bg-card/60 px-3 py-1.5 text-xs"
+      className="shrink-0 border-b px-3 py-2 text-xs"
     >
       {banner && (
         <p className="flex items-center gap-2 text-error-foreground [overflow-wrap:anywhere]">
@@ -23,7 +23,10 @@ export function IssuesStrip({ issues, banner, open }: Props) {
         </p>
       )}
       {listed && (
-        <ul className="max-h-32 space-y-0.5 overflow-y-auto">
+        <ul
+          aria-label="Validation issues"
+          className="max-h-32 space-y-0.5 overflow-y-auto"
+        >
           {issues.map((issue, index) => {
             const error = issue.severity === 'error';
             return (

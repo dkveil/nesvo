@@ -289,26 +289,28 @@ export default function WorkflowGraphEditor({
           open={issuesOpen}
         />
         <div className="flex min-h-0 min-w-0 flex-1">
-          <div className="relative min-w-0 flex-1">
-            <EditorCanvas
-              state={editorState}
-              runBadges={runBadges}
-              automations={automations.length}
-              assistantAdded={freshAssistantAdded}
-              onRequestAdd={requestAdd}
-            />
-            {state.notice && (
-              <p
-                role="alert"
-                data-editor-notice
-                className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 rounded-surface border bg-card px-3 py-1.5 text-xs text-card-foreground shadow-(--popover-shadow) [overflow-wrap:anywhere]"
-              >
-                {state.notice}
-              </p>
-            )}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="relative min-h-0 flex-1">
+              <EditorCanvas
+                state={editorState}
+                runBadges={runBadges}
+                automations={automations.length}
+                assistantAdded={freshAssistantAdded}
+                onRequestAdd={requestAdd}
+              />
+              {state.notice && (
+                <p
+                  role="alert"
+                  data-editor-notice
+                  className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 rounded-surface border bg-card px-3 py-1.5 text-xs text-card-foreground shadow-(--popover-shadow) [overflow-wrap:anywhere]"
+                >
+                  {state.notice}
+                </p>
+              )}
+            </div>
             <div
               data-slot="editor-dock"
-              className="pointer-events-none absolute right-3 bottom-3 z-10 [&>*]:pointer-events-auto"
+              className="absolute right-3 bottom-3 z-10 has-[[data-assistant-dock]]:static has-[[data-assistant-dock]]:shrink-0 has-[[data-assistant-dock]]:border-t [&_[data-assistant-dock]]:max-h-[min(35vh,20rem)] [&_[data-assistant-dock]]:w-full! [&_[data-assistant-dock]]:max-w-none [&_[data-assistant-dock]]:rounded-none [&_[data-assistant-dock]]:border-0"
             >
               {dock && (
                 <EditorDock

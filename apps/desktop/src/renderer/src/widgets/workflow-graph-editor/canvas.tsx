@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -12,6 +13,7 @@ import {
   MiniMap,
   ReactFlow,
   useReactFlow,
+  useStore,
   useStoreApi,
   type EdgeChange,
   type NodeChange,
@@ -77,6 +79,11 @@ export function EditorCanvas({
   const [minimap, setMinimap] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { fitView } = useReactFlow();
+  const width = useStore(state => state.width);
+  const height = useStore(state => state.height);
+  useEffect(() => {
+    if (width > 0 && height > 0) void fitView(fitViewOptions);
+  }, [fitView, height, width]);
   const store = useStoreApi();
   const hoverEdge = (id: string | null) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
