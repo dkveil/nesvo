@@ -34,6 +34,7 @@ export type GraphStep = {
   condition?: string;
   join?: 'all' | 'reached' | undefined;
   required?: boolean | undefined;
+  decision?: { kind: string } | undefined;
 };
 export type GraphLayout = Readonly<Record<string, readonly [number, number]>>;
 export type GraphInput = {
@@ -653,7 +654,8 @@ export const resolveGraph = (
     known.some(
       step =>
         stepsByName.get(step.name)?.join === 'reached' ||
-        stepsByName.get(step.name)?.required,
+        stepsByName.get(step.name)?.required ||
+        stepsByName.get(step.name)?.decision,
     );
   for (const { edge, index } of listed ?? []) {
     if (!edge.predicate) continue;

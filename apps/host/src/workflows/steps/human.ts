@@ -2,6 +2,7 @@ import {
   workflowLimits,
   type WorkflowStepRecord,
   type Review,
+  type GateRecommendation,
   type StepResult,
 } from '@nesvo/contracts';
 import {
@@ -22,6 +23,10 @@ const BINDABLE_REVIEWS: readonly Review['status'][] = ['pending', 'accepted'];
 
 export type GateReviews = {
   latest: (sessionId: string) => Review | undefined;
+  recommend?: (
+    execution: StepExecution,
+    review: Review | undefined,
+  ) => Promise<GateRecommendation | undefined>;
 };
 
 export const definitionChanges = (review: Review | undefined): string[] =>
@@ -65,22 +70,47 @@ const blocked = (step: WorkflowStepRecord, summary: string, at: string) => ({
 
 export const createHumanExecutor =
   (reviews: GateReviews): StepExecutor =>
-  execution => {
-    const { run, step, now } = execution;
+  async execution => {
+    const { run, step, now, definition } = execution;
     const at = now().toISOString();
     if (!run.sessionId || run.manual)
       return Promise.resolve(
-        conditionalGraph(run) || precedesExternalStep(execution)
+        definition.decision ||
+          conditionalGraph(run) ||
+          precedesExternalStep(execution)
           ? blocked(step, MANUAL_EXTERNAL_GATE_BLOCK, at)
           : { kind: 'skipped', reason: MANUAL_GATE_SKIP_REASON },
       );
     const review = reviews.latest(run.sessionId);
     if (review && !BINDABLE_REVIEWS.includes(review.status))
       return Promise.resolve(blocked(step, STALE_GATE_RESULT_BLOCK, at));
-    return Promise.resolve({
+    if (
+      definition.decision?.kind === 'files' &&
+      (!review ||
+        review.diff.status !== 'complete' ||
+        !review.diff.fingerprint ||
+        !review.diff.files.length)
+    )
+      return Promise.resolve(
+        blocked(
+          step,
+          'File approval requires a complete saved diff with changed files.',
+          at,
+        ),
+      );
+    const decisionForm = definition.decision && {
+      form: definition.decision,
+      ...(definition.decision.kind === 'files'
+        ? { files: review?.diff.files.map(file => file.path) ?? [] }
+        : {}),
+    };
+    const recommendation = await reviews.recommend?.(execution, review);
+    return {
       kind: 'awaiting-human',
+      ...(recommendation ? { recommendation } : {}),
+      ...(decisionForm ? { decisionForm } : {}),
       reviewId: review?.id ?? null,
       reviewVersion: review?.version ?? null,
       definitionChanges: definitionChanges(review),
-    });
+    };
   };

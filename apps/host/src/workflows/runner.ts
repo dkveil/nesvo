@@ -12,6 +12,8 @@ import {
   type GraphEdge,
   type DesktopEvent,
   type WorkflowRun,
+  type PinnedHumanDecision,
+  type GateRecommendation,
   type WorkflowTriage,
   type Review,
   type WorkflowCiWait,
@@ -119,6 +121,8 @@ export type StepOutcome =
   | { kind: 'interrupted' }
   | {
       kind: 'awaiting-human';
+      decisionForm?: PinnedHumanDecision;
+      recommendation?: GateRecommendation;
       reviewId: string | null;
       reviewVersion: number | null;
       definitionChanges: string[];
@@ -174,6 +178,11 @@ export type RunnerPorts = {
   stepExecutors: Partial<Record<StepType, StepExecutor>>;
   projectMappingApproved?: (root: string, hash: string) => boolean;
   author?: AuthorPort;
+  autoDecide?: (
+    execution: StepExecution,
+    run: WorkflowRun,
+    step: WorkflowStepRecord,
+  ) => Promise<void>;
   triage?: (
     run: WorkflowRun,
     signal: AbortSignal,
@@ -538,7 +547,15 @@ const routedEdgeState = (
 export const conditionalGraph = (run: WorkflowRun) =>
   Boolean(run.workflow.lanes) ||
   run.workflow.graph.edges.some(edge => edge.predicate) ||
-  run.workflow.steps.some(step => step.join === 'reached' || step.required);
+  run.workflow.steps.some(
+    step => step.join === 'reached' || step.required || step.decision,
+  );
+
+const externalGatePassed = (step: WorkflowStepRecord | undefined) =>
+  step?.state === 'passed' &&
+  step.decision?.actor !== 'policy' &&
+  (step.decision?.answer?.kind !== 'files' ||
+    step.decision.answer.paths.length === step.decisionForm?.files?.length);
 
 export const requiredStep = (step: ResolvedStep) =>
   step.required || step.type === 'human' || step.type === 'wait-ci';
@@ -802,6 +819,7 @@ export class WorkflowRunner {
   private readonly evidence: RunnerPorts['evidence'];
   private readonly executors: RunnerPorts['stepExecutors'];
   private readonly author: AuthorPort | undefined;
+  private readonly autoDecide: RunnerPorts['autoDecide'];
   private readonly triage: RunnerPorts['triage'];
   private readonly review: RunnerPorts['review'];
   private readonly triaging = new Map<string, AbortController>();
@@ -830,6 +848,7 @@ export class WorkflowRunner {
     this.evidence = ports.evidence;
     this.executors = ports.stepExecutors;
     this.author = ports.author;
+    this.autoDecide = ports.autoDecide;
     this.triage = ports.triage;
     this.review = ports.review;
     this.stopChildren = ports.stopChildren;
@@ -1519,7 +1538,7 @@ export class WorkflowRunner {
           index !== step.index &&
           requiredStep(gate) &&
           PHASE_RANK[gate.phase] <= PHASE_RANK[definition.phase] &&
-          currentSteps.get(index)?.state !== 'passed',
+          !externalGatePassed(currentSteps.get(index)),
       );
     const blocked = hasUnmetGate
       ? 'An external step requires all current required checks and gate decisions.'
@@ -1625,7 +1644,8 @@ export class WorkflowRunner {
       }))
       .then(outcome => {
         if (controller.signal.reason === 'shutdown') return;
-        if (!controller.signal.aborted) this.finishStep(running, outcome);
+        if (!controller.signal.aborted)
+          this.finishStep(running, outcome, execution);
         else this.finishStep(running, { kind: 'interrupted' });
       })
       .finally(() => {
@@ -1645,7 +1665,11 @@ export class WorkflowRunner {
       this.writeStep(current, { sessionId });
   }
 
-  private finishStep(running: WorkflowStepRecord, outcome: StepOutcome): void {
+  private finishStep(
+    running: WorkflowStepRecord,
+    outcome: StepOutcome,
+    execution?: StepExecution,
+  ): void {
     const current = this.store.getStep(running.id);
     if (
       !current ||
@@ -1658,7 +1682,7 @@ export class WorkflowRunner {
       return;
     }
     if (outcome.kind === 'awaiting-human') {
-      this.awaitHuman(current, outcome);
+      this.awaitHuman(current, outcome, execution);
       return;
     }
     if (outcome.kind === 'skipped') {
@@ -1775,6 +1799,7 @@ export class WorkflowRunner {
   private awaitHuman(
     running: WorkflowStepRecord,
     gate: Extract<StepOutcome, { kind: 'awaiting-human' }>,
+    execution?: StepExecution,
   ): void {
     for (let attempt = 0; attempt < 8; attempt++) {
       const step = this.store.getStep(running.id);
@@ -1793,6 +1818,8 @@ export class WorkflowRunner {
         reviewId: gate.reviewId,
         reviewVersion: gate.reviewVersion,
         definitionChanges: gate.definitionChanges,
+        ...(gate.decisionForm ? { decisionForm: gate.decisionForm } : {}),
+        ...(gate.recommendation ? { recommendation: gate.recommendation } : {}),
         updatedAt: now,
       };
       const paused: WorkflowRun = {
@@ -1806,6 +1833,14 @@ export class WorkflowRunner {
         continue;
       this.emit({ type: 'workflow-step-changed', step: waiting });
       this.emit({ type: 'workflow-run-changed', run: paused });
+      if (
+        execution &&
+        this.autoDecide &&
+        waiting.recommendation?.outcome === 'would-approve'
+      )
+        this.track(
+          this.autoDecide(execution, paused, waiting).catch(() => undefined),
+        );
       return;
     }
     const step = this.store.getStep(running.id);

@@ -16488,6 +16488,70 @@ test(
     );
 
     await t.test(
+      'typed gates reject undeclared answers and safely escalate without an owner policy',
+      async () => {
+        const workflowRoot = join(repository, '.agents', 'workflows');
+        await write(
+          join(workflowRoot, 'steps', 'choose-review.md'),
+          stepFile({
+            name: 'choose-review',
+            type: 'human',
+            phase: 'pre-done',
+            delegate: 'unknown-policy',
+            decision:
+              '{ kind: choice, options: [{ id: manual, label: Manual }, { id: automation, label: Automation }] }',
+            body: 'Choose what handles the next review.',
+          }),
+        );
+        await write(
+          join(workflowRoot, 'workflows', 'typed-task.md'),
+          stepFile({
+            name: 'typed-task',
+            steps: '[choose-review]',
+            body: '',
+          }),
+        );
+        await write(
+          join(repository, '.agents', 'tasks', 'typed-task.md'),
+          stepFile({ workflow: 'typed-task', body: 'Prepare a choice.' }),
+        );
+        const run = await started('typed-task');
+        const pending = await waitFor(
+          run.id,
+          data => data.run.status === 'awaiting-human',
+          'The typed gate did not wait',
+        );
+        const gate = stepNamed(pending, 'choose-review');
+        assert.equal(gate.decisionForm.form.kind, 'choice');
+        assert.equal(gate.recommendation.outcome, 'needs-approval');
+        const input = {
+          runId: run.id,
+          stepId: gate.id,
+          reviewId: gate.reviewId,
+          version: gate.reviewVersion,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          comment: '',
+        };
+        const choose = option =>
+          host.request('decide-workflow-gate', {
+            ...input,
+            answer: { kind: 'choice', option },
+          });
+        assert.equal((await choose('undeclared')).code, 'invalid-request');
+        assert.equal((await detail(run.id)).run.status, 'awaiting-human');
+        assert.equal((await choose('manual')).type, 'workflow-run');
+        assert.equal((await choose('automation')).code, 'invalid-request');
+        const decided = await settled(run.id);
+        assert.equal(decided.run.status, 'passed');
+        assert.deepEqual(stepNamed(decided, 'choose-review').decision.answer, {
+          kind: 'choice',
+          option: 'manual',
+        });
+      },
+    );
+
+    await t.test(
       'a failing check with on_fail stop fails the run without another turn',
       async () => {
         const run = await started('failing');

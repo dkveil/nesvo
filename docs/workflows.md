@@ -358,6 +358,16 @@ diff: branch
 
 With `action: hold` the step waits before it runs until you approve or decline it in the Inbox; a decline fails the step with your note, and a restart keeps the hold pending. The decision belongs to that attempt: a retry asks again. The validator warning about an external action without a human step is not shown when an enabled global or project rule holds that step (`hold` on `workflow-step` with a matching step, phase and workflow). A project rule counts for this warning while it is enabled, but it holds at run time only after you trust the repository.
 
+### Typed gate decisions
+
+A human step can set `decision: { kind: binary }`, `kind: choice` with an array of `{ id, label }` options, `kind: files` for the saved diff, or `kind: fields` with declared text, number and boolean fields. The host pins the form and review version for the attempt. The Inbox and run inspector use the same form. A partial file approval records exactly the selected paths and leaves the full saved review pending. An external step requires a complete decision.
+
+### Gate recommendations
+
+A human step can reference a Global owner policy with `delegate: low-risk-pr`. The host reads `policies/low-risk-pr.md` from the Global workflows root. Set version 1, exact repository, workflow, gate, lanes and target branches, required green CI and named checks, protected path globs and file and line limits. The default mode is observe. A read-only recommendation appears as Would approve or Needs approval in the gate.
+
+To authorize automatic acceptance of the bound saved result at a terminal gate, use `mode: enabled`, allow `accept-result` and place a host-local `workflow-policy-activations/low-risk-pr.json` file in the host data directory. It names the reviewed `policyHash`, `repository`, `workflow` and `gate`. Removing the activation or changing the policy revokes automatic acceptance. GitHub actions still require their existing operator flow.
+
 ### Routing decisions to the orchestrator
 
 A workflow file may set `decisions` to `inbox`, `parent` or `both`. Children started by a `session` or `fan-out` step of that workflow carry the route, so their plans, questions, operation approvals and rule items appear as cards in the orchestrator's conversation instead of, or as well as, the Inbox. A rule's own `route` wins over the workflow; a session group default and the computer default in Settings › Inbox rules apply when neither says.

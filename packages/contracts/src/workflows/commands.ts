@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { humanDecisionAnswerSchema } from './human-decisions';
 import { reasoningEffortSchema } from '../reasoning-effort';
 import {
   claudeModelSchema,
@@ -118,9 +119,16 @@ export const decideWorkflowGateSchema = z
     version: z.number().int().positive().nullable(),
     decisionId: idSchema,
     decision: z.enum(['accept', 'reject', 'fix']),
+    answer: humanDecisionAnswerSchema.optional(),
     comment: z.string().trim().max(workflowCommandLimits.comment).default(''),
   })
   .superRefine((value, context) => {
+    if (value.decision !== 'accept' && value.answer)
+      context.addIssue({
+        code: 'custom',
+        path: ['answer'],
+        message: 'Only confirmations can carry a decision answer.',
+      });
     if (value.decision !== 'accept' && !value.comment)
       context.addIssue({
         code: 'custom',

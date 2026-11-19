@@ -1,5 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import { decideWorkflowGateSchema } from '@nesvo/contracts';
+import {
+  decideWorkflowGateSchema,
+  type HumanDecisionAnswer,
+} from '@nesvo/contracts';
+import { TypedGateInput } from './typed-gate-input';
 import { errorDetail } from '@/entities/session';
 import type { WorkflowRun, WorkflowStepRecord } from '@/entities/workflow';
 import { Button } from '@/shared/ui/button';
@@ -21,7 +25,9 @@ export function WorkflowGateDecision({
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const decide = async (decision: Decision) => {
+  const form = step.decisionForm;
+  const typed = form && form.form.kind !== 'binary';
+  const decide = async (decision: Decision, answer?: HumanDecisionAnswer) => {
     if (!enabled || busy) return;
     const input = decideWorkflowGateSchema.safeParse({
       runId: run.id,
@@ -30,6 +36,7 @@ export function WorkflowGateDecision({
       version: step.reviewVersion,
       decisionId: crypto.randomUUID(),
       decision,
+      ...(answer ? { answer } : {}),
       comment: decision === 'accept' ? '' : comment,
     });
     if (!input.success) {
@@ -51,14 +58,26 @@ export function WorkflowGateDecision({
   };
   return (
     <>
+      {step.recommendation && (
+        <p className="col-span-full text-ui text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {step.recommendation.outcome === 'would-approve'
+              ? 'Would approve'
+              : 'Needs approval'}
+          </span>{' '}
+          {step.recommendation.reason}
+        </p>
+      )}
       <div data-inbox-actions className="flex-wrap">
-        <Button
-          variant="secondary"
-          disabled={!enabled || busy}
-          onClick={() => void decide('accept')}
-        >
-          Accept
-        </Button>
+        {!typed && (
+          <Button
+            variant="secondary"
+            disabled={!enabled || busy}
+            onClick={() => void decide('accept')}
+          >
+            {form ? 'Approve' : 'Accept'}
+          </Button>
+        )}
         <Button
           variant="ghost"
           disabled={!enabled || busy}
@@ -76,6 +95,13 @@ export function WorkflowGateDecision({
           Reject
         </Button>
       </div>
+      {typed && !editing && (
+        <TypedGateInput
+          decision={form}
+          enabled={enabled && !busy}
+          onSubmit={answer => void decide('accept', answer)}
+        />
+      )}
       {editing && (
         <form className="col-span-full max-w-2xl" onSubmit={submit}>
           <Composer variant="compact">

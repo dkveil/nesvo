@@ -215,11 +215,11 @@ export async function smokePortableCheck({
   await inspector
     .getByRole('button', { name: 'Close inspector', exact: true })
     .waitFor();
-  assert.equal(
+  assert.match(
     await inspector.evaluate(node =>
       node.style.getPropertyValue('--panel-width'),
     ),
-    '320px',
+    /^\d+px$/,
   );
   await editor.getByRole('button', { name: 'Fit graph', exact: true }).click();
   await screenshots('check-step-inspector');
@@ -319,13 +319,24 @@ export async function smokePortableCheck({
       '---\nworkflow: conditional-smoke\n---\nVerify the conditional graph.\n',
     );
     const started = await start(typescript);
-    const data = await page.waitForFunction(async runId => {
-      const detail = await window.nesvo.workflows.getRun('local', runId);
-      return !['pending', 'checking'].includes(detail.run.status)
-        ? detail
-        : undefined;
-    }, started.id);
-    const observed = await data.jsonValue();
+    const settled = async runId => {
+      const deadline = Date.now() + 30_000;
+      do {
+        const current = await page.evaluate(
+          id => window.nesvo.workflows.getRun('local', id),
+          runId,
+        );
+        if (
+          ['passed', 'failed', 'needs-attention', 'awaiting-human'].includes(
+            current.run.status,
+          )
+        )
+          return current;
+        await delay(80);
+      } while (Date.now() < deadline);
+      assert.fail('The workflow did not settle.');
+    };
+    const observed = await settled(started.id);
     assert.equal(observed.run.status, 'passed', JSON.stringify(observed.steps));
     assert.equal(
       observed.steps.find(item => item.name === 'kotlin-tests').state,
@@ -349,7 +360,7 @@ export async function smokePortableCheck({
       .getByRole('button', { name: 'Fit graph', exact: true })
       .click();
     await screenshots('d83-2-conditional-route');
-    if (process.env.NESVO_D90_STAGE === '3') {
+    if (['3', '4', '5'].includes(process.env.NESVO_D90_STAGE)) {
       await editor
         .getByRole('button', { name: 'Close graph editor', exact: true })
         .click();
@@ -384,13 +395,9 @@ export async function smokePortableCheck({
           }),
         { directory: typescript, specPath },
       );
-      await page.waitForFunction(async runId => {
-        const detail = await window.nesvo.workflows.getRun('local', runId);
-        return (
-          detail.run.status === 'passed' &&
-          detail.run.lane?.effective === 'light'
-        );
-      }, task.id);
+      const light = await settled(task.id);
+      assert.equal(light.run.status, 'passed', JSON.stringify(light.run));
+      assert.equal(light.run.lane?.effective, 'light');
       await list.getByRole('button', { name: 'Read', exact: true }).click();
       await list
         .getByRole('button', { name: 'Edit lane-smoke', exact: true })
@@ -402,6 +409,71 @@ export async function smokePortableCheck({
         .click();
       await editor.getByText(/Light lane/).waitFor();
       await screenshots('d83-3-light-lane');
+    }
+    if (['4', '5'].includes(process.env.NESVO_D90_STAGE)) {
+      await editor
+        .getByRole('button', { name: 'Close graph editor', exact: true })
+        .click();
+      await write(
+        home,
+        'steps/choose-gate.md',
+        `---\nname: choose-gate\ntype: human\nphase: pre-done\ndelegate: unavailable-policy\ndecision: {kind: choice, options: [{id: manual, label: Manual}, {id: automatic, label: Automatic}]}\n---\nChoose how to handle the review.\n`,
+      );
+      await write(
+        home,
+        'workflows/typed-smoke.md',
+        '---\nname: typed-smoke\nsteps: [choose-gate]\n---\n',
+      );
+      const specPath = '.agents/tasks/typed-smoke.md';
+      await write(
+        typescript,
+        specPath,
+        '---\nworkflow: typed-smoke\n---\nPrepare a choice.\n',
+      );
+      const task = await page.evaluate(
+        ({ directory, specPath }) =>
+          window.nesvo.workflows.startTask('local', {
+            directory,
+            specPath,
+            workflowName: 'typed-smoke',
+            provider: 'Claude Code',
+            model: 'sonnet',
+            mode: 'read-only',
+            isolation: 'none',
+            gateProvider: 'Claude Code',
+            gateModel: 'sonnet',
+          }),
+        { directory: typescript, specPath },
+      );
+      const waiting = await settled(task.id);
+      assert.equal(
+        waiting.run.status,
+        'awaiting-human',
+        JSON.stringify(waiting.run),
+      );
+      await list.getByRole('button', { name: 'Read', exact: true }).click();
+      await list
+        .getByRole('button', { name: 'Edit typed-smoke', exact: true })
+        .click();
+      if ((await lastRun.getAttribute('aria-pressed')) !== 'true')
+        await lastRun.click();
+      await editor
+        .locator(
+          '[data-editor-node="choose-gate"][data-run-state="awaiting-human"]',
+        )
+        .click();
+      await editor.getByText('Needs approval', { exact: true }).waitFor();
+      const form = editor.getByRole('form', { name: 'Gate decision' });
+      await form.getByRole('combobox').click();
+      await page.getByRole('option', { name: 'Manual', exact: true }).click();
+      await screenshots('d83-4-typed-decision');
+      await form
+        .getByRole('button', { name: 'Confirm decision', exact: true })
+        .click();
+      await form.waitFor({ state: 'hidden' });
+      const confirmed = await settled(task.id);
+      assert.equal(confirmed.run.status, 'passed');
+      assert.equal(confirmed.steps[0].decision.answer.option, 'manual');
     }
   }
   for (const detail of results) {

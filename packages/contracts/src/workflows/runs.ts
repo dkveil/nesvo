@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  humanDecisionAnswerSchema,
+  pinnedHumanDecisionSchema,
+} from './human-decisions';
+import { gateRecommendationSchema } from './gate-policy';
 import { workflowLaneDecisionSchema } from './lanes';
 import { checkProjectProfileSchema } from './checks';
 import { promptSkillSchema } from '../skills';
@@ -77,6 +82,8 @@ export const workflowStepDecisionKindSchema = z.enum([
 export const workflowStepDecisionSchema = z.strictObject({
   decisionId: idSchema,
   kind: workflowStepDecisionKindSchema,
+  answer: humanDecisionAnswerSchema.optional(),
+  actor: z.literal('policy').optional(),
   comment: z.string().max(workflowLimits.decisionComment),
   at: z.iso.datetime(),
 });
@@ -193,6 +200,8 @@ export const workflowStepRecordSchema = z.strictObject({
   updatedAt: z.iso.datetime(),
   startedAt: z.iso.datetime().nullable(),
   decision: workflowStepDecisionSchema.nullable().default(null),
+  decisionForm: pinnedHumanDecisionSchema.optional(),
+  recommendation: gateRecommendationSchema.optional(),
   definitionChanges: z
     .array(z.string().min(1).max(workflowLimits.directory))
     .max(workflowLimits.definitionChanges)

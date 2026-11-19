@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { WorkflowGateDecision } from '@/features/workflow-gate-decision';
 import { ChildQueue } from './child-queue';
 import { CheckObservation } from './check-observation';
 
@@ -277,6 +278,9 @@ export function StepResult({
             ? 'Running. The result appears here when the step finishes.'
             : (stateNotes[state] ?? 'No result was reported.')}
         </p>
+      )}
+      {record?.state === 'awaiting-human' && record.decisionForm && (
+        <WorkflowGateDecision key={record.id} run={run} step={record} enabled />
       )}
       {(definition.type === 'human' || record?.reviewId) && record && (
         <Button

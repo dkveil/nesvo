@@ -483,6 +483,7 @@ export const GATE_PENDING_MESSAGE =
   'This result is waiting for its workflow gate';
 
 export type GateReviewDecision = {
+  acknowledgeOnly?: true;
   reviewId: string;
   version: number;
   decisionId: string;
@@ -1098,7 +1099,7 @@ export class SessionService {
         await this.verifyFiles(review, controller.signal);
       this.ensureDecisionOpen(controller);
       const decided =
-        review.status === 'pending'
+        review.status === 'pending' && !input.acknowledgeOnly
           ? this.reviews.change(review, {
               status: GATE_REVIEW_STATUS[input.decision],
               decision: {

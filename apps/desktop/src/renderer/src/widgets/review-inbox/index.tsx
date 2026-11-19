@@ -55,7 +55,7 @@ import { DecisionRow } from '@/entities/review/decision-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import type { WorkflowRun, WorkflowStepRecord } from '@/entities/workflow';
-import { WorkflowGateDecision } from './workflow-gate-decision';
+import { WorkflowGateDecision } from '@/features/workflow-gate-decision';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { NativeDisclosure } from '@/shared/ui/disclosure';

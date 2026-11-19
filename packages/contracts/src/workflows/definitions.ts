@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { workflowLanesSchema } from './lanes';
+import { humanDecisionFormSchema } from './human-decisions';
 import { checkIntentSchema, checkPreferencesSchema } from './checks';
 import { promptSkillSchema, type PromptSkill } from '../skills';
 import { decisionRouteSchema } from '../decision-route';
@@ -131,6 +132,8 @@ const hasDuplicates = (values: readonly string[]) =>
   new Set(values).size !== values.length;
 
 const stepDefinitionShape = {
+  delegate: stepNameSchema.optional(),
+  decision: humanDecisionFormSchema.optional(),
   join: z.enum(['all', 'reached']).optional(),
   required: z.boolean().optional(),
   name: stepNameSchema,
@@ -192,6 +195,8 @@ const stepDefinitionShape = {
 };
 
 type StepRuleSubject = {
+  delegate?: string;
+  decision?: z.infer<typeof humanDecisionFormSchema>;
   type: z.infer<typeof stepTypeSchema>;
   skill: string | null;
   prompt_skill?: PromptSkill;
@@ -215,6 +220,18 @@ type StepRuleSubject = {
 };
 
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
+  if (value.type !== 'human' && value.delegate)
+    context.addIssue({
+      code: 'custom',
+      path: ['delegate'],
+      message: 'Only human steps can name a gate policy.',
+    });
+  if (value.type !== 'human' && value.decision)
+    context.addIssue({
+      code: 'custom',
+      path: ['decision'],
+      message: 'Only human steps declare a decision form.',
+    });
   const child = isChildWorkflowStep(value.type);
   const fanOut = value.type === 'fan-out';
   if ((value.type === 'check') !== (value.intent !== undefined))

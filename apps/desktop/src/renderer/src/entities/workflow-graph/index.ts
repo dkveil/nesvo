@@ -234,6 +234,8 @@ export const stepDefinitionOf = (
   idempotent: step.idempotent,
   pr: step.pr,
   poll_interval: step.poll_interval,
+  decision: step.decision,
+  delegate: step.delegate,
   join: step.join,
   required: step.required,
   repeat: step.repeat?.map(name => name.trim()),
@@ -301,6 +303,7 @@ export const editorEdge = (edge: GraphEdge): EditorEdge => ({
 });
 
 const graphStep = (step: StepDefinition): GraphStep => ({
+  decision: step.decision,
   join: step.join,
   required: step.required,
   pr: step.pr,
@@ -570,6 +573,8 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.poll_interval) lines.push(`poll_interval: ${step.poll_interval}`);
   if (step.join === 'reached') lines.push('join: reached');
   if (step.required) lines.push('required: true');
+  if (step.decision) lines.push(`decision: ${JSON.stringify(step.decision)}`);
+  if (step.delegate) lines.push(`delegate: ${yamlName(step.delegate)}`);
   if (step.repeat)
     lines.push(`repeat: [${step.repeat.map(yamlName).join(', ')}]`);
   if (step.condition) lines.push(`condition: ${yamlText(step.condition)}`);

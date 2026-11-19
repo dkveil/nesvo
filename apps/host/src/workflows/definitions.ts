@@ -131,6 +131,8 @@ const knownFields: Record<Kind, readonly string[]> = {
     'phase',
     'join',
     'required',
+    'decision',
+    'delegate',
     'skill',
     'prompt_skill',
     'timeout',

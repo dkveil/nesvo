@@ -125,9 +125,11 @@ import { createWaitCiExecutor } from './workflows/steps/wait-ci';
 import {
   WorkflowRunError,
   WorkflowRunner,
+  deterministicId,
   turnMessageId,
 } from './workflows/runner';
 import { workflowAdvice } from './workflows/advice';
+import { authorizeGate, gateRecommendation } from './workflows/gate-policy';
 import { triageOutputSchema } from './workflows/triage';
 import { workflowTriageSchema } from '@nesvo/contracts';
 import { WorkflowGates } from './workflows/gates';
@@ -889,6 +891,11 @@ export const serveHost = ({
       );
       const snapshots = new SpecSnapshots(directory);
       const assistantChangeStore = new AssistantChangeStore(database);
+      const gatePorts = {
+        sessions,
+        pullRequests,
+        steps: (id: string) => workflowRunStore.stepsForRun(id),
+      };
       const workflows = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const children = new ChildRuns({
@@ -956,6 +963,46 @@ export const serveHost = ({
             evidence,
             ruleMetrics,
             review: id => reviewStore.latest(id),
+            autoDecide: async (execution, run, step) => {
+              if (!step.reviewId || !step.reviewVersion) return;
+              const review = reviewStore.get(step.reviewId);
+              if (!review) return;
+              const signal = AbortSignal.any([
+                probes.controller.signal,
+                AbortSignal.timeout(30_000),
+              ]);
+              const allowed = await authorizeGate(
+                gatePorts,
+                directory,
+                run,
+                step,
+                review,
+                signal,
+              );
+              if (
+                !allowed ||
+                (await inboxRules.beforeWorkflowStep({
+                  ...execution,
+                  run,
+                  step,
+                  signal,
+                }))
+              )
+                return;
+              const check = () => !signal.aborted && allowed();
+              await gates.decideByPolicy(
+                {
+                  runId: run.id,
+                  stepId: step.id,
+                  reviewId: step.reviewId,
+                  version: step.reviewVersion,
+                  decisionId: deterministicId(`gate-policy:${step.id}`),
+                  decision: 'accept',
+                  comment: '',
+                },
+                check,
+              );
+            },
             triage: (run, signal) => {
               const plan =
                 run.sessionId &&
@@ -1012,6 +1059,7 @@ export const serveHost = ({
               human: gated(
                 createHumanExecutor({
                   latest: sessionId => reviewStore.latest(sessionId),
+                  recommend: gateRecommendation(gatePorts),
                 }),
               ),
               agent: gated(createAgentExecutor(agentPorts)),

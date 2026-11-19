@@ -1,5 +1,6 @@
 import {
   workflowLimits,
+  validateHumanAnswer,
   stepResultLimits,
   stepResultSchema,
   type DecideWorkflowGateInput,
@@ -42,7 +43,8 @@ type GateStore = Pick<
   | 'activeRunForDirectory'
 >;
 
-type GateDecision = Required<DecideWorkflowGateInput>;
+type GateDecision = Required<Omit<DecideWorkflowGateInput, 'answer'>> &
+  Pick<DecideWorkflowGateInput, 'answer'>;
 type StepResolution = Required<ResolveWorkflowStepInput>;
 
 export type GatePorts = {
@@ -154,6 +156,13 @@ export class WorkflowGates {
   >();
 
   constructor(private readonly ports: GatePorts) {}
+
+  decideByPolicy(
+    input: GateDecision,
+    authorized: () => boolean,
+  ): Promise<WorkflowRun> {
+    return this.record(input, authorized);
+  }
 
   decide(input: GateDecision): Promise<WorkflowRun> {
     const inflight = this.deciding.get(input.decisionId);
@@ -297,7 +306,10 @@ export class WorkflowGates {
     return this.advance(next, [resolved, ...retry]);
   }
 
-  private async record(input: GateDecision): Promise<WorkflowRun> {
+  private async record(
+    input: GateDecision,
+    authorized?: () => boolean,
+  ): Promise<WorkflowRun> {
     const recorded = this.ports.store.stepByDecision(input.decisionId);
     if (recorded) {
       if (
@@ -306,7 +318,8 @@ export class WorkflowGates {
         recorded.reviewId !== input.reviewId ||
         recorded.reviewVersion !== input.version ||
         recorded.decision?.kind !== input.decision ||
-        recorded.decision.comment !== input.comment
+        recorded.decision.comment !== input.comment ||
+        !sameAnswer(recorded.decision.answer, input.answer)
       )
         throw invalid('This decision ID is already in use.');
       return this.currentRun(input.runId);
@@ -328,8 +341,18 @@ export class WorkflowGates {
       throw invalid(
         'This result version is no longer current. Refresh the run.',
       );
+    if (
+      input.decision === 'accept' &&
+      !validateHumanAnswer(step.decisionForm, input.answer)
+    )
+      throw invalid('The decision does not match this gate?s declared input.');
     if (input.decision === 'fix' && !run.sessionId)
       throw invalid('This run has no task session to correct.');
+    if (
+      authorized &&
+      (input.decision !== 'accept' || !step.reviewId || !authorized())
+    )
+      throw invalid('The gate policy is unavailable or was revoked.');
     const now = new Date().toISOString();
     const outcome = GATE_OUTCOMES[input.decision];
     const decided: WorkflowStepRecord = {
@@ -338,13 +361,17 @@ export class WorkflowGates {
       state: outcome.state,
       result: operatorResult(step, {
         status: outcome.status,
-        summary: outcome.summary,
+        summary: authorized
+          ? 'Accepted under the owner gate policy'
+          : outcome.summary,
         note: input.comment || 'Accepted',
         at: now,
       }),
       decision: {
         decisionId: input.decisionId,
         kind: input.decision,
+        ...(authorized ? { actor: 'policy' as const } : {}),
+        ...(input.answer ? { answer: input.answer } : {}),
         comment: input.comment,
         at: now,
       },
@@ -358,7 +385,11 @@ export class WorkflowGates {
       finishedAt: input.decision === 'reject' ? now : null,
       updatedAt: now,
     };
-    const write = () => this.replace(step, decided, run, next);
+    const write = () => {
+      if (authorized && !authorized())
+        throw invalid('The gate policy was revoked.');
+      this.replace(step, decided, run, next);
+    };
     if (step.reviewId && step.reviewVersion)
       await this.ports.reviews.decide(
         {
@@ -367,6 +398,10 @@ export class WorkflowGates {
           decisionId: input.decisionId,
           decision: REVIEW_DECISIONS[input.decision],
           feedback: input.comment,
+          ...(input.answer?.kind === 'files' &&
+          input.answer.paths.length !== step.decisionForm?.files?.length
+            ? { acknowledgeOnly: true }
+            : {}),
         },
         write,
       );
@@ -438,7 +473,13 @@ const sameGateDecision = (left: GateDecision, right: GateDecision) =>
   left.reviewId === right.reviewId &&
   left.version === right.version &&
   left.decision === right.decision &&
-  left.comment === right.comment;
+  left.comment === right.comment &&
+  sameAnswer(left.answer, right.answer);
+
+const sameAnswer = (
+  left: GateDecision['answer'],
+  right: GateDecision['answer'],
+) => JSON.stringify(left) === JSON.stringify(right);
 
 const operatorResult = (
   step: WorkflowStepRecord,
