@@ -1,22 +1,23 @@
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue, SQLOutputValue } from 'node:sqlite';
 import type { Provider } from '@nesvo/contracts';
 import { z } from 'zod';
 import {
   ImportSourceError,
   sourceFile,
-  withImportSnapshot,
+  openImportSnapshot,
 } from './import-snapshot';
 import {
   explicitSourceRoot,
-  managerRowLimit,
   sourceDate,
   sourceKey,
   sourceText,
   sourceTitle,
   type ManagerSource,
+  type SourceGroup,
+  type SourceSession,
 } from './manager-source';
 
 const threads = 'orchestration_v2_projection_threads';
@@ -24,7 +25,7 @@ const projects = 'projection_projects';
 const providerThreads = 'orchestration_v2_projection_provider_threads';
 const runs = 'orchestration_v2_projection_runs';
 
-function inspect(database: DatabaseSync, root: string): ManagerSource {
+function catalog(database: DatabaseSync, root: string) {
   const tables = new Set(
     database
       .prepare(
@@ -40,37 +41,35 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
     );
 
   const groupKey = (id: string) => sourceKey('t3-code', root, 'group', id);
-  const projectRows = database
-    .prepare(
-      `
+  const threadKey = (id: string) => sourceKey('t3-code', root, 'session', id);
+  database.function('nesvo_project_key', { deterministic: true }, id =>
+    typeof id === 'string' ? groupKey(id) : null,
+  );
+  database.function('nesvo_thread_key', { deterministic: true }, id =>
+    typeof id === 'string' ? threadKey(id) : null,
+  );
+  const projectsSql = `
     SELECT project_id, substr(title, 1, 80) AS title, substr(workspace_root, 1, 4097) AS workspace_root, archived_at
-    FROM projection_projects WHERE deleted_at IS NULL ORDER BY project_id LIMIT ?
-  `,
-    )
-    .all(managerRowLimit);
-  const groups = projectRows.flatMap(row => {
+    FROM projection_projects WHERE deleted_at IS NULL`;
+  const project = (
+    row: Record<string, SQLOutputValue>,
+  ): SourceGroup | undefined => {
     const id = sourceText(row.project_id, 512);
-    return id
-      ? [
-          {
-            kind: 'group' as const,
-            key: groupKey(id),
-            parent: null,
-            title: sourceTitle(row.title, 'Untitled project', 80),
-            directory: sourceText(row.workspace_root),
-            archivedAt: sourceDate(row.archived_at),
-            profile: null,
-            order: 0,
-          },
-        ]
-      : [];
-  });
-  const byKey = new Map(groups.map(group => [group.key, group]));
-  const rows = database
-    .prepare(
-      `
+    if (!id) return;
+    return {
+      kind: 'group',
+      key: groupKey(id),
+      parent: null,
+      title: sourceTitle(row.title, 'Untitled project', 80),
+      directory: sourceText(row.workspace_root),
+      archivedAt: sourceDate(row.archived_at),
+      profile: null,
+      order: 0,
+    };
+  };
+  const sessionsSql = `
     SELECT t.thread_id, t.project_id, substr(t.title, 1, 100) AS title,
-      t.archived_at, t.created_at, t.updated_at,
+      t.archived_at, t.created_at, t.updated_at, substr(project.workspace_root, 1, 4097) AS workspace_root,
       substr(json_extract(t.payload_json, '$.worktreePath'), 1, 4097) AS worktree,
       substr(json_extract(t.payload_json, '$.branch'), 1, 513) AS branch,
       p.driver, p.status,
@@ -85,19 +84,14 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
     JOIN projection_projects project ON project.project_id = t.project_id AND project.deleted_at IS NULL
     LEFT JOIN orchestration_v2_projection_provider_threads p
       ON p.thread_id = t.thread_id AND p.provider_thread_id = t.active_provider_thread_id
-    WHERE t.deleted_at IS NULL
-    ORDER BY t.updated_at DESC, t.thread_id
-    LIMIT ?
-  `,
-    )
-    .all(managerRowLimit);
-  const sessions = rows.flatMap(row => {
+    WHERE t.deleted_at IS NULL`;
+  const session = (
+    row: Record<string, SQLOutputValue>,
+  ): SourceSession | undefined => {
     const id = sourceText(row.thread_id, 512);
     const projectId = sourceText(row.project_id, 512);
-    if (!id || !projectId) return [];
+    if (!id || !projectId) return;
     const parent = groupKey(projectId);
-    const group = byKey.get(parent);
-    if (!group) return [];
     const provider: Provider | null =
       row.driver === 'claudeAgent'
         ? 'Claude Code'
@@ -123,26 +117,26 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
       !z.uuid().safeParse(nativeId).success
     )
       blocked = 'The native provider reference could not be verified.';
-    return [
-      {
-        kind: 'session' as const,
-        key: sourceKey('t3-code', root, 'session', id),
-        parent,
-        title: sourceTitle(row.title, 'Untitled session', 100),
-        profile: null,
-        directory: hasWorktree ? sourceText(row.worktree) : group.directory,
-        archivedAt: sourceDate(row.archived_at),
-        createdAt: sourceDate(row.created_at),
-        updatedAt: sourceDate(row.updated_at),
-        nativeId,
-        hasWorktree,
-        branch: sourceText(row.branch, 512),
-        provider,
-        blocked,
-        order: 0,
-      },
-    ];
-  });
+    return {
+      kind: 'session',
+      key: threadKey(id),
+      parent,
+      title: sourceTitle(row.title, 'Untitled session', 100),
+      profile: null,
+      directory: hasWorktree
+        ? sourceText(row.worktree)
+        : sourceText(row.workspace_root),
+      archivedAt: sourceDate(row.archived_at),
+      createdAt: sourceDate(row.created_at),
+      updatedAt: sourceDate(row.updated_at),
+      nativeId,
+      hasWorktree,
+      branch: sourceText(row.branch, 512),
+      provider,
+      blocked,
+      order: 0,
+    };
+  };
 
   const groupCount = Number(
     database
@@ -162,10 +156,81 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
       )
       .get()?.count,
   );
-  return { groups, sessions, groupCount, sessionCount, profileCount: 0 };
+  const counts = { groupCount, sessionCount, profileCount: 0 };
+  const build = (
+    groupRows: Record<string, SQLOutputValue>[],
+    sessionRows: Record<string, SQLOutputValue>[],
+  ): ManagerSource => {
+    const groups = groupRows.map(project).filter(row => row !== undefined);
+    const sessions = sessionRows.map(session).filter(row => row !== undefined);
+    const parents = [...new Set(sessionRows.map(row => row.project_id))];
+    const direct = new Set(groups.map(group => group.key));
+    const contextGroups = parents.length
+      ? database
+          .prepare(
+            projectsSql + ' AND project_id IN (SELECT value FROM json_each(?))',
+          )
+          .all(JSON.stringify(parents))
+          .map(project)
+          .filter(
+            (row): row is SourceGroup =>
+              row !== undefined && !direct.has(row.key),
+          )
+      : [];
+    return {
+      ...counts,
+      groups,
+      sessions,
+      contextGroups,
+      partial:
+        groups.length !== groupRows.length ||
+        sessions.length !== sessionRows.length,
+    };
+  };
+  const orderedThreads = ' ORDER BY t.updated_at DESC, t.thread_id';
+  const readThreads = (suffix: string, ...values: SQLInputValue[]) =>
+    database.prepare(sessionsSql + suffix).all(...values);
+  return {
+    total: groupCount + sessionCount,
+    page(offset: number, limit: number) {
+      const groupRows =
+        offset < groupCount
+          ? database
+              .prepare(projectsSql + ' ORDER BY project_id LIMIT ? OFFSET ?')
+              .all(limit, offset)
+          : [];
+      const remaining = limit - groupRows.length;
+      const sessionOffset = Math.max(0, offset - groupCount);
+      const sessionRows = remaining
+        ? readThreads(
+            orderedThreads + ' LIMIT ? OFFSET ?',
+            remaining,
+            sessionOffset,
+          )
+        : [];
+      return build(groupRows, sessionRows);
+    },
+    selection(keys: ReadonlySet<string>) {
+      const values = JSON.stringify([...keys]);
+      const groups = database
+        .prepare(
+          projectsSql +
+            ' AND nesvo_project_key(project_id) IN (SELECT value FROM json_each(?)) ORDER BY project_id',
+        )
+        .all(values);
+      return build(
+        groups,
+        readThreads(
+          ' AND nesvo_thread_key(t.thread_id) IN (SELECT value FROM json_each(?))' +
+            orderedThreads,
+          values,
+        ),
+      );
+    },
+  };
 }
 
-export async function readT3Source(
+export async function openT3Source(
   explicitRoot: string | undefined,
   dataDirectory: string,
   signal: AbortSignal,
@@ -182,7 +247,14 @@ export async function readT3Source(
   const canonical = await realpath(root);
   const environment =
     process.platform === 'win32' ? canonical.toLowerCase() : canonical;
-  return withImportSnapshot(path, dataDirectory, signal, db =>
-    inspect(db, environment),
-  );
+  const snapshot = await openImportSnapshot(path, dataDirectory, signal);
+  try {
+    return {
+      ...catalog(snapshot.database, environment),
+      close: snapshot.close,
+    };
+  } catch (error) {
+    await snapshot.close();
+    throw error;
+  }
 }

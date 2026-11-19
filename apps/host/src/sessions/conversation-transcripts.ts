@@ -1,5 +1,6 @@
 ﻿import { constants, type Dirent } from 'node:fs';
 import { lstat, open, opendir } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
@@ -12,6 +13,7 @@ import { z } from 'zod';
 const fileLimit = conversationImportLimit / 2;
 const entryLimit = 8192;
 export const fileByteLimit = 8 * 1024 * 1024;
+const identityByteLimit = 512 * 1024;
 const scanByteLimit = 48 * 1024 * 1024;
 const snapshotLimit = 48;
 const messageLimit = 6000;
@@ -230,6 +232,7 @@ export async function inventory(
   signal: AbortSignal,
   targetId?: string,
   configDirectory?: string,
+  matchingIds?: ReadonlySet<string>,
 ): Promise<Inventory> {
   const { root, depth } = roots(provider, configDirectory);
   const files: File[] = [];
@@ -253,7 +256,7 @@ export async function inventory(
     }
     for await (const entry of handle) {
       signal.throwIfAborted();
-      if (++entries > entryLimit) {
+      if (!matchingIds && ++entries > entryLimit) {
         truncated = true;
         return;
       }
@@ -263,7 +266,12 @@ export async function inventory(
         if (truncated) return;
       }
       const id = transcriptId(entry, provider, level, depth);
-      if (!id || (targetId && id !== targetId)) continue;
+      if (
+        !id ||
+        (targetId && id !== targetId) ||
+        (matchingIds && !matchingIds.has(id))
+      )
+        continue;
       try {
         const info = await lstat(path);
         if (info.isFile())
@@ -334,6 +342,150 @@ export async function readTranscript(
   } finally {
     await handle.close();
   }
+}
+
+async function readRange(
+  handle: FileHandle,
+  start: number,
+  length: number,
+  signal: AbortSignal,
+) {
+  const bytes = Buffer.alloc(length);
+  for (let offset = 0; offset < length;) {
+    signal.throwIfAborted();
+    const { bytesRead } = await handle.read(
+      bytes,
+      offset,
+      Math.min(64 * 1024, length - offset),
+      start + offset,
+    );
+    if (!bytesRead) return;
+    offset += bytesRead;
+  }
+  return bytes;
+}
+
+const decode = (bytes: Uint8Array) =>
+  new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+
+async function withManagerTranscript<T>(
+  file: File,
+  read: (handle: FileHandle) => Promise<T | undefined>,
+): Promise<T | undefined> {
+  const handle = await open(
+    file.path,
+    constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const before = await handle.stat();
+    if (
+      !before.isFile() ||
+      before.size !== file.size ||
+      before.mtimeMs !== file.modifiedAt
+    )
+      return;
+    const value = await read(handle);
+    const after = await handle.stat();
+    if (after.size === before.size && after.mtimeMs === before.mtimeMs)
+      return value;
+  } finally {
+    await handle.close();
+  }
+}
+
+function transcriptDirectory(text: string, file: File, provider: Provider) {
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    const row: unknown = JSON.parse(line);
+    if (provider === 'Codex') {
+      if (recordType.safeParse(row).data?.type !== 'session_meta') continue;
+      const meta = codexMetadata.safeParse(row);
+      return meta.success && meta.data.payload.id === file.id
+        ? meta.data.payload.cwd
+        : undefined;
+    }
+    const message = claudeMessage.safeParse(row);
+    if (
+      message.success &&
+      message.data.sessionId === file.id &&
+      message.data.message.role === message.data.type &&
+      !message.data.isMeta &&
+      !message.data.isSidechain &&
+      !message.data.isCompactSummary
+    )
+      return message.data.cwd;
+  }
+}
+
+export async function probeManagerTranscript(
+  file: File,
+  provider: Provider,
+  signal: AbortSignal,
+) {
+  return withManagerTranscript(file, async handle => {
+    const prefix = await readRange(
+      handle,
+      0,
+      Math.min(file.size, identityByteLimit),
+      signal,
+    );
+    if (!prefix) return;
+    const text =
+      file.size > prefix.length
+        ? decode(prefix.subarray(0, Math.max(0, prefix.lastIndexOf(10))))
+        : decode(prefix);
+    const cwd = transcriptDirectory(text, file, provider);
+    if (cwd || provider === 'Codex' || file.size <= prefix.length) return cwd;
+    const tail = await readRange(
+      handle,
+      file.size - identityByteLimit,
+      identityByteLimit,
+      signal,
+    );
+    if (tail && tail.includes(10))
+      return transcriptDirectory(
+        decode(tail.subarray(tail.indexOf(10) + 1)),
+        file,
+        provider,
+      );
+  });
+}
+
+export async function readManagerTranscript(
+  file: File,
+  provider: Provider,
+  signal: AbortSignal,
+) {
+  return withManagerTranscript(file, async handle => {
+    if (file.size <= fileByteLimit) {
+      const bytes = await readRange(handle, 0, file.size, signal);
+      return bytes
+        ? parseTranscript(decode(bytes), file, provider, snapshotLimits)
+        : undefined;
+    }
+    const head = await readRange(handle, 0, identityByteLimit, signal);
+    const tailLength = Math.min(
+      file.size - identityByteLimit,
+      fileByteLimit - identityByteLimit,
+    );
+    const tail = await readRange(
+      handle,
+      file.size - tailLength,
+      tailLength,
+      signal,
+    );
+    if (!head || !tail) return;
+    const headEnd = head.lastIndexOf(10);
+    const tailStart = tail.indexOf(10);
+    const prefix = headEnd < 0 ? '' : decode(head.subarray(0, headEnd));
+    const suffix = tailStart < 0 ? '' : decode(tail.subarray(tailStart + 1));
+    return parseTranscript(
+      prefix + '\n' + suffix,
+      file,
+      provider,
+      snapshotLimits,
+    );
+  });
 }
 
 export async function scanConversations(

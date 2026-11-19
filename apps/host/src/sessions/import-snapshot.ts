@@ -117,12 +117,11 @@ async function readSource(
   }
 }
 
-export async function withImportSnapshot<T>(
+export async function openImportSnapshot(
   path: string,
   dataDirectory: string,
   signal: AbortSignal,
-  inspect: (db: DatabaseSync) => T,
-): Promise<T> {
+) {
   const wal = path + '-wal';
   const dbStamp = await sourceFile(path);
   const initialWal = await sourceFile(wal);
@@ -141,6 +140,15 @@ export async function withImportSnapshot<T>(
 
   const directory = await mkdtemp(join(dataDirectory, '.import-'));
   const copy = join(directory, 'snapshot.sqlite');
+  let database: DatabaseSync | undefined;
+  const close = async () => {
+    try {
+      database?.close();
+      database = undefined;
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+    }
+  };
   try {
     const initialHeader = await readWalHeader(wal, initialWal);
     const copyFile = async (
@@ -186,22 +194,31 @@ export async function withImportSnapshot<T>(
       throw sourceChanged();
     if ((await sourceFile(journal))?.size) throw sourceChanged();
     signal.throwIfAborted();
-    const db = new DatabaseSync(copy, {
+    database = new DatabaseSync(copy, {
       readOnly: true,
       enableDoubleQuotedStringLiterals: false,
     });
-    try {
-      db.exec('PRAGMA trusted_schema = OFF');
-      return inspect(db);
-    } finally {
-      db.close();
-    }
+    database.exec('PRAGMA trusted_schema = OFF');
+    return { database, close };
   } catch (error) {
+    await close();
     signal.throwIfAborted();
     if ((error as NodeJS.ErrnoException).code === 'ENOENT')
       throw sourceChanged();
     throw error;
+  }
+}
+
+export async function withImportSnapshot<T>(
+  path: string,
+  dataDirectory: string,
+  signal: AbortSignal,
+  inspect: (db: DatabaseSync) => T,
+): Promise<T> {
+  const snapshot = await openImportSnapshot(path, dataDirectory, signal);
+  try {
+    return inspect(snapshot.database);
   } finally {
-    await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+    await snapshot.close();
   }
 }

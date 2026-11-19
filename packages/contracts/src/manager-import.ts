@@ -10,12 +10,15 @@ const key = z
 const root = z.string().min(1).max(4096);
 const title = z.string().min(1).max(200);
 const selection = z.strictObject({ key, revision: key });
+const adoptionSelection = selection.extend({
+  useProjectFolder: z.literal(true).optional(),
+});
 export const managerImportSelectionLimit = 200;
 
 export const listManagerImportSchema = z.strictObject({
   source: sourceSchema,
   root: root.optional(),
-  offset: z.number().int().min(0).max(500).default(0),
+  offset: z.number().int().nonnegative().default(0),
   scanId: z.uuid().optional(),
 });
 
@@ -24,7 +27,7 @@ export const adoptManagerImportSchema = z.strictObject({
   root: root.optional(),
   requestId: z.uuid(),
   selected: z
-    .array(selection)
+    .array(adoptionSelection)
     .min(1)
     .max(managerImportSelectionLimit)
     .refine(rows => new Set(rows.map(row => row.key)).size === rows.length),
@@ -47,6 +50,7 @@ const session = selection.extend({
   profile: title.nullable(),
   disposition: z.enum(['ready', 'existing', 'blocked']),
   reason: z.string().max(250).nullable(),
+  workspaceFallback: z.literal('project-folder').optional(),
 });
 
 export const managerImportCatalogSchema = z.strictObject({

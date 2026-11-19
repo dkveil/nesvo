@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
 import { relative } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
@@ -17,10 +18,9 @@ import type { ProviderProfiles } from '../providers/profiles';
 import { resolveFolder } from '../workspace/folder';
 import { ConversationImport } from './conversation-import';
 import {
-  fileByteLimit,
   inventory,
-  readTranscript,
-  type Transcript,
+  probeManagerTranscript,
+  readManagerTranscript,
   type TranscriptFile,
 } from './conversation-transcripts';
 import type { SessionGroupStore } from './group-store';
@@ -35,13 +35,15 @@ import {
 } from './manager-source';
 import { SessionError } from './service';
 import type { SessionStore } from './store';
-import { readT3Source } from './t3-import-source';
+import { openT3Source } from './t3-import-source';
 import { readAgentDeckSource } from './agent-deck-import-source';
 
 type ResolvedTranscript = {
   profileId: string | null;
-  transcript: Transcript;
+  file: TranscriptFile;
+  sourceDirectory: string;
   directory: string;
+  workspaceFallback: boolean;
 };
 
 type Candidate = {
@@ -61,6 +63,13 @@ type CatalogPage = {
   catalog: Scan['catalog'];
   rows: ManagerImportRow[];
   until: number;
+};
+
+type T3Scan = {
+  id: string;
+  key: string;
+  source: NonNullable<Awaited<ReturnType<typeof openT3Source>>>;
+  expiry?: ReturnType<typeof setTimeout>;
 };
 
 type Outcome = ManagerImportResult['outcomes'][number];
@@ -88,12 +97,25 @@ const emptyCatalog = (
   entries: new Map(),
 });
 
+function sameDirectory(left: string, right: string) {
+  return relative(left, right) === '';
+}
+
+async function missingDirectory(path: string) {
+  if (!explicitSourceRoot(path)) return false;
+  try {
+    await lstat(path);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
 class ImportTranscripts {
   private readonly files = new Map<
     string,
     { profileId: string | null; file: TranscriptFile }[]
   >();
-  private bytes = 0;
   partial = false;
 
   constructor(
@@ -106,9 +128,11 @@ class ImportTranscripts {
     const profiles = this.profiles.list();
     for (const provider of providers) {
       const ids = new Set(
-        sessions
-          .filter(session => session.provider === provider && !session.blocked)
-          .map(session => session.nativeId),
+        sessions.flatMap(session =>
+          session.provider === provider && !session.blocked && session.nativeId
+            ? [session.nativeId]
+            : [],
+        ),
       );
       if (!ids.size) continue;
       for (const profileId of [
@@ -123,7 +147,13 @@ class ImportTranscripts {
             profileId,
             this.signal,
           );
-          const scan = await inventory(provider, this.signal, undefined, root);
+          const scan = await inventory(
+            provider,
+            this.signal,
+            undefined,
+            root,
+            ids,
+          );
           this.partial ||= scan.truncated || scan.skippedFiles > 0;
           for (const file of scan.files) {
             if (!ids.has(file.id)) continue;
@@ -143,6 +173,7 @@ class ImportTranscripts {
   async match(
     row: SourceSession,
     directory: string,
+    workspaceFallback: boolean,
   ): Promise<ResolvedTranscript | string> {
     if (!row.provider || !row.nativeId)
       return 'The provider reference is unavailable.';
@@ -153,25 +184,27 @@ class ImportTranscripts {
         ? 'The provider transcript was not found in the available scan.'
         : 'The provider transcript is missing.';
     for (const { profileId, file } of files) {
-      if (
-        file.size > fileByteLimit ||
-        this.bytes + file.size > 96 * 1024 * 1024
-      ) {
-        this.partial = true;
-        return 'The provider transcript exceeds the import read limits.';
-      }
-      this.bytes += file.size;
       try {
-        const transcript = await readTranscript(
+        const sourceDirectory = await probeManagerTranscript(
           file,
           row.provider,
           this.signal,
         );
-        if (!transcript)
+        if (!sourceDirectory)
           return 'The provider transcript could not be verified.';
-        const recorded = await this.folder(transcript.conversation.directory);
-        if (recorded && relative(directory, recorded) === '')
-          matches.push({ profileId, transcript, directory });
+        const sameRecorded =
+          row.directory && sameDirectory(row.directory, sourceDirectory);
+        const recorded = sameRecorded
+          ? undefined
+          : await this.folder(sourceDirectory);
+        if (sameRecorded || (recorded && sameDirectory(directory, recorded)))
+          matches.push({
+            profileId,
+            file,
+            sourceDirectory,
+            directory,
+            workspaceFallback,
+          });
       } catch {
         this.signal.throwIfAborted();
         return 'The provider transcript could not be read.';
@@ -188,6 +221,7 @@ class ImportTranscripts {
 export class ManagerImport {
   private tail = Promise.resolve();
   private readonly pages = new Map<string, CatalogPage>();
+  private t3Scan?: T3Scan;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -200,15 +234,8 @@ export class ManagerImport {
     private readonly publishGroups: () => void,
   ) {}
 
-  private serialize<T>(operation: (signal: AbortSignal) => Promise<T>) {
-    const work = this.tail.then(() => {
-      const signal = AbortSignal.any([
-        this.closing,
-        AbortSignal.timeout(90_000),
-      ]);
-      signal.throwIfAborted();
-      return operation(signal);
-    });
+  private enqueue<T>(operation: () => Promise<T>) {
+    const work = this.tail.then(operation);
     this.tail = work.then(
       () => {},
       () => {},
@@ -216,8 +243,32 @@ export class ManagerImport {
     return work;
   }
 
+  private serialize<T>(operation: (signal: AbortSignal) => Promise<T>) {
+    return this.enqueue(() => {
+      const signal = AbortSignal.any([
+        this.closing,
+        AbortSignal.timeout(90_000),
+      ]);
+      signal.throwIfAborted();
+      return operation(signal);
+    });
+  }
+
+  close() {
+    return this.enqueue(() => this.closeT3());
+  }
+
+  private async closeT3() {
+    const scan = this.t3Scan;
+    this.t3Scan = undefined;
+    if (!scan) return;
+    clearTimeout(scan.expiry);
+    await scan.source.close();
+  }
+
   list(input: ListManagerImportInput): Promise<ManagerImportCatalog> {
     return this.serialize(async signal => {
+      if (input.source === 't3-code') return this.listT3(input, signal);
       const key = sourceKey(input.source, input.root);
       const now = Date.now();
       for (const [id, page] of this.pages)
@@ -262,6 +313,74 @@ export class ManagerImport {
     });
   }
 
+  private async listT3(
+    input: ListManagerImportInput,
+    signal: AbortSignal,
+  ): Promise<ManagerImportCatalog> {
+    const empty = (scan: Scan): ManagerImportCatalog => ({
+      ...scan.catalog,
+      rows: [],
+      nextOffset: null,
+      scanId: null,
+    });
+    const key = sourceKey(input.source, input.root);
+    try {
+      if (!input.offset) {
+        await this.closeT3();
+        const source = await openT3Source(
+          input.root,
+          this.dataDirectory,
+          signal,
+        );
+        if (!source)
+          return empty(
+            emptyCatalog(
+              'not-found',
+              'No T3 Code v2 store was found on this computer.',
+            ),
+          );
+        this.t3Scan = { id: randomUUID(), key, source };
+      }
+      const active = this.t3Scan;
+      if (
+        !active ||
+        active.key !== key ||
+        (input.offset && active.id !== input.scanId)
+      )
+        return empty(
+          emptyCatalog(
+            'retry',
+            'Refresh the import list before loading another page.',
+          ),
+        );
+      clearTimeout(active.expiry);
+      const page = active.source.page(input.offset, pageSize);
+      const scan = await this.resolve(page, signal, true);
+      const rows = [...page.groups, ...page.sessions].flatMap(item => {
+        const entry = scan.entries.get(item.key);
+        return entry ? [entry.row] : [];
+      });
+      const next = input.offset + pageSize;
+      const nextOffset = next < active.source.total ? next : null;
+      if (nextOffset === null) await this.closeT3();
+      else
+        active.expiry = setTimeout(() => {
+          void this.enqueue(async () => {
+            if (this.t3Scan === active) await this.closeT3();
+          }).catch(() => undefined);
+        }, 120_000).unref();
+      return {
+        ...scan.catalog,
+        rows,
+        nextOffset,
+        scanId: nextOffset === null ? null : active.id,
+      };
+    } catch (error) {
+      await this.closeT3();
+      return empty(this.scanFailure(error, signal));
+    }
+  }
+
   adopt(input: AdoptManagerImportInput): Promise<ManagerImportResult> {
     return this.serialize(async signal => {
       const fingerprint = sourceKey(input.source, input.root, input.selected);
@@ -304,9 +423,7 @@ export class ManagerImport {
           )
           .run(input.requestId, fingerprint, JSON.stringify(report()));
       };
-      const selected = new Map(
-        input.selected.map(row => [row.key, row.revision]),
-      );
+      const selected = new Map(input.selected.map(row => [row.key, row]));
       const scan = await this.scan(input, signal, new Set(selected.keys()));
       if (!['ready', 'partial', 'not-found'].includes(scan.catalog.status))
         throw new SessionError(
@@ -324,7 +441,10 @@ export class ManagerImport {
           const entry = scan.entries.get(key);
           if (this.link(key)) {
             save(key, 'existing');
-          } else if (!entry || entry.row.revision !== selected.get(key)) {
+          } else if (
+            !entry ||
+            entry.row.revision !== selected.get(key)?.revision
+          ) {
             save(
               key,
               'skipped',
@@ -332,12 +452,27 @@ export class ManagerImport {
             );
           } else if (entry.row.kind === 'session' && !entry.target) {
             save(key, 'skipped', entry.row.reason);
+          } else if (
+            entry.row.kind === 'session' &&
+            entry.row.workspaceFallback &&
+            !selected.get(key)?.useProjectFolder
+          ) {
+            save(
+              key,
+              'skipped',
+              'Choose to resume this session in the project folder.',
+            );
           } else {
             try {
-              this.commit(entry, scan.entries, input.source, status =>
-                save(key, status),
+              await this.commit(
+                entry,
+                scan.entries,
+                input.source,
+                signal,
+                status => save(key, status),
               );
             } catch (error) {
+              signal.throwIfAborted();
               save(
                 key,
                 'skipped',
@@ -364,15 +499,35 @@ export class ManagerImport {
     selection?: ReadonlySet<string>,
   ): Promise<Scan> {
     try {
-      const readSource =
-        input.source === 't3-code' ? readT3Source : readAgentDeckSource;
-      const source = await readSource(input.root, this.dataDirectory, signal);
+      if (input.source === 't3-code') {
+        await this.closeT3();
+        const source = await openT3Source(
+          input.root,
+          this.dataDirectory,
+          signal,
+        );
+        if (!source)
+          return emptyCatalog(
+            'not-found',
+            'No T3 Code v2 store was found on this computer.',
+          );
+        let items;
+        try {
+          items = source.selection(selection ?? new Set());
+        } finally {
+          await source.close();
+        }
+        return await this.resolve(items, signal, true);
+      }
+      const source = await readAgentDeckSource(
+        input.root,
+        this.dataDirectory,
+        signal,
+      );
       if (!source)
         return emptyCatalog(
           'not-found',
-          input.source === 't3-code'
-            ? 'No T3 Code v2 store was found on this computer.'
-            : 'No Agent Deck profile store was found on this computer.',
+          'No Agent Deck profile store was found on this computer.',
         );
       if ('roots' in source)
         return emptyCatalog(
@@ -380,27 +535,47 @@ export class ManagerImport {
           'Agent Deck has conflicting data stores. Choose the one to import.',
           source.roots,
         );
-      return await this.resolve(source, signal, selection);
-    } catch (error) {
-      this.closing.throwIfAborted();
-      if (error instanceof ImportSourceError)
-        return emptyCatalog(error.status, error.message);
-      if (signal.aborted)
-        return emptyCatalog(
-          'retry',
-          'The source scan timed out. Refresh to try again.',
-        );
-      return emptyCatalog(
-        'unavailable',
-        'The source could not be read. Check the selected directory and try again.',
+      const sessions = source.sessions
+        .slice(0, Math.max(0, managerRowLimit - source.groups.length))
+        .filter(row => !selection || selection.has(row.key));
+      return await this.resolve(
+        {
+          ...source,
+          sessions,
+          groups: source.groups.slice(0, managerRowLimit),
+          partial:
+            source.partial ||
+            (!selection &&
+              source.groups.length + sessions.length <
+                source.groupCount + source.sessionCount),
+        },
+        signal,
+        false,
       );
+    } catch (error) {
+      return this.scanFailure(error, signal);
     }
+  }
+
+  private scanFailure(error: unknown, signal: AbortSignal): Scan {
+    this.closing.throwIfAborted();
+    if (error instanceof ImportSourceError)
+      return emptyCatalog(error.status, error.message);
+    if (signal.aborted)
+      return emptyCatalog(
+        'retry',
+        'The source scan timed out. Refresh to try again.',
+      );
+    return emptyCatalog(
+      'unavailable',
+      'The source could not be read. Check the selected directory and try again.',
+    );
   }
 
   private async resolve(
     source: ManagerSource,
     signal: AbortSignal,
-    selection?: ReadonlySet<string>,
+    allowProjectFolder: boolean,
   ): Promise<Scan> {
     const entries = new Map<string, Candidate>();
     const folders = new Map<string, Promise<string | undefined>>();
@@ -414,12 +589,9 @@ export class ManagerImport {
       return pending;
     };
     const transcripts = new ImportTranscripts(this.profiles, signal, folder);
-    const sessions = source.sessions
-      .slice(0, Math.max(0, managerRowLimit - source.groups.length))
-      .filter(row => !selection || selection.has(row.key));
-    await transcripts.index(sessions);
+    await transcripts.index(source.sessions);
     const known = this.knownConversations();
-    for (const group of source.groups.slice(0, managerRowLimit)) {
+    for (const group of [...source.groups, ...(source.contextGroups ?? [])]) {
       signal.throwIfAborted();
       const directory = group.directory
         ? await folder(group.directory)
@@ -436,7 +608,7 @@ export class ManagerImport {
         row: { kind, key, revision, parent, title, archivedAt, profile },
       });
     }
-    for (const session of sessions) {
+    for (const session of source.sessions) {
       signal.throwIfAborted();
       const { kind, key, parent, title, archivedAt, profile, provider } =
         session;
@@ -444,15 +616,25 @@ export class ManagerImport {
       let target: ResolvedTranscript | undefined;
       const previous = this.link(key);
       if (!reason && !previous) {
-        const directory = session.directory
+        const recorded = session.directory
           ? await folder(session.directory)
           : undefined;
+        const project =
+          !recorded &&
+          allowProjectFolder &&
+          session.hasWorktree &&
+          parent &&
+          session.directory &&
+          (await missingDirectory(session.directory))
+            ? entries.get(parent)?.directory
+            : undefined;
+        const directory = recorded ?? project;
         if (!directory)
           reason = session.hasWorktree
             ? 'The recorded worktree is missing or inaccessible.'
             : 'The project folder is missing or inaccessible.';
         else {
-          const match = await transcripts.match(session, directory);
+          const match = await transcripts.match(session, directory, !!project);
           if (typeof match === 'string') reason = match;
           else target = match;
         }
@@ -460,13 +642,8 @@ export class ManagerImport {
       const existing =
         previous ||
         (target &&
-          known.has(
-            identity(
-              target.transcript.conversation.provider,
-              target.profileId,
-              target.transcript.conversation.providerSessionId,
-            ),
-          ));
+          provider &&
+          known.has(identity(provider, target.profileId, target.file.id)));
       const revision = sourceKey(
         session,
         target,
@@ -487,13 +664,13 @@ export class ManagerImport {
           provider,
           disposition: existing ? 'existing' : reason ? 'blocked' : 'ready',
           reason: existing ? null : reason,
+          ...(!existing && target?.workspaceFallback
+            ? { workspaceFallback: 'project-folder' as const }
+            : {}),
         },
       });
     }
-    const partial =
-      source.partial ||
-      transcripts.partial ||
-      (!selection && entries.size < source.groupCount + source.sessionCount);
+    const partial = source.partial || transcripts.partial;
     return {
       catalog: {
         status: partial ? 'partial' : 'ready',
@@ -546,10 +723,11 @@ export class ManagerImport {
       );
   }
 
-  private commit(
+  private async commit(
     entry: Candidate,
     entries: Scan['entries'],
     source: AdoptManagerImportInput['source'],
+    signal: AbortSignal,
     save: (status: Outcome['status']) => void,
   ) {
     const row = entry.source;
@@ -561,8 +739,18 @@ export class ManagerImport {
       return;
     }
     const target = entry.target!;
-    const { transcript, directory, profileId } = target;
-    const { provider, providerSessionId } = transcript.conversation;
+    const { file, directory, profileId, sourceDirectory } = target;
+    const provider = row.provider!;
+    const providerSessionId = file.id;
+    const transcript = await readManagerTranscript(file, provider, signal);
+    if (
+      !transcript ||
+      !sameDirectory(transcript.conversation.directory, sourceDirectory)
+    )
+      throw new SessionError(
+        'unavailable',
+        'The provider transcript changed or its history could not be read.',
+      );
     const existing = this.knownConversations().get(
       identity(provider, profileId, providerSessionId),
     );

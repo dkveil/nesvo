@@ -1048,6 +1048,9 @@ export const serveHost = ({
         probes.controller.signal,
         () => emit({ type: 'session-groups-changed', list: groupStore.list() }),
       );
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => managerImport.close()),
+      );
       const transcriptIndex = new TranscriptIndex(
         database,
         store,

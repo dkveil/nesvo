@@ -42,6 +42,21 @@ test(
       root,
       join(directory, 'claude-config'),
     );
+    const firstLine = await readFile(fixture.removedTranscript, 'utf8');
+    const lastLine = JSON.parse(firstLine);
+    lastLine.message.content =
+      'Recent history retained from a large transcript.';
+    await writeFile(
+      fixture.removedTranscript,
+      firstLine +
+        JSON.stringify({
+          type: 'metadata',
+          padding: 'x'.repeat(8 * 1024 * 1024),
+        }) +
+        '\n' +
+        JSON.stringify(lastLine) +
+        '\n',
+    );
     const deckRoot = join(directory, 'agent-deck');
     const deck = await agentDeckImportFixture(
       deckRoot,
@@ -65,6 +80,7 @@ test(
           fixture.path + '-wal',
           fixture.transcript,
           fixture.duplicateTranscript,
+          fixture.removedTranscript,
           deck.sqlitePath,
           deck.legacyPath,
           deck.path,
@@ -86,7 +102,7 @@ test(
       const first = (await host.request('list-manager-import', request))
         .catalog;
       assert.equal(first.status, 'ready');
-      assert.equal(first.sessionCount, 5);
+      assert.equal(first.sessionCount, 6);
       assert.equal(first.groupCount, 1);
       assert.equal(
         first.rows.filter(row => row.disposition === 'existing').length,
@@ -96,7 +112,7 @@ test(
       assert.equal(archived.disposition, 'ready');
       assert.match(
         first.rows.find(row => row.title === 'Old worktree').reason,
-        /worktree is missing/,
+        /transcript is missing/,
       );
       assert.match(
         first.rows.find(row => row.title === 'Test results').reason,
@@ -121,12 +137,26 @@ test(
       assert.match(stale.result.outcomes[0].reason, /changed/);
       const refreshed = (await host.request('list-manager-import', request))
         .catalog;
+      const removed = refreshed.rows.find(
+        row => row.title === 'Removed worktree with history',
+      );
+      assert.equal(removed.disposition, 'ready');
+      assert.equal(removed.workspaceFallback, 'project-folder');
+      const noConsent = await host.request('adopt-manager-import', {
+        ...request,
+        requestId: randomUUID(),
+        selected: selected([removed]),
+      });
+      assert.equal(noConsent.result.outcomes[0].status, 'skipped');
+      assert.match(noConsent.result.outcomes[0].reason, /project folder/);
       const input = {
         ...request,
         requestId: randomUUID(),
         selected: selected(
           refreshed.rows.filter(
-            row => row.kind === 'group' || row.disposition !== 'blocked',
+            row =>
+              row.kind === 'group' ||
+              (row.disposition !== 'blocked' && !row.workspaceFallback),
           ),
         ),
       };
@@ -256,6 +286,58 @@ test(
       );
       assert.equal(completed.providerSessionId, deck.nativeId);
       assert.match(completed.messages.at(-1).body, /fixture resumed reply/i);
+      fixture.db.exec(`
+        UPDATE orchestration_v2_projection_threads SET updated_at = '2026-11-16T08:00:00.000Z' WHERE thread_id = 'removed-worktree';
+        WITH RECURSIVE numbers(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM numbers WHERE i<510)
+        INSERT INTO orchestration_v2_projection_threads
+        SELECT 'older-' || i, 'release', 'Fixture history', NULL, NULL, NULL,
+          '2026-11-17T08:00:00.000Z', '2026-11-17T08:00:00.000Z', '{}'
+        FROM numbers;
+      `);
+      const largeSource = await hashes();
+      const keys = new Set();
+      let page = (await host.request('list-manager-import', request)).catalog;
+      let fallback;
+      for (;;) {
+        assert.ok(page.rows.length <= 100);
+        for (const row of page.rows) {
+          assert.ok(!keys.has(row.key));
+          keys.add(row.key);
+          if (row.workspaceFallback) fallback = row;
+        }
+        if (page.nextOffset === null) break;
+        page = (
+          await host.request('list-manager-import', {
+            ...request,
+            offset: page.nextOffset,
+            scanId: page.scanId,
+          })
+        ).catalog;
+      }
+      assert.equal(keys.size, 517);
+      assert.ok(fallback);
+      const remapped = await host.request('adopt-manager-import', {
+        ...request,
+        requestId: randomUUID(),
+        selected: [{ ...selected([fallback])[0], useProjectFolder: true }],
+      });
+      assert.equal(remapped.result.outcomes[0].status, 'created');
+      const remappedSession = (
+        await host.request('list-sessions')
+      ).sessions.find(item => item.providerSessionId === fixture.removedId);
+      assert.equal(
+        remappedSession.directory,
+        await realpath(fixture.workspace),
+      );
+      assert.equal(remappedSession.mode, 'read-only');
+      assert.equal(
+        remappedSession.messages.at(-1).body,
+        lastLine.message.content,
+      );
+      assert.deepEqual(await hashes(), largeSource);
+      assert.ok(
+        !(await readdir(directory)).some(name => name.startsWith('.import-')),
+      );
     } finally {
       await host?.stop();
       fixture.db.close();

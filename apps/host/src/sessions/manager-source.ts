@@ -30,6 +30,7 @@ export type SourceSession = Omit<SourceGroup, 'kind'> & {
 
 export type ManagerSource = {
   groups: SourceGroup[];
+  contextGroups?: SourceGroup[];
   sessions: SourceSession[];
   groupCount: number;
   sessionCount: number;

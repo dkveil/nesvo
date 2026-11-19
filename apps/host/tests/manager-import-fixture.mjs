@@ -131,6 +131,7 @@ export async function t3ImportFixture(root, claudeRoot) {
   `);
   const nativeId = randomUUID();
   const duplicateId = randomUUID();
+  const removedId = randomUUID();
   const archivedAt = '2026-11-18T09:00:00.000Z';
   const createdAt = '2026-11-16T08:00:00.000Z';
   const updatedAt = '2026-11-17T08:00:00.000Z';
@@ -175,6 +176,15 @@ export async function t3ImportFixture(root, claudeRoot) {
     null,
     'completed',
   );
+  const removedFolder = join(root, 'removed-with-history');
+  add(
+    'removed-worktree',
+    'Removed worktree with history',
+    removedId,
+    removedFolder,
+    null,
+    'completed',
+  );
   add(
     'missing-folder',
     'Old worktree',
@@ -192,14 +202,14 @@ export async function t3ImportFixture(root, claudeRoot) {
     'completed',
   );
   add('running', 'Build in progress', nativeId, worktree, null, 'waiting');
-  const makeTranscript = async (id, folder, body) => {
+  const makeTranscript = async (id, folder, body, { removed = false } = {}) => {
     const file = join(transcripts, id + '.jsonl');
     await writeFile(
       file,
       JSON.stringify({
         type: 'user',
         sessionId: id,
-        cwd: await realpath(folder),
+        cwd: removed ? folder : await realpath(folder),
         timestamp: createdAt,
         message: { role: 'user', content: body },
       }) + '\n',
@@ -216,6 +226,12 @@ export async function t3ImportFixture(root, claudeRoot) {
     workspace,
     'Review the example API.',
   );
+  const removedTranscript = await makeTranscript(
+    removedId,
+    removedFolder,
+    'Continue the example from the project.',
+    { removed: true },
+  );
   return {
     db,
     path,
@@ -223,6 +239,8 @@ export async function t3ImportFixture(root, claudeRoot) {
     worktree,
     transcript,
     duplicateTranscript,
+    removedTranscript,
+    removedId,
     nativeId,
     duplicateId,
     archivedAt,
