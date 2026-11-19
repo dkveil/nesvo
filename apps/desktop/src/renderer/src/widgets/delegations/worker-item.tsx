@@ -191,11 +191,14 @@ export function WorkerItem({
               },
             ]}
           />
-          {delegation.error && (
-            <StatusMessage tone="error" className="whitespace-pre-wrap">
-              {delegation.error}
-            </StatusMessage>
-          )}
+          {delegation.error &&
+            child?.interruption?.reason !== 'host-restart' && (
+              <StatusMessage tone="error" className="whitespace-pre-wrap">
+                {child?.interruption?.reason === 'provider-disconnected'
+                  ? 'The provider disconnected before confirming this worker’s result.'
+                  : delegation.error}
+              </StatusMessage>
+            )}
         </div>
       )}
     </li>

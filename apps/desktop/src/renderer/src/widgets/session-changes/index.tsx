@@ -275,7 +275,9 @@ export default function SessionChangesPanel({
         title="Changes"
         meta={
           set?.status === 'available' &&
-          (scope === 'branch' && set.base ? `vs ${set.base}` : 'vs HEAD')
+          (scope === 'branch' && set.base
+            ? `Compared with ${set.base}`
+            : 'Uncommitted')
         }
       >
         <PanelAction

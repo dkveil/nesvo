@@ -1315,8 +1315,9 @@ export function Workspace({
       )
     : [];
   const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
-  const headerIconSize =
-    visiblePanel && viewportWidth >= 1200 && viewportWidth < 1500 ? 24 : 32;
+  const compactDock =
+    !!visiblePanel && viewportWidth >= 1200 && viewportWidth < 1500;
+  const headerIconSize = compactDock ? 24 : 32;
   const cardSession = !browsing && !creating && selected ? selected : null;
   const cardRun = cardSession ? selectedRun : undefined;
   useEffect(() => {
@@ -3067,7 +3068,40 @@ ${text}`
     !!selected?.worktree &&
     !selected.worktree.workerTargetBranch &&
     !!window.nesvo;
+  const panelActions: RowAction[] =
+    compactDock && !browsing && !creating && selected
+      ? [
+          {
+            label: 'Open skills',
+            icon: <BookOpen />,
+            onSelect: () => openSkills(),
+          },
+          { label: 'Open files', icon: <FolderOpen />, onSelect: openFiles },
+          ...(supportsSessionChanges(selectedHostId)
+            ? [
+                {
+                  label: 'Open changes',
+                  icon: <GitCompareArrows />,
+                  onSelect: openChanges,
+                },
+              ]
+            : []),
+          ...(selected.provider === 'Claude Code'
+            ? [
+                {
+                  label: 'Open Claude terminal',
+                  icon: <SquareTerminal />,
+                  onSelect: () => setPanel('terminal'),
+                },
+              ]
+            : []),
+        ]
+      : [];
   const headerOwnActions: RowAction[] = [
+    ...panelActions,
+    ...(panelActions.length && headerThreadActions.length
+      ? ['separator' as const]
+      : []),
     ...headerThreadActions,
     ...(finishWorktreeAvailable
       ? [
@@ -4152,6 +4186,7 @@ ${text}`
             <IconButton
               size={headerIconSize}
               label="Open skills"
+              className={compactDock ? 'hidden' : undefined}
               pressed={panel === 'skills'}
               onClick={openSkills}
             >
@@ -4162,6 +4197,7 @@ ${text}`
             <IconButton
               size={headerIconSize}
               label="Open files"
+              className={compactDock ? 'hidden' : undefined}
               shortcut={shortcutKeys('files')}
               pressed={panel === 'files'}
               onClick={openFiles}
@@ -4176,6 +4212,7 @@ ${text}`
               <IconButton
                 size={headerIconSize}
                 label="Open changes"
+                className={compactDock ? 'hidden' : undefined}
                 pressed={panel === 'changes'}
                 onClick={openChanges}
               >
@@ -4186,6 +4223,7 @@ ${text}`
             <IconButton
               size={headerIconSize}
               label="Open Claude terminal"
+              className={compactDock ? 'hidden' : undefined}
               pressed={panel === 'terminal'}
               onClick={() => setPanel(panel === 'terminal' ? null : 'terminal')}
             >

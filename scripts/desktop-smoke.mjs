@@ -13,7 +13,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -3114,7 +3114,9 @@ try {
     name: 'Context',
     exact: true,
   });
-  await details.getByText(directory, { exact: true }).waitFor();
+  const contextFolder = details.getByText(basename(directory), { exact: true });
+  await contextFolder.waitFor();
+  assert.equal(await contextFolder.getAttribute('title'), directory);
   await page.keyboard.press('Escape');
   assert.equal(
     await page.evaluate(

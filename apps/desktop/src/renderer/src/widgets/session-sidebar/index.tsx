@@ -380,7 +380,7 @@ export function SessionSidebar({
         </span>
       </Hint>
     );
-    const details = (
+    const metadata = (
       <span className="flex min-w-0 items-center gap-1">
         <span className="min-w-0 shrink truncate" title={directory}>
           {directory}
@@ -401,21 +401,6 @@ export function SessionSidebar({
               {branchLabel}
             </span>
           </>
-        )}
-        {apps.length > 0 && (
-          <span
-            data-running-apps=""
-            className="flex shrink-0 items-center gap-0.5"
-            title={runningAppsSummary(apps)}
-          >
-            <RadioTower
-              className="size-2.5 shrink-0 text-sidebar-icon"
-              aria-hidden="true"
-            />
-            <span className="sr-only">
-              Running apps {runningAppsSummary(apps)}
-            </span>
-          </span>
         )}
         {session.pullRequest && (
           <span className="flex shrink-0 items-center gap-0.5 tabular-nums">
@@ -461,6 +446,25 @@ export function SessionSidebar({
     );
     const removal = decoration?.menu ? null : (deleteAction?.(session) ?? null);
     const thread = decoration?.menu ? [] : (threadActions?.(session) ?? []);
+    const details = apps.length ? (
+      <span className="block space-y-0.5">
+        {metadata}
+        <span
+          data-running-apps=""
+          className="flex min-w-0 items-center gap-1 tabular-nums"
+          title={apps.map(app => String(app.port)).join(', ')}
+        >
+          <RadioTower
+            className="size-2.5 shrink-0 text-sidebar-icon"
+            aria-hidden="true"
+          />
+          <span className="sr-only">Running apps </span>
+          {runningAppsSummary(apps)}
+        </span>
+      </span>
+    ) : (
+      metadata
+    );
     const actions: RowAction[] = removal
       ? [...thread, ...(thread.length ? ['separator' as const] : []), removal]
       : thread;
