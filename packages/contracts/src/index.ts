@@ -257,6 +257,7 @@ import {
   mcpConnectionListSchema,
   type McpConnectionRequest,
   type McpConnectionList,
+  type McpProfileTarget,
   trustRepositoryMcpSchema,
   type TrustRepositoryMcpInput,
   mcpServerListSchema,
@@ -2185,6 +2186,7 @@ export type DesktopApi = {
     input: Omit<McpConnectionRequest, 'browser'>,
     hostId?: HostId,
   ) => Promise<McpConnectionList>;
+  openMcpTerminal: (input: McpProfileTarget) => Promise<void>;
   setSessionMcp: (
     input: SetSessionMcpInput,
     hostId?: HostId,

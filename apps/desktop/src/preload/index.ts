@@ -172,6 +172,7 @@ import {
   listClaudeCommandsSchema,
   listMcpServersSchema,
   mcpConnectionRequestSchema,
+  mcpProfileTargetSchema,
   mcpConnectionListSchema,
   trustRepositoryMcpSchema,
   mcpServerListSchema,
@@ -1033,6 +1034,12 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
+  openMcpTerminal: async input => {
+    await ipcRenderer.invoke(
+      'nesvo:open-mcp-terminal',
+      mcpProfileTargetSchema.parse(input),
+    );
+  },
   listMcpServers: async (input, hostId) =>
     mcpServerListSchema.parse(
       await ipcRenderer.invoke(

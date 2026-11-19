@@ -38,7 +38,7 @@ import {
   type CatalogWorkflowMethod,
 } from './computer-manager';
 import { mobileAccess } from './mobile-access';
-import { launchTerminal } from './session-terminal';
+import { launchMcpTerminal, launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { openAttachmentFile } from './attachment-files';
 import { inboxCliInstallation } from './external-inbox-cli';
@@ -121,6 +121,7 @@ import {
   createProviderProfileSchema,
   renameProviderProfileSchema,
   removeProviderProfileSchema,
+  providerProfileListSchema,
   providerProfileSelectionSchema,
   listConversationsSchema,
   listPullRequestsSchema,
@@ -158,6 +159,7 @@ import {
   listClaudeCommandsSchema,
   listMcpServersSchema,
   mcpConnectionRequestSchema,
+  mcpProfileTargetSchema,
   trustRepositoryMcpSchema,
   setSessionMcpSchema,
   hostIdSchema,
@@ -1815,6 +1817,29 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:open-mcp-terminal', async (event, input: unknown) => {
+    authorize(event);
+    const { provider, profileId } = mcpProfileTargetSchema.parse(input);
+    const profile = profileId
+      ? providerProfileListSchema
+          .parse(
+            await computers.execute(
+              'list-provider-profiles',
+              undefined,
+              'local',
+            ),
+          )
+          .find(entry => entry.id === profileId && entry.provider === provider)
+      : undefined;
+    if (profileId && !profile)
+      throw new Error('This provider profile is no longer available.');
+    await launchMcpTerminal(
+      provider,
+      hostDirectory,
+      profile?.configDirectory,
+      terminalLaunchLog,
+    );
+  });
   handle(
     'nesvo:list-mcp-servers',
     async (event, input: unknown, hostId: unknown) => {

@@ -9,7 +9,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import type { TerminalResume } from '@nesvo/contracts';
+import type { Provider, TerminalResume } from '@nesvo/contracts';
+
+type TerminalCommand = Omit<TerminalResume, 'provider'>;
 
 export type TerminalLaunch = {
   terminal: string;
@@ -24,7 +26,7 @@ type Locate = (name: string) => string | null;
 const LINUX_TERMINALS: {
   name: string;
   label: string;
-  args: (resume: TerminalResume) => string[];
+  args: (resume: TerminalCommand) => string[];
 }[] = [
   {
     name: 'x-terminal-emulator',
@@ -85,7 +87,7 @@ export const locateExecutable: Locate = name => {
 };
 
 export const planTerminalLaunch = (
-  resume: TerminalResume,
+  resume: TerminalCommand,
   platform: NodeJS.Platform,
   locate: Locate,
 ): TerminalLaunch => {
@@ -141,14 +143,19 @@ const writeScript = (content: string) => {
 };
 
 export const launchTerminal = async (
-  resume: TerminalResume,
+  resume: TerminalCommand,
   recordTo?: string,
+  environment?: NodeJS.ProcessEnv,
 ): Promise<string> => {
   if (!statSync(resume.directory, { throwIfNoEntry: false })?.isDirectory())
     throw new Error(
       'The session folder is missing on this computer. Restore it before opening a terminal.',
     );
-  const plan = planTerminalLaunch(resume, process.platform, locateExecutable);
+  const plan = planTerminalLaunch(
+    resume,
+    process.platform,
+    process.platform === 'win32' && environment ? () => null : locateExecutable,
+  );
   if (recordTo) {
     appendFileSync(recordTo, JSON.stringify(plan) + '\n');
     return plan.terminal;
@@ -159,6 +166,7 @@ export const launchTerminal = async (
   await new Promise<void>((resolve, reject) => {
     const child = spawn(plan.command, args, {
       cwd: plan.cwd,
+      env: environment ? { ...process.env, ...environment } : undefined,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
@@ -171,3 +179,31 @@ export const launchTerminal = async (
   });
   return plan.terminal;
 };
+
+const shellQuote = (value: string) =>
+  "'" + value.replaceAll("'", "'\\''") + "'";
+
+export function launchMcpTerminal(
+  provider: Provider,
+  directory: string,
+  profileDirectory?: string,
+  recordTo?: string,
+) {
+  const claude = provider === 'Claude Code';
+  const executable = claude ? 'claude' : 'codex';
+  const variable = claude ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
+  const profile = profileDirectory
+    ? variable + '=' + shellQuote(profileDirectory) + ' '
+    : '';
+  return launchTerminal(
+    {
+      directory,
+      executable,
+      args: [],
+      commandLine:
+        'cd ' + shellQuote(directory) + ' && ' + profile + executable,
+    },
+    recordTo,
+    profileDirectory ? { [variable]: profileDirectory } : undefined,
+  );
+}

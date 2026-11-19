@@ -1,13 +1,14 @@
 ﻿import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Computer, Provider, ProviderProfile } from '@nesvo/contracts';
-import { providers } from '@/entities/session';
+import { errorDetail, providers } from '@/entities/session';
 import {
   McpConnectionFeedback,
   McpConnectionRows,
 } from '@/features/session-mcp/mcp-connection-rows';
 import { useMcpConnections } from '@/features/session-mcp/use-mcp-connections';
 import { IconButton } from '@/shared/ui/icon-button';
+import { Button } from '@/shared/ui/button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import {
   Select,
@@ -27,6 +28,8 @@ export function McpSettings({
 }) {
   const [provider, setProvider] = useState<Provider>('Claude Code');
   const [selection, setSelection] = useState('default');
+  const [openingTerminal, setOpeningTerminal] = useState(false);
+  const [terminalError, setTerminalError] = useState('');
   const available =
     profiles?.filter(profile => profile.provider === provider) ?? [];
   const profileId = available.find(profile => profile.id === selection)?.id;
@@ -37,6 +40,20 @@ export function McpSettings({
     { provider, profileId },
     !!connected && !!supported,
   );
+  const statusUnavailable = connections.list?.notice?.startsWith(
+    `${provider} could not report MCP status.`,
+  );
+  const openTerminal = async () => {
+    setOpeningTerminal(true);
+    setTerminalError('');
+    try {
+      await window.nesvo.openMcpTerminal({ provider, profileId });
+    } catch (failure) {
+      setTerminalError(errorDetail(failure));
+    } finally {
+      setOpeningTerminal(false);
+    }
+  };
   return (
     <>
       <SettingsSection title="Connection">
@@ -46,6 +63,7 @@ export function McpSettings({
             onValueChange={value => {
               setProvider(value as Provider);
               setSelection('default');
+              setTerminalError('');
             }}
           >
             <SelectTrigger aria-label="MCP provider" variant="ghost">
@@ -62,7 +80,13 @@ export function McpSettings({
         </SettingsRow>
         {available.length > 0 && (
           <SettingsRow title="Profile">
-            <Select value={profileId ?? 'default'} onValueChange={setSelection}>
+            <Select
+              value={profileId ?? 'default'}
+              onValueChange={value => {
+                setSelection(value);
+                setTerminalError('');
+              }}
+            >
               <SelectTrigger aria-label="MCP provider profile" variant="ghost">
                 <SelectValue />
               </SelectTrigger>
@@ -105,11 +129,42 @@ export function McpSettings({
           </StatusMessage>
         ) : (
           <>
-            <McpConnectionFeedback connections={connections} />
+            <McpConnectionFeedback
+              connections={connections}
+              hideNotice={statusUnavailable}
+            />
+            {statusUnavailable && (
+              <div className="flex min-w-0 items-center gap-2 px-2 py-1">
+                <StatusMessage className="text-xs">
+                  {provider} couldn’t report MCP status.
+                </StatusMessage>
+                {computer?.id === 'local' ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={openingTerminal}
+                    onClick={() => void openTerminal()}
+                  >
+                    Open in terminal
+                  </Button>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    Open /mcp on {computer?.name}.
+                  </span>
+                )}
+              </div>
+            )}
+            {terminalError && (
+              <StatusMessage tone="error" className="px-3 py-1">
+                {terminalError}
+              </StatusMessage>
+            )}
             {connections.list && (
               <McpConnectionRows
                 servers={connections.list.servers}
                 connections={connections}
+                statusUnavailable={statusUnavailable}
               />
             )}
           </>

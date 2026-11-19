@@ -110,12 +110,14 @@ export type McpServer = z.infer<typeof mcpServerSchema>;
 export type McpServerList = z.infer<typeof mcpServerListSchema>;
 export type ListMcpServersInput = z.infer<typeof listMcpServersSchema>;
 
+export const mcpProfileTargetSchema = z.strictObject({
+  provider: providerSchema,
+  profileId: z.uuid().nullable().optional(),
+});
+
 export const mcpConnectionTargetSchema = z.union([
   z.strictObject({ sessionId: z.uuid() }),
-  z.strictObject({
-    provider: providerSchema,
-    profileId: z.uuid().nullable().optional(),
-  }),
+  mcpProfileTargetSchema,
 ]);
 
 export const mcpConnectionActionSchema = z.enum([
@@ -156,6 +158,7 @@ export const mcpConnectionListSchema = z.strictObject({
 });
 
 export type McpConnectionTarget = z.infer<typeof mcpConnectionTargetSchema>;
+export type McpProfileTarget = z.infer<typeof mcpProfileTargetSchema>;
 export type McpConnectionAction = z.infer<typeof mcpConnectionActionSchema>;
 export type McpConnectionRequest = z.infer<typeof mcpConnectionRequestSchema>;
 export type McpConnectionStatus = z.infer<typeof mcpConnectionStatusSchema>;

@@ -15,15 +15,17 @@ import type { McpConnections } from './use-mcp-connections';
 
 export function McpConnectionFeedback({
   connections,
+  hideNotice,
 }: {
   connections: McpConnections;
+  hideNotice?: boolean;
 }) {
   return (
     <>
       {connections.error && (
         <StatusMessage tone="error">{connections.error}</StatusMessage>
       )}
-      {connections.list?.notice && (
+      {!hideNotice && connections.list?.notice && (
         <StatusMessage>{connections.list.notice}</StatusMessage>
       )}
       {connections.pending?.kind === 'authorize' && (
@@ -41,9 +43,11 @@ export function McpConnectionFeedback({
 export function McpConnectionRows({
   servers,
   connections,
+  statusUnavailable,
 }: {
   servers: McpServer[];
   connections: McpConnections;
+  statusUnavailable?: boolean;
 }) {
   const [logout, setLogout] = useState<McpServer | null>(null);
   const states = new Map(
@@ -120,7 +124,9 @@ export function McpConnectionRows({
                 {server.transport
                   ? transportLabels[server.transport]
                   : 'Unknown transport'}
-                {server.problem && <> · {server.problem}</>}
+                {!statusUnavailable && server.problem && (
+                  <> · {server.problem}</>
+                )}
               </>
             }
           />
