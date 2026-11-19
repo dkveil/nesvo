@@ -46,6 +46,9 @@ const env = {
   ...process.env,
   NESVO_SMOKE_TEST: '1',
   NESVO_TEST_MODE: '1',
+  NESVO_TEST_FULL_ACCESS: '1',
+  NESVO_MOBILE_PORT: '0',
+  NESVO_MOBILE_BIND: '127.0.0.1',
   NESVO_WORKFLOWS_HOME: join(directory, 'workflows-home'),
   NESVO_DATA_DIR: directory,
   NESVO_TEST_PID_FILE: pidFile,
@@ -69,6 +72,10 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NESVO_WORK_LAPTOP_MODE;
+delete env.NESVO_MOBILE_TLS_CERT;
+delete env.NESVO_MOBILE_TLS_KEY;
+delete env.NESVO_MOBILE_PUBLIC_URL;
+delete env.NESVO_MOBILE_TRUSTED_PROXY;
 const localShareOrigin = process.env.NESVO_SMOKE_SHARE_ORIGIN;
 if (
   localShareOrigin &&
@@ -722,6 +729,236 @@ async function smokeConfigurationProfile(app, page) {
   );
   assert.equal(updated.mode, 'supervised');
   assert.equal(updated.messageCount, 0);
+  const proposeAuthority = async (id, value) => {
+    const { target } = await cli(['get', 'authority', id]);
+    await writeFile(input, JSON.stringify({ kind: 'authority', value }));
+    const proposed = await cli([
+      'propose',
+      'authority',
+      id,
+      '--op',
+      'update',
+      '--action-id',
+      randomUUID(),
+      '--base',
+      String(target.version.revision),
+      '--input-file',
+      input,
+    ]);
+    assert.equal(proposed.receipt.status, 'pending');
+    return proposed.change;
+  };
+  const openAuthority = async name => {
+    const change = inbox.getByRole('article', {
+      name: `Configuration change ${name}`,
+    });
+    await change
+      .getByRole('button', { name: `Review diff for ${name}` })
+      .click();
+    await change.getByRole('button', { name: 'Open confirmation' }).click();
+  };
+  const waitForAuthority = async (read, reason) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const value = await read();
+      if (value) return value;
+      await delay(100);
+    }
+    throw new Error(reason);
+  };
+  const waitForOutcome = id =>
+    waitForAuthority(
+      () =>
+        page.evaluate(async changeId => {
+          const result = await window.nesvo.configuration.history(
+            { area: 'authority' },
+            'local',
+          );
+          return result.page.changes.find(
+            change =>
+              change.id === changeId &&
+              change.status === 'applied' &&
+              change.outcome,
+          );
+        }, id),
+      'The native confirmation receipt did not settle.',
+    );
+  await page.evaluate(() =>
+    window.nesvo.claudeAutonomy(
+      { action: 'set-full-access', enabled: true },
+      'local',
+    ),
+  );
+  const fullAccess = await proposeAuthority(session.id, 'full-access');
+  await openAuthority('Release review');
+  const fullDialog = page.getByRole('dialog', {
+    name: 'Allow Full access in this session?',
+  });
+  await fullDialog.waitFor();
+  assert.equal(
+    await fullDialog
+      .getByRole('button', { name: 'Allow Full access' })
+      .isEnabled(),
+    false,
+  );
+  await configurationShot(app, page, 'follow-up-full-access');
+  await fullDialog.getByRole('checkbox', { name: 'I understand' }).click();
+  await fullDialog.getByRole('button', { name: 'Allow Full access' }).click();
+  await waitForOutcome(fullAccess.id);
+  const fullSession = await page.evaluate(
+    id => window.nesvo.getSession({ sessionId: id }),
+    session.id,
+  );
+  assert.equal(fullSession.mode, 'full-access');
+  assert.equal(fullSession.messageCount, 0);
+  await page.evaluate(() =>
+    window.nesvo.claudeAutonomy(
+      { action: 'set-full-access', enabled: false },
+      'local',
+    ),
+  );
+  const host = await page.evaluate(
+    async () =>
+      (await window.nesvo.listComputers()).find(
+        computer => computer.id === 'local',
+      ).instanceId,
+  );
+  const device = await proposeAuthority(`devices/${host}`, {
+    kind: 'devices',
+    name: 'Reviewed fixture device',
+  });
+  await openAuthority('Devices');
+  const nativeDevice = page.getByRole('dialog', {
+    name: 'Enroll configuration device',
+  });
+  await nativeDevice.getByRole('textbox', { name: 'Device name' }).waitFor();
+  assert.equal(
+    await nativeDevice
+      .getByRole('textbox', { name: 'Device name' })
+      .inputValue(),
+    'Reviewed fixture device',
+  );
+  assert.equal(
+    await nativeDevice
+      .getByRole('button', { name: 'Enroll device', exact: true })
+      .isEnabled(),
+    false,
+  );
+  await nativeDevice
+    .getByRole('checkbox', { name: 'Appearance', exact: true })
+    .check();
+  await configurationShot(app, page, 'follow-up-devices');
+  await nativeDevice
+    .getByRole('button', { name: 'Enroll device', exact: true })
+    .click();
+  await page
+    .getByRole('dialog', { name: 'Device token' })
+    .getByRole('button', { name: 'Done' })
+    .click();
+  await waitForOutcome(device.id);
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
+  const phone = await proposeAuthority(`phone-access/${host}`, {
+    kind: 'phone-access',
+    action: 'enable',
+  });
+  await openAuthority('Phone access');
+  await page.getByText('Review the proposal to enable Phone access.').waitFor();
+  await configurationShot(app, page, 'follow-up-phone-access');
+  await page.getByRole('button', { name: 'Enable phone access' }).click();
+  await waitForOutcome(phone.id);
+  await page.getByRole('button', { name: 'Disable', exact: true }).click();
+  await page.getByText('Phone access is off', { exact: true }).waitFor();
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
+  const claude = await page.evaluate(
+    folder =>
+      window.nesvo.createSession({
+        provider: 'Claude Code',
+        model: 'sonnet',
+        mode: 'auto',
+        directory: folder,
+        title: 'Rule confirmation fixture',
+      }),
+    workspace,
+  );
+  await page.evaluate(
+    sessionId =>
+      window.nesvo.sendMessage({
+        sessionId,
+        messageId: crypto.randomUUID(),
+        text:
+          'fixture:autonomy ' +
+          JSON.stringify([
+            { tool: 'Bash', input: { command: 'git status --short' } },
+          ]),
+      }),
+    claude.id,
+  );
+  const approval = await waitForAuthority(
+    () =>
+      page.evaluate(
+        async sessionId =>
+          (await window.nesvo.getSession({ sessionId })).pendingApprovals.find(
+            item => item.allowPattern,
+          ),
+        claude.id,
+      ),
+    'The fixture did not produce an eligible Claude operation.',
+  );
+  const { id: requestId } = approval;
+  const rule = await proposeAuthority(`claude-allow-rule/${requestId}`, {
+    kind: 'claude-allow-rule',
+    scope: 'session',
+  });
+  await openAuthority('Claude allow rule');
+  const ruleDialog = page.getByRole('dialog', {
+    name: 'Review Claude allow rule',
+  });
+  const saveRule = ruleDialog.getByRole('button', {
+    name: 'Save rule and allow',
+  });
+  await ruleDialog.getByText('Matches this operation.').waitFor();
+  await configurationShot(app, page, 'follow-up-claude-allow-rule');
+  await saveRule.click();
+  await waitForOutcome(rule.id);
+  const computers = await proposeAuthority(`computers/${host}`, {
+    kind: 'computers',
+    name: 'Reviewed SSH computer',
+  });
+  await openAuthority('Computers');
+  const computerDialog = page.getByRole('dialog', { name: 'Add SSH computer' });
+  assert.equal(
+    await computerDialog
+      .getByRole('textbox', { name: 'Computer name' })
+      .inputValue(),
+    'Reviewed SSH computer',
+  );
+  assert.equal(
+    await computerDialog
+      .getByRole('textbox', { name: 'SSH hostname' })
+      .inputValue(),
+    '',
+  );
+  await configurationShot(app, page, 'follow-up-computers');
+  await computerDialog.getByRole('button', { name: 'Cancel' }).click();
+  assert.equal(
+    await page.evaluate(
+      async id =>
+        (
+          await window.nesvo.configuration.history(
+            { area: 'authority' },
+            'local',
+          )
+        ).page.changes.find(change => change.id === id).status,
+      computers.id,
+    ),
+    'pending',
+  );
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
   await page.evaluate(
     id => window.nesvo.configuration.revoke(id, 'local'),
     enrollment.device.id,
@@ -729,7 +966,7 @@ async function smokeConfigurationProfile(app, page) {
   console.log(
     JSON.stringify({
       configurationProfile:
-        'direct apply, durable receipt, Undo and CLI proposals verified',
+        'direct apply, durable receipt, Undo, CLI proposals and native owner confirmations verified',
     }),
   );
   if (!configurationScreenshots) return;

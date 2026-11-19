@@ -901,6 +901,7 @@ test('configuration permission proposals require exact owner confirmation and ho
   const open = managed =>
     launch(directory, join(root, 'pids.json'), {
       NESVO_TEST_MODE: '1',
+      NESVO_TEST_FULL_ACCESS: '1',
       NESVO_WORK_LAPTOP_MODE: managed ? '1' : '0',
       NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
     });
@@ -981,7 +982,11 @@ test('configuration permission proposals require exact owner confirmation and ho
       send('notifications/initialized');
       const capabilities = (await tool('config_capabilities', {}))
         .structuredContent.capabilities;
-      assert.deepEqual(capabilities.authoritySubjects, ['session-mode']);
+      assert.deepEqual(capabilities.authoritySubjects, [
+        'session-mode',
+        'claude-allow-rule',
+        'devices',
+      ]);
       assert.equal(
         (await tool('config_apply', mutation)).structuredContent.code,
         'review-required',
@@ -1084,8 +1089,143 @@ test('configuration permission proposals require exact owner confirmation and ho
         .code,
       'review-required',
     );
+    await host.request('claude-autonomy', {
+      action: 'set-full-access',
+      enabled: true,
+    });
+    const mode = await host.request('claude-autonomy', {
+      action: 'confirm-full-access',
+      sessionId: session.id,
+      directory: workspace,
+      expectedModeRevision: pending.sessionMode.modeRevision,
+    });
+    assert.equal(mode.type, 'claude-autonomy', JSON.stringify(mode));
+    assert.equal(
+      (await host.request('get-session', { sessionId: session.id })).session
+        .mode,
+      'full-access',
+    );
+    const deviceTarget = {
+      area: 'authority',
+      subject: 'devices',
+      id: health.instanceId,
+    };
+    const deviceDraft = {
+      target: deviceTarget,
+      operation: 'update',
+      baseVersion: (await request('read-config-target', deviceTarget)).target
+        .version,
+      draft: {
+        kind: 'authority',
+        value: { kind: 'devices', name: 'Phone fixture' },
+      },
+    };
+    const nativeFlow = async () => {
+      const result = await request('configuration', {
+        token: enrollment.token,
+        command: {
+          operation: 'propose',
+          mutation: { ...deviceDraft, actionId: randomUUID() },
+        },
+      });
+      assert.equal(result.change.ownerEffect.kind, 'devices');
+      return result.change;
+    };
+    const proposedDevice = await nativeFlow();
+    const link = {
+      id: proposedDevice.id,
+      revision: proposedDevice.revision,
+      actionId: randomUUID(),
+    };
+    assert.equal(
+      (await decide(proposedDevice, { confirmAuthority: true })).code,
+      'review-required',
+    );
+    assert.equal(
+      (
+        await request('start-config-owner-flow', {
+          ...link,
+          effect: { kind: 'computers' },
+        })
+      ).code,
+      'review-required',
+    );
+    const started = await request('start-config-owner-flow', {
+      ...link,
+      effect: { kind: 'devices' },
+    });
+    assert.equal(started.kind, 'owner-flow');
+    assert.equal(
+      (
+        await request('start-config-owner-flow', {
+          ...link,
+          effect: { kind: 'devices' },
+        })
+      ).code,
+      'conflict',
+    );
+    assert.equal(
+      (
+        await request('finish-config-owner-flow', {
+          claim: randomUUID(),
+          outcome: { description: 'Configuration device enrolled.' },
+        })
+      ).code,
+      'conflict',
+    );
+    const { enrollment: newDevice } = await host.request(
+      'enroll-config-device',
+      {
+        name: 'Phone fixture',
+        grants: [
+          { area: 'settings', verbs: ['read'], global: true, projects: [] },
+        ],
+      },
+    );
+    assert.equal(
+      (
+        await request('finish-config-owner-flow', {
+          claim: started.claim,
+          outcome: {
+            description: 'Configuration device enrolled.',
+            resourceId: newDevice.device.id,
+          },
+        })
+      ).receipt.status,
+      'applied',
+    );
+    const separate = await nativeFlow();
+    const interrupted = await request('start-config-owner-flow', {
+      id: separate.id,
+      revision: separate.revision,
+      actionId: randomUUID(),
+      effect: { kind: 'devices' },
+    });
+    assert.equal(interrupted.kind, 'owner-flow');
     await host.stop();
     host = open(true);
+    assert.equal(
+      (
+        await request('finish-config-owner-flow', {
+          claim: interrupted.claim,
+          outcome: null,
+        })
+      ).code,
+      'conflict',
+    );
+    const afterRestart = (
+      await request('list-config-changes', { area: 'authority' })
+    ).page.changes;
+    assert.equal(
+      afterRestart.find(change => change.id === separate.id).status,
+      'inspection-required',
+    );
+    assert.equal(
+      afterRestart.find(change => change.id === proposedDevice.id).outcome
+        .resourceId,
+      newDevice.device.id,
+    );
+    assert.ok(!JSON.stringify(afterRestart).includes(newDevice.token));
     assert.equal(
       (
         await decide(pending, {
