@@ -525,6 +525,21 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           payload TEXT NOT NULL,
           document TEXT NOT NULL CHECK (json_valid(document))
         );
+        CREATE TABLE IF NOT EXISTS session_message_watchers (
+          id TEXT PRIMARY KEY,
+          definition TEXT NOT NULL CHECK (json_valid(definition)),
+          revision TEXT NOT NULL,
+          state TEXT NOT NULL,
+          invalid_lines INTEGER NOT NULL DEFAULT 0,
+          delivered INTEGER NOT NULL DEFAULT 0,
+          detail TEXT,
+          exit_code INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS session_message_watcher_actions (
+          id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          document TEXT NOT NULL CHECK (json_valid(document))
+        );
       `);
       database.exec(`
         CREATE TABLE IF NOT EXISTS manager_import_provenance (

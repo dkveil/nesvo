@@ -134,9 +134,10 @@ export class ExternalSessionIngress {
       session =>
         session.groupId === ids[0]!.id &&
         session.title === target.title &&
-        allowed(session),
+        !session.archivedAt,
     );
-    return matches.length === 1 ? matches[0] : undefined;
+    const match = matches.length === 1 ? matches[0] : undefined;
+    return match && allowed(match) ? match : undefined;
   }
 
   private change(
@@ -262,6 +263,14 @@ export class ExternalSessionIngress {
           : message.kind === 'send'
             ? 'queued'
             : 'notification';
+    const reasons = {
+      rejected: 'The source route rejects this message.',
+      queued:
+        'Waiting for the next operator message. Coordinator wake is unavailable on this host.',
+      notification:
+        'Saved to session history. Coordinator events are unavailable on this host.',
+      routing: null,
+    };
     const receipt: SessionIngressReceipt = {
       id: randomUUID(),
       computerId: this.devices.computerId,
@@ -274,8 +283,7 @@ export class ExternalSessionIngress {
       status,
       at: new Date().toISOString(),
       inboxId: null,
-      reason:
-        status === 'rejected' ? 'The source route rejects this message.' : null,
+      reason: reasons[status],
     };
     const entry: ExternalSessionMessageEntry = {
       receipt,

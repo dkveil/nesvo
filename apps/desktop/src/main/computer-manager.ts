@@ -31,6 +31,7 @@ import {
   attachmentKind,
   sessionHistoryLimits,
   sshComputerInputSchema,
+  sessionMessageWatcherInputSchema,
   trimSessionWindow,
   windowOffset,
 } from '@nesvo/contracts';
@@ -338,6 +339,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage read-only integration grants.',
   'external-session-messages':
     'Update this computer’s Nesvo host and reconnect to manage external session messages.',
+  'session-message-watchers':
+    'Update this computer’s Nesvo host and reconnect to manage session message watchers.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -412,6 +415,7 @@ function requiredCapability(
     return 'readonly-integration-grants';
   if (method === 'external-session-messages')
     return 'external-session-messages';
+  if (method === 'session-message-watchers') return 'session-message-watchers';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -594,6 +598,14 @@ export class ComputerManager {
   private configurationError = '';
   private cacheTimer: ReturnType<typeof setTimeout> | undefined;
   private closing = false;
+  private readonly watcherLeases = new Map<
+    string,
+    {
+      hostId: string;
+      watcherId: string;
+      timer: ReturnType<typeof setInterval>;
+    }
+  >();
   private readonly loaded: Promise<void>;
   private resolveLoaded!: () => void;
 
@@ -1000,6 +1012,7 @@ export class ComputerManager {
     const entry = this.get(hostId);
     if (hostId === 'local')
       throw new Error('The local host is managed by Nesvo.');
+    await this.releaseWatcherLeases(hostId);
     ++entry.generation;
     entry.manualDisconnect = true;
     clearTimeout(entry.recoveryTimer);
@@ -1372,6 +1385,7 @@ export class ComputerManager {
       'provider-usage-gates': 'provider-usage-gates',
       'readonly-integration-grants': 'readonly-integration-grants',
       'external-session-messages': 'external-session-messages',
+      'session-message-watchers': 'session-message-watchers',
       'read-default-session-folder': 'default-session-folder',
       'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
@@ -1484,6 +1498,22 @@ export class ComputerManager {
       case 'repository-trust-settings':
       case 'external-session-messages':
         return response.settings;
+      case 'session-message-watchers': {
+        const reply = response.reply;
+        if (reply.action === 'start' && reply.leaseId && reply.expiresAt) {
+          this.keepWatcherLease(
+            hostId,
+            reply.watcherId,
+            reply.leaseId,
+            Date.parse(reply.expiresAt),
+          );
+        } else if (reply.action === 'stop' || reply.action === 'revoke') {
+          const parsed = sessionMessageWatcherInputSchema.safeParse(input);
+          if (parsed.success && 'watcherId' in parsed.data)
+            this.forgetWatcherLease(hostId + ':' + parsed.data.watcherId);
+        }
+        return reply;
+      }
       case 'custom-worktree-providers':
       case 'readonly-integration-grants':
         return response.reply;
@@ -1582,6 +1612,7 @@ export class ComputerManager {
   async close() {
     this.closing = true;
     await this.loaded;
+    await this.releaseWatcherLeases();
     clearTimeout(this.cacheTimer);
     for (const entry of this.entries.values())
       clearTimeout(entry.recoveryTimer);
@@ -1592,6 +1623,79 @@ export class ComputerManager {
         entry.unsubscribe?.();
         await entry.connection?.close();
         await entry.connecting;
+      }),
+    );
+  }
+
+  private forgetWatcherLease(key: string) {
+    const lease = this.watcherLeases.get(key);
+    if (!lease) return;
+    clearInterval(lease.timer);
+    this.watcherLeases.delete(key);
+  }
+
+  private keepWatcherLease(
+    hostId: string,
+    watcherId: string,
+    leaseId: string,
+    initialExpiry: number,
+  ) {
+    const key = hostId + ':' + watcherId;
+    this.forgetWatcherLease(key);
+    let expires = initialExpiry;
+    let pending = false;
+    const renew = async () => {
+      if (this.closing || expires <= Date.now()) {
+        this.forgetWatcherLease(key);
+        return;
+      }
+      const entry = this.entries.get(hostId);
+      if (
+        pending ||
+        entry?.computer.status !== 'connected' ||
+        !entry.connection
+      )
+        return;
+      pending = true;
+      try {
+        const response = await entry.connection.request(
+          'session-message-watchers',
+          { action: 'renew', watcherId, leaseId },
+        );
+        if (this.watcherLeases.get(key)?.timer !== timer) return;
+        if (
+          response.type !== 'session-message-watchers' ||
+          response.reply.action !== 'renew' ||
+          !response.reply.expiresAt
+        )
+          this.forgetWatcherLease(key);
+        else expires = Date.parse(response.reply.expiresAt);
+      } catch {
+        return;
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = setInterval(() => void renew(), 12_000);
+    timer.unref();
+    this.watcherLeases.set(key, { hostId, watcherId, timer });
+  }
+
+  private async releaseWatcherLeases(hostId?: string) {
+    const leases = [...this.watcherLeases].filter(
+      ([, lease]) => !hostId || lease.hostId === hostId,
+    );
+    await Promise.allSettled(
+      leases.map(([key, { hostId, watcherId }]) => {
+        this.forgetWatcherLease(key);
+        const entry = this.entries.get(hostId);
+        if (entry?.computer.status === 'connected')
+          return entry.connection?.request('session-message-watchers', {
+            action: 'stop',
+            actionId: randomUUID(),
+            watcherId,
+          });
+        return undefined;
       }),
     );
   }

@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  sessionMessageWatcherInputSchema,
+  sessionMessageWatcherReplySchema,
+  type SessionMessageWatcherInput,
+  type SessionMessageWatcherReply,
+} from './session-message-watchers';
+import {
   externalSessionSettingsInputSchema,
   externalSessionSettingsSchema,
   type ExternalSessionSettingsInput,
@@ -644,6 +650,7 @@ export * from './worktree-providers';
 export * from './usage-gates';
 export * from './readonly-integrations';
 export * from './external-session-messages';
+export * from './session-message-watchers';
 export * from './provider-profiles';
 export * from './costs';
 export * from './mobile';
@@ -1261,6 +1268,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('external-session-messages'),
     input: externalSessionSettingsInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('session-message-watchers'),
+    input: sessionMessageWatcherInputSchema,
   }),
   z.strictObject({
     id: z.string().min(1).max(200),
@@ -2047,6 +2059,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     settings: externalSessionSettingsSchema,
   }),
   z.strictObject({
+    type: z.literal('session-message-watchers'),
+    id: z.uuid(),
+    reply: sessionMessageWatcherReplySchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2509,6 +2526,10 @@ export type DesktopApi = {
     input: ExternalSessionSettingsInput,
     hostId?: HostId,
   ) => Promise<ExternalSessionSettings>;
+  sessionMessageWatchers: (
+    input: SessionMessageWatcherInput,
+    hostId?: HostId,
+  ) => Promise<SessionMessageWatcherReply>;
   listMcpServers: (
     input: ListMcpServersInput,
     hostId?: HostId,

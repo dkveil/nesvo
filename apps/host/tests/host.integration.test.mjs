@@ -32,6 +32,151 @@ import {
 } from './manager-import-fixture.mjs';
 
 test(
+  'D88 watchers require a fresh explicit start and reap their child before host close',
+  { timeout: 45_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-d88-watcher-')),
+    );
+    const executable = process.execPath;
+    const script = join(directory, 'message watcher.cjs');
+    const pidFile = join(directory, 'watcher.pid');
+    let host;
+    t.after(async () => {
+      if (host?.child.exitCode === null) await host.stop();
+      await rm(directory, { recursive: true, force: true });
+    });
+    await writeFile(
+      script,
+      `
+    require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+    process.stdout.write('not JSON\\n');
+    console.log(JSON.stringify({eventId:'fixture',kind:'notify',text:'Watcher fixture data'}));
+    console.log(JSON.stringify({eventId:'spoof',kind:'notify',text:'invalid',source:'wrong source'}));
+    setInterval(() => {}, 1000);
+  `,
+    );
+    const open = () => launch(directory, join(directory, 'host-fixture.pid'));
+    host = open();
+    const created = await host.request('create-session', {
+      title: 'Watcher target',
+      model: 'sonnet',
+      directory,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const sessionId = created.session.id;
+    const definition = {
+      version: 1,
+      name: 'Fixture watcher',
+      source: 'Watcher fixture',
+      directory,
+      command: {
+        executable,
+        argv: [script],
+        files: [script],
+        timeoutMs: 30_000,
+      },
+      destination: 'session',
+      defaultSessionId: sessionId,
+      allowedSessionIds: [sessionId],
+      kinds: ['notify'],
+    };
+    const call = input => host.request('session-message-watchers', input);
+    const wrapper = join(directory, 'shell-wrapper');
+    await writeFile(wrapper, '#!/usr/bin/env -S bash\nexit 0\n');
+    assert.match(
+      (
+        await call({
+          action: 'inspect',
+          definition: {
+            ...definition,
+            command: { ...definition.command, executable: wrapper },
+          },
+        })
+      ).message,
+      /Shell interpreters are unavailable/,
+    );
+    const inspection = await call({ action: 'inspect', definition });
+    assert.equal(
+      inspection.type,
+      'session-message-watchers',
+      JSON.stringify(inspection),
+    );
+    await call({
+      action: 'approve',
+      actionId: randomUUID(),
+      definition,
+      revision: inspection.reply.revision,
+    });
+    const id = (await call({ action: 'read' })).reply.watchers[0].id;
+    const start = { action: 'start', watcherId: id, actionId: randomUUID() };
+    assert.equal(existsSync(pidFile), false);
+    const started = await call(start);
+    assert.equal(started.reply.action, 'start', JSON.stringify(started));
+    assert.ok(started.reply.leaseId);
+    assert.ok(
+      (
+        await call({
+          action: 'renew',
+          watcherId: id,
+          leaseId: started.reply.leaseId,
+        })
+      ).reply.expiresAt,
+    );
+    assert.equal(
+      (await call({ action: 'renew', watcherId: id, leaseId: randomUUID() }))
+        .reply.expiresAt,
+      null,
+    );
+    let watching;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      watching = (await call({ action: 'read' })).reply.watchers[0];
+      if (watching.invalidLines === 2 && watching.delivered === 1) break;
+      await delay(50);
+    }
+    assert.equal(watching.invalidLines, 2);
+    assert.equal(watching.delivered, 1);
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    process.kill(pid, 0);
+    await host.stop();
+    assert.throws(() => process.kill(pid, 0), /ESRCH/);
+    host = open();
+    assert.equal(
+      (await call({ action: 'read' })).reply.watchers[0].state,
+      'held',
+    );
+    assert.equal((await call(start)).reply.leaseId, null);
+    const history = await host.request('external-session-messages', {
+      action: 'history',
+      sessionId,
+    });
+    assert.equal(history.settings.messages.length, 1);
+    assert.equal(
+      history.settings.messages[0].receipt.provenance.kind,
+      'watcher',
+    );
+    const original = await readFile(script, 'utf8');
+    await writeFile(script, 'console.log("changed command");');
+    assert.match(
+      (await call({ ...start, actionId: randomUUID() })).message,
+      /changed or was revoked/,
+    );
+    await writeFile(script, original);
+    await rm(pidFile);
+    const restarted = await call({ ...start, actionId: randomUUID() });
+    assert.ok(restarted.reply.leaseId);
+    for (let attempt = 0; attempt < 40 && !existsSync(pidFile); attempt++)
+      await delay(50);
+    const restartedPid = Number(await readFile(pidFile, 'utf8'));
+    const revoke = { action: 'revoke', watcherId: id, actionId: randomUUID() };
+    assert.equal((await call(revoke)).reply.action, 'revoke');
+    assert.equal((await call(revoke)).reply.action, 'revoke');
+    assert.throws(() => process.kill(restartedPid, 0), /ESRCH/);
+    assert.deepEqual((await call({ action: 'read' })).reply.watchers, []);
+  },
+);
+
+test(
   'D88 framed session ingress authenticates, deduplicates, routes Inbox decisions and holds on restart',
   { timeout: 60_000 },
   async t => {
@@ -125,8 +270,21 @@ test(
       (await setRoute('Fixture script', ['send'], 'session')).type,
       'external-session-messages',
     );
+    const duplicate = await host.request('create-session', {
+      title: 'Release notes',
+      model: 'sonnet',
+      directory,
+      groupId,
+    });
+    assert.equal(duplicate.type, 'session');
+    assert.equal((await cli(send)).error.code, 'not-found');
+    await host.request('rename-session', {
+      sessionId: duplicate.session.id,
+      title: 'Other release notes',
+    });
     const posted = await cli(send);
     assert.equal(posted.status, 'queued');
+    assert.match(posted.reason, /Coordinator wake is unavailable/);
     assert.equal(posted.sessionId, sessionId);
     assert.equal(posted.provenance.id, enrollment.device.id);
     await host.request('rename-session', { sessionId, title: 'Renamed notes' });
@@ -332,7 +490,6 @@ test(
     assert.equal(
       inspected.type,
       'readonly-integration-grants',
-      'external-session-messages',
       JSON.stringify(inspected),
     );
     const approval = await host.request('readonly-integration-grants', {
@@ -477,9 +634,6 @@ test(
     assert.equal(
       inspected.type,
       'custom-worktree-providers',
-      'provider-usage-gates',
-      'readonly-integration-grants',
-      'external-session-messages',
       JSON.stringify(inspected),
     );
     const confirmed = await host.request('custom-worktree-providers', {
@@ -4225,6 +4379,7 @@ test(
         'provider-usage-gates',
         'readonly-integration-grants',
         'external-session-messages',
+        'session-message-watchers',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -9866,6 +10021,7 @@ test(
       'provider-usage-gates',
       'readonly-integration-grants',
       'external-session-messages',
+      'session-message-watchers',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -31845,7 +32001,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-12), [
+  assert.deepEqual(capabilities.slice(-13), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -31859,6 +32015,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'provider-usage-gates',
     'readonly-integration-grants',
     'external-session-messages',
+    'session-message-watchers',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

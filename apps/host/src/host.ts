@@ -173,6 +173,7 @@ import { proposeInboxRule } from './inbox-rules/proposal';
 import { InboxItemStore } from './inbox-rules/store';
 import { ExternalInbox, listenForExternalInbox } from './external-inbox';
 import { ExternalSessionIngress } from './external-session-ingress';
+import { SessionMessageWatchers } from './session-message-watchers';
 import type { PreparedTurnRules } from './inbox-rules/turn-gate';
 import type { StepExecutor } from './workflows/runner';
 
@@ -721,6 +722,16 @@ export const serveHost = ({
         () => groupStore.list().groups,
       );
       ingress.current = externalMessages;
+      const watchers = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new SessionMessageWatchers(database, externalMessages, id => {
+              const session = store.get(id);
+              return !!session && !session.archivedAt;
+            }),
+        ),
+        value => Effect.promise(() => value.close()),
+      );
       yield* Effect.acquireRelease(
         Effect.promise(() =>
           listenForExternalInbox(externalInbox, (value, signal) =>
@@ -3921,6 +3932,29 @@ export const serveHost = ({
             }
           });
           yield* Effect.tryPromise(() => send(response));
+          continue;
+        }
+        if (request.method === 'session-message-watchers') {
+          const pending = watchers
+            .settings(request.input, probes.controller.signal)
+            .then(reply =>
+              send({ type: 'session-message-watchers', id: request.id, reply }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The watcher operation could not be completed.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
           continue;
         }
         if (

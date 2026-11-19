@@ -207,6 +207,8 @@ import {
   readonlyIntegrationReplySchema,
   externalSessionSettingsInputSchema,
   externalSessionSettingsSchema,
+  sessionMessageWatcherInputSchema,
+  sessionMessageWatcherReplySchema,
   mcpServerListSchema,
   setSessionMcpSchema,
   skillCatalogSchema,
@@ -1661,6 +1663,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:external-session-messages',
         externalSessionSettingsInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
+      ),
+    ),
+  sessionMessageWatchers: async (input, hostId) =>
+    sessionMessageWatcherReplySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:session-message-watchers',
+        sessionMessageWatcherInputSchema.parse(input),
         hostIdSchema.optional().parse(hostId),
       ),
     ),

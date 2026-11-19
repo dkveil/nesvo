@@ -216,6 +216,7 @@ import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-sett
 import { SessionControlSettings } from '@/widgets/session-control-settings';
 import { useSessionIngressHistory } from '@/features/session-ingress/use-session-ingress-history';
 import { ExternalSessionSettings } from '@/widgets/settings/external-session-settings';
+import { SessionWatcherSettings } from '@/widgets/settings/session-watcher-settings';
 import {
   SessionIngressDetails,
   SessionIngressItems,
@@ -6270,6 +6271,20 @@ ${text}`
                     )
                   }
                   sessions={store.sessions.filter(
+                    session =>
+                      session.hostId === settingsHostId && !session.archivedAt,
+                  )}
+                />
+                <SessionWatcherSettings
+                  key={'watchers:' + settingsHostId}
+                  hostId={settingsHostId}
+                  ready={
+                    store.hostReady(settingsHostId) &&
+                    !!settingsComputer?.capabilities.includes(
+                      'session-message-watchers',
+                    )
+                  }
+                  defaultSession={store.sessions.find(
                     session =>
                       session.hostId === settingsHostId && !session.archivedAt,
                   )}

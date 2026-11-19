@@ -2131,6 +2131,53 @@ async function smokeDesktop() {
   await providerSettings
     .getByText('Fixture branch policy', { exact: true })
     .waitFor({ state: 'hidden' });
+  const sourceDeviceId = await page.evaluate(
+    async () =>
+      (
+        await window.nesvo.enrollExternalInboxDevice({
+          name: 'Fixture external device',
+        })
+      ).device.id,
+  );
+  await settingsNav
+    .getByRole('button', { name: 'Session control', exact: true })
+    .click();
+  const externalSettings = initialContext.getByRole('region', {
+    name: 'External messages',
+    exact: true,
+  });
+  await externalSettings
+    .getByRole('button', { name: 'Add source', exact: true })
+    .click();
+  const externalSource = page.getByRole('dialog', {
+    name: 'Add external message source',
+  });
+  await externalSource
+    .getByLabel('Source label')
+    .fill('Fixture message source');
+  await externalSource.getByRole('button', { name: 'Save source' }).click();
+  await externalSettings
+    .getByText('Fixture message source', { exact: true })
+    .waitFor();
+  const watcherSettings = initialContext
+    .getByRole('region', { name: 'Session message watchers', exact: true })
+    .getByText('No watchers');
+  await watcherSettings.scrollIntoViewIfNeeded();
+  await captureD88('d-external-messages');
+  await externalSettings
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await page
+    .getByRole('alertdialog', { name: 'Revoke this message source?' })
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await externalSettings
+    .getByText('Fixture message source', { exact: true })
+    .waitFor({ state: 'hidden' });
+  await page.evaluate(
+    deviceId => window.nesvo.revokeExternalInboxDevice({ deviceId }),
+    sourceDeviceId,
+  );
   await page.keyboard.press('Escape');
   await initialContext.waitFor({ state: 'hidden' });
   const scheduledJobCall = (method, ...args) =>
@@ -2216,6 +2263,7 @@ async function smokeDesktop() {
     'provider-usage-gates',
     'readonly-integration-grants',
     'external-session-messages',
+    'session-message-watchers',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

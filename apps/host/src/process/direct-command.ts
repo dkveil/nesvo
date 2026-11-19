@@ -15,14 +15,22 @@ const environmentNames = [
   'LC_ALL',
 ] as const;
 const blockedExecutable =
-  /^(?:cmd|powershell|pwsh|sh|bash|zsh|dash|fish|ksh|wsl)(?:\.exe)?$/i;
-const blockedExtension = /\.(?:bat|cmd|ps1|sh|zsh|fish|ksh)$/i;
+  /^(?:cmd|powershell|pwsh|sh|ash|bash|zsh|dash|fish|ksh|wsl)(?:\.exe)?$/i;
+const blockedExtension = /\.(?:bat|cmd|ps1|sh|ash|zsh|fish|ksh)$/i;
 const maxArtifactBytes = 256 * 1024 * 1024;
 
-const fileIdentity = async (path: string, signal: AbortSignal) => {
+export class DirectCommandReviewError extends Error {}
+
+const fileIdentity = async (
+  path: string,
+  signal: AbortSignal,
+  verifyLauncher = false,
+) => {
   const truePath = await realpath(path);
   if (!(await stat(truePath)).isFile())
-    throw new Error('A command artifact is not a regular file.');
+    throw new DirectCommandReviewError(
+      'A command artifact is not a regular file.',
+    );
   const file = await open(
     truePath,
     constants.O_RDONLY |
@@ -31,9 +39,25 @@ const fileIdentity = async (path: string, signal: AbortSignal) => {
   try {
     const before = await file.stat();
     if (!before.isFile() || before.size > maxArtifactBytes)
-      throw new Error(
+      throw new DirectCommandReviewError(
         'A command artifact is unavailable or exceeds the size limit.',
       );
+    if (verifyLauncher) {
+      const header = Buffer.alloc(512);
+      const { bytesRead } = await file.read(header, 0, header.length, 0);
+      const firstLine = header.toString('utf8', 0, bytesRead).split('\n')[0]!;
+      if (
+        firstLine.startsWith('#!') &&
+        firstLine
+          .slice(2)
+          .trim()
+          .split(/\s+/u)
+          .some(value => blockedExecutable.test(basename(value)))
+      )
+        throw new DirectCommandReviewError(
+          'Shell interpreters are unavailable for direct commands.',
+        );
+    }
     const hash = createHash('sha256');
     const stream = file.createReadStream({
       autoClose: false,
@@ -55,7 +79,7 @@ const fileIdentity = async (path: string, signal: AbortSignal) => {
       after.ctimeMs !== current.ctimeMs ||
       truePath !== (await realpath(path))
     )
-      throw new Error(
+      throw new DirectCommandReviewError(
         'A command artifact changed while it was being verified.',
       );
     return { path: truePath, sha256: hash.digest('hex') };
@@ -75,15 +99,19 @@ export async function inspectDirectCommand(
     !isAbsolute(definition.executable) ||
     blockedExtension.test(definition.executable)
   )
-    throw new Error('Choose an absolute executable path for a direct command.');
+    throw new DirectCommandReviewError(
+      'Choose an absolute executable path for a direct command.',
+    );
   signal.throwIfAborted();
   const cwd = await realpath(workingDirectory);
-  const executable = await fileIdentity(definition.executable, signal);
+  const executable = await fileIdentity(definition.executable, signal, true);
   if (
     blockedExecutable.test(basename(executable.path)) ||
     blockedExtension.test(executable.path)
   )
-    throw new Error('Shell executables are unavailable for direct commands.');
+    throw new DirectCommandReviewError(
+      'Shell executables are unavailable for direct commands.',
+    );
   await access(
     executable.path,
     process.platform === 'win32' ? constants.F_OK : constants.X_OK,
@@ -96,7 +124,9 @@ export async function inspectDirectCommand(
     if (existing?.isFile()) referenced.add(candidate);
   }
   if (referenced.size > 16)
-    throw new Error('The command references too many files.');
+    throw new DirectCommandReviewError(
+      'The command references too many files.',
+    );
   const files = await Promise.all(
     [...referenced].sort().map(path => fileIdentity(path, signal)),
   );
@@ -111,6 +141,7 @@ export function runDirectCommand(
   verified: Awaited<ReturnType<typeof inspectDirectCommand>>,
   bindings: Readonly<Record<string, string>>,
   signal: AbortSignal,
+  onStdout?: (chunk: string) => void,
 ) {
   const argv = definition.argv.map(template => {
     const value = template.replace(
@@ -143,5 +174,6 @@ export function runDirectCommand(
     timeoutMs: definition.timeoutMs,
     maxOutputBytes: definition.maxOutputBytes,
     signal,
+    onStdout,
   });
 }

@@ -126,7 +126,7 @@ async function main(args: string[]) {
       process.stdout.write(
         values.json
           ? JSON.stringify(receipt) + '\n'
-          : `${receipt.id} ${receipt.status}\n`,
+          : `${receipt.id} ${receipt.status}${receipt.reason ? ` (${receipt.reason})` : ''}\n`,
       );
       return receipt.status === 'rejected' ? 3 : 0;
     }

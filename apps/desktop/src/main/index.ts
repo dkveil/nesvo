@@ -181,6 +181,7 @@ import {
   providerUsageGateInputSchema,
   readonlyIntegrationInputSchema,
   externalSessionSettingsInputSchema,
+  sessionMessageWatcherInputSchema,
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -1388,6 +1389,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'external-session-messages',
         externalSessionSettingsInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:session-message-watchers',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'session-message-watchers',
+        sessionMessageWatcherInputSchema.parse(input),
         route(hostId),
       );
     },
