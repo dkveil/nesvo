@@ -10,11 +10,14 @@ import {
   configurationEnrollmentSchema,
   configurationEnrollSchema,
   configurationHistoryInputSchema,
+  configurationInspectDraftSchema,
   configurationInboxLookupResultSchema,
   configurationInboxLookupSchema,
   configurationInboxSendResultSchema,
   configurationInboxSendSchema,
   configurationResultSchema,
+  configurationProfileInputSchema,
+  configurationProfileSchema,
   configurationUndoSchema,
 } from '@nesvo/contracts';
 import {
@@ -585,6 +588,21 @@ const workflows: DesktopApi['workflows'] = {
 };
 const api: DesktopApi = {
   configuration: {
+    draft: async (input, hostId) =>
+      configurationResultSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:inspect-config-draft',
+          configurationInspectDraftSchema.parse(input),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    profile: async input =>
+      configurationProfileSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:desktop-configuration-profile',
+          configurationProfileInputSchema.parse(input),
+        ),
+      ),
     lookup: async (input, hostId) =>
       configurationInboxLookupResultSchema.parse(
         await ipcRenderer.invoke(

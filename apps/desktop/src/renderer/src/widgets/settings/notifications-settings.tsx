@@ -52,8 +52,22 @@ export function NotificationsSettings() {
   };
   const change = (next: boolean) => {
     setEnabled(next);
-    saveNotificationsEnabled(next);
     setResult(null);
+    void window.nesvo.configuration
+      .profile({ action: 'save', values: { notifications: next } })
+      .then(
+        profile => {
+          if (profile.notifications !== undefined)
+            saveNotificationsEnabled(profile.notifications);
+        },
+        () => {
+          setEnabled(!next);
+          setResult({
+            tone: 'error',
+            message: 'The notification preference could not be saved.',
+          });
+        },
+      );
   };
   const sendTest = async () => {
     setResult(null);

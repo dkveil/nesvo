@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { decisionRouteSchema } from './decision-route';
+import { colorSchemeSchema } from './appearance';
+import { providerSchema, sessionModeSchema } from './sessions';
 import {
   externalInboxDeviceSchema,
   externalInboxTokenSchema,
@@ -33,9 +35,17 @@ const fileScope = z.discriminatedUnion('kind', [
 export const configurationTargetSchema = z.discriminatedUnion('area', [
   z.strictObject({
     area: z.literal('settings'),
-    key: z.enum(['inbox-routing', 'workflow-learning', 'notifications']),
+    key: z.enum([
+      'inbox-routing',
+      'workflow-learning',
+      'notifications',
+      'keep-running',
+    ]),
   }),
-  z.strictObject({ area: z.literal('defaults'), key: z.literal('folder') }),
+  z.strictObject({
+    area: z.literal('defaults'),
+    key: z.enum(['folder', 'new-session']),
+  }),
   z.strictObject({
     area: z.literal('appearance'),
     key: z.literal('color-scheme'),
@@ -56,7 +66,35 @@ export const configurationVersionSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
+export const configurationSessionDefaultsSchema = z
+  .strictObject({
+    provider: providerSchema.nullable(),
+    model: z.string().min(1).max(200).nullable(),
+    mode: sessionModeSchema.exclude(['full-access']).nullable(),
+    worktree: z.boolean(),
+  })
+  .refine(
+    value => !!value.provider || (!value.model && !value.mode),
+    'Select a provider for the model and mode.',
+  );
+
+export const configurationProfileSchema = z.strictObject({
+  colorScheme: colorSchemeSchema.optional(),
+  keepRunning: z.boolean().optional(),
+  notifications: z.boolean().optional(),
+  newSession: configurationSessionDefaultsSchema.optional(),
+});
+export const configurationProfileInputSchema = z.strictObject({
+  action: z.enum(['read', 'seed', 'save']),
+  values: configurationProfileSchema.default({}),
+});
+export type ConfigurationProfile = z.infer<typeof configurationProfileSchema>;
+
 export const configurationValueSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('new-session'),
+    value: configurationSessionDefaultsSchema,
+  }),
   z.strictObject({
     kind: z.literal('markdown'),
     document: z.string().min(1).max(configurationLimits.document),
@@ -95,7 +133,7 @@ export const configurationMutationSchema = z
         : target.area === 'appearance'
           ? 'color-scheme'
           : target.area === 'defaults'
-            ? 'folder'
+            ? target.key
             : target.key === 'inbox-routing'
               ? 'route'
               : 'enabled';
@@ -132,10 +170,14 @@ export const configurationDecisionSchema = z.strictObject({
   id: z.uuid(),
   revision: z.number().int().positive(),
   actionId: z.uuid(),
-  decision: z.enum(['accept', 'dismiss']),
+  decision: z.enum(['accept', 'dismiss', 'edit']),
+  draft: configurationValueSchema.nullable().optional(),
   confirmAuthority: z.boolean().default(false),
   reviewRevocation: z.boolean().default(false),
 });
+export const configurationInspectDraftSchema = configurationDecisionSchema.pick(
+  { id: true, revision: true },
+);
 export const configurationUndoSchema = z.strictObject({
   id: z.uuid(),
   revision: z.number().int().positive(),
@@ -293,6 +335,11 @@ export const configurationRequestSchema = z.strictObject({
 });
 export const configurationResultSchema = z.union([
   configurationErrorSchema,
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('draft'),
+    draft: configurationValueSchema.nullable(),
+  }),
   z.strictObject({
     ok: z.literal(true),
     kind: z.literal('capabilities'),

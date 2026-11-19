@@ -1,5 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  metadataRevision,
+  saveVersionedMetadata,
+} from './assistant-change-store';
+import {
   gateRuleGenerationSchema,
   gateRuleLimits,
   gateRuleProposalSchema,
@@ -43,7 +47,11 @@ export class GateRuleStore {
   }
 
   setEnabled(enabled: boolean): void {
-    this.metadata('gate-rule-enabled', String(enabled));
+    saveVersionedMetadata(this.database, 'gate-rule-enabled', String(enabled));
+  }
+
+  enabledRevision(): number {
+    return metadataRevision(this.database, 'gate-rule-enabled');
   }
 
   claimNumber(minimum: number): number {

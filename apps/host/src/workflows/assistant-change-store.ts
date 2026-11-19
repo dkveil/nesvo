@@ -41,6 +41,15 @@ export type ConfigurationIntent = {
 };
 
 export function installConfigurationTables(database: DatabaseSync): void {
+  if (
+    !database
+      .prepare('PRAGMA table_info(metadata)')
+      .all()
+      .some(column => column.name === 'revision')
+  )
+    database.exec(
+      'ALTER TABLE metadata ADD COLUMN revision INTEGER NOT NULL DEFAULT 1',
+    );
   database.exec(`
     CREATE TABLE IF NOT EXISTS configuration_changes (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,6 +87,28 @@ export function installConfigurationTables(database: DatabaseSync): void {
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
     );
   `);
+}
+
+export function metadataRevision(database: DatabaseSync, key: string): number {
+  return Number(
+    database.prepare('SELECT revision FROM metadata WHERE key = ?').get(key)
+      ?.revision ?? 0,
+  );
+}
+
+export function saveVersionedMetadata(
+  database: DatabaseSync,
+  key: string,
+  value: string,
+): void {
+  database
+    .prepare(
+      `
+    INSERT INTO metadata (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, revision = metadata.revision + 1
+  `,
+    )
+    .run(key, value);
 }
 
 export class ConfigurationChangeStore {

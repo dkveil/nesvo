@@ -121,7 +121,7 @@ const launchApplication = (overrides = {}) =>
     timeout: 30000,
   });
 let smokeFailure;
-async function configurationShot(app, page, name) {
+async function configurationShot(app, page, name, ready) {
   if (!configurationScreenshots) return;
   await mkdir(configurationScreenshots, { recursive: true });
   const original = await app.evaluate(({ BrowserWindow }) =>
@@ -140,6 +140,7 @@ async function configurationShot(app, page, name) {
       ([width, height]) => innerWidth === width && innerHeight === height,
       size,
     );
+    await ready?.();
     const image = await app.evaluate(async ({ BrowserWindow }) =>
       (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
         .toPNG()
@@ -158,6 +159,11 @@ async function configurationShot(app, page, name) {
 }
 
 async function smokeConfigurationInbox(app, page) {
+  const closeSettings = page.getByRole('button', {
+    name: 'Close settings',
+    exact: true,
+  });
+  if (await closeSettings.isVisible()) await closeSettings.click();
   const device = await page.evaluate(() =>
     window.nesvo.enrollExternalInboxDevice({ name: 'Fixture Sender' }, 'local'),
   );
@@ -208,7 +214,9 @@ async function smokeConfigurationInbox(app, page) {
   await proposal
     .getByRole('button', { name: 'Review diff for external-inbox-fixture' })
     .click();
-  await configurationShot(app, page, 'stage-1-inbox-assistant');
+  await configurationShot(app, page, 'stage-1-inbox-assistant', () =>
+    proposal.locator('[data-line]').first().waitFor(),
+  );
   await proposal.getByRole('button', { name: 'Accept', exact: true }).click();
   await proposal.getByRole('button', { name: 'Undo', exact: true }).click();
   await proposal.getByText('Undone', { exact: true }).waitFor();
@@ -229,6 +237,138 @@ async function smokeConfigurationInbox(app, page) {
     device.device.id,
   );
 }
+
+async function smokeConfigurationProfile(app, page) {
+  const enrollment = await page.evaluate(() =>
+    window.nesvo.configuration.enroll(
+      {
+        name: 'Fixture profile device',
+        grants: [
+          {
+            area: 'appearance',
+            verbs: ['read', 'apply'],
+            projects: [],
+            global: true,
+          },
+          {
+            area: 'inbox-rules',
+            verbs: ['propose'],
+            projects: [],
+            global: true,
+          },
+        ],
+      },
+      'local',
+    ),
+  );
+  assert.ok(enrollment.token);
+  const cli = async args => {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ['apps/host/dist/cli.js', 'config', ...args, '--json'],
+      {
+        windowsHide: true,
+        env: {
+          ...env,
+          NESVO_CONFIG_TOKEN: enrollment.token,
+          NESVO_CONFIG_SSH: '',
+          NESVO_CONFIG_CONFIG: '',
+        },
+      },
+    );
+    return JSON.parse(stdout);
+  };
+  const existing = await cli(['get', 'appearance', 'color-scheme']);
+  assert.ok(existing.ok);
+  const scheme = existing.target.value.value === 'light' ? 'dark' : 'light';
+  const input = join(directory, 'configuration-fixture.json');
+  await writeFile(
+    input,
+    JSON.stringify({ kind: 'color-scheme', value: scheme }),
+  );
+  const command = [
+    'apply',
+    'appearance',
+    'color-scheme',
+    '--op',
+    'update',
+    '--action-id',
+    randomUUID(),
+    '--base',
+    String(existing.target.version.revision),
+    '--input-file',
+    input,
+  ];
+  const applied = await cli(command);
+  assert.equal(applied.receipt.status, 'applied');
+  assert.deepEqual((await cli(command)).receipt, applied.receipt);
+  await page.waitForFunction(
+    async expected => (await window.nesvo.colorScheme()) === expected,
+    scheme,
+  );
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Change history', exact: true })
+    .click();
+  const history = page.getByRole('article', {
+    name: 'Configuration change Color scheme',
+  });
+  await history
+    .getByRole('button', { name: 'Review diff for Color scheme' })
+    .click();
+  await configurationShot(app, page, 'stage-3-change-history', () =>
+    history.locator('[data-line]').first().waitFor(),
+  );
+  await history.getByRole('button', { name: 'Undo', exact: true }).click();
+  await page.waitForFunction(
+    async expected => (await window.nesvo.colorScheme()) === expected,
+    existing.target.value.value,
+  );
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
+  await writeFile(
+    input,
+    JSON.stringify({
+      kind: 'markdown',
+      document:
+        '---\nname: cli-delivery\ntrigger: external\naction: route\nroute: inbox\n---\n',
+    }),
+  );
+  const proposal = await cli([
+    'propose',
+    'inbox-rules',
+    'cli-delivery',
+    '--op',
+    'create',
+    '--action-id',
+    randomUUID(),
+    '--base',
+    'absent',
+    '--input-file',
+    input,
+  ]);
+  assert.equal(proposal.receipt.status, 'pending');
+  const inbox = page.getByRole('region', { name: 'Inbox', exact: true });
+  const row = inbox.getByRole('article', {
+    name: 'Configuration change cli-delivery',
+  });
+  await row
+    .getByRole('button', { name: 'Review diff for cli-delivery' })
+    .click();
+  await row.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await row.waitFor({ state: 'hidden' });
+  await page.evaluate(
+    id => window.nesvo.configuration.revoke(id, 'local'),
+    enrollment.device.id,
+  );
+  console.log(
+    JSON.stringify({
+      configurationProfile:
+        'direct apply, durable receipt, Undo and CLI proposal verified',
+    }),
+  );
+}
 const providerPids = new Set();
 const alive = pid => {
   try {
@@ -243,7 +383,24 @@ const waitDead = async pid => {
   assert.equal(alive(pid), false, `Owned process ${pid} must exit`);
   providerPids.delete(pid);
 };
-try {
+async function smokeDesktop() {
+  if (process.env.NESVO_D85_SMOKE_ONLY === '1') {
+    application = await launchApplication();
+    const page = await application.firstWindow();
+    await page.getByRole('button', { name: /^Inbox/ }).waitFor();
+    await page.waitForFunction(async () => {
+      try {
+        return !!(await window.nesvo.configuration.profile({ action: 'read' }))
+          .colorScheme;
+      } catch {
+        return false;
+      }
+    });
+    hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+    await smokeConfigurationInbox(application, page);
+    await smokeConfigurationProfile(application, page);
+    return;
+  }
   const policyDirectory = join(directory, 'policy-data');
   const policyHost = join(policyDirectory, 'host');
   const policyPidFile = join(policyDirectory, 'host-pid.json');
@@ -1247,7 +1404,6 @@ try {
     'manager-import',
     'configuration',
   ]);
-  await smokeConfigurationInbox(application, page);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
     'save',
@@ -5622,6 +5778,8 @@ try {
     directory,
     shots: process.env.NESVO_GATE_RULE_SCREENSHOT_DIR,
   });
+  await smokeConfigurationInbox(application, changePage);
+  await smokeConfigurationProfile(application, changePage);
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;
@@ -5643,6 +5801,10 @@ try {
       hostPid: closedHostPid,
     }),
   );
+}
+
+try {
+  await smokeDesktop();
 } catch (error) {
   smokeFailure = error;
   const failurePage = application?.windows()[0];

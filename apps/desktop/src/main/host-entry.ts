@@ -16,6 +16,7 @@ async function* incoming() {
 
 await runHost({
   directory,
+  desktopProfile: true,
   incoming: incoming(),
   send: async response => {
     port.postMessage(response);

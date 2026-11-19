@@ -1,4 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { opendirSync, realpathSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
+import {
+  metadataRevision,
+  saveVersionedMetadata,
+} from '../workflows/assistant-change-store';
+import {
+  ConfigurationRefusal,
+  revisionedSlot,
+} from '../workflows/configuration-changes';
 import { SessionError } from '../sessions/session-error';
 import { FolderError, resolveFolder } from './folder';
 
@@ -19,9 +29,7 @@ export class DefaultSessionFolder {
     signal: AbortSignal,
   ): Promise<string | null> {
     if (!directory) {
-      this.database
-        .prepare('DELETE FROM metadata WHERE key = ?')
-        .run(DEFAULT_FOLDER_KEY);
+      saveVersionedMetadata(this.database, DEFAULT_FOLDER_KEY, '');
       return null;
     }
     let folder: string;
@@ -39,11 +47,45 @@ export class DefaultSessionFolder {
         );
       throw error;
     }
-    this.database
-      .prepare(
-        'INSERT INTO metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      )
-      .run(DEFAULT_FOLDER_KEY, folder);
+    saveVersionedMetadata(this.database, DEFAULT_FOLDER_KEY, folder);
     return folder;
+  }
+
+  configuration() {
+    return revisionedSlot(
+      DEFAULT_FOLDER_KEY,
+      () => ({
+        value: { kind: 'folder', value: this.get() },
+        revision: metadataRevision(this.database, DEFAULT_FOLDER_KEY),
+      }),
+      value => {
+        if (value.kind !== 'folder')
+          throw new ConfigurationRefusal(
+            'invalid-request',
+            'Choose a default session folder.',
+          );
+        saveVersionedMetadata(
+          this.database,
+          DEFAULT_FOLDER_KEY,
+          value.value ?? '',
+        );
+      },
+      () => 'review',
+      value => {
+        if (value.kind !== 'folder' || value.value === null) return value;
+        try {
+          if (!isAbsolute(value.value))
+            throw new Error('A folder must be absolute.');
+          const directory = realpathSync(value.value);
+          opendirSync(directory).closeSync();
+          return { ...value, value: directory };
+        } catch {
+          throw new ConfigurationRefusal(
+            'invalid-request',
+            'Choose a readable absolute folder on this computer.',
+          );
+        }
+      },
+    );
   }
 }

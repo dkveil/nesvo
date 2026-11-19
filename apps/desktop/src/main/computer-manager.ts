@@ -358,9 +358,11 @@ function requiredCapability(
   if (method === 'gate-rules') return 'gate-rules';
   if (
     method === 'read-config-target' ||
+    method === 'inspect-config-draft' ||
     method === 'lookup-inbox-assistant' ||
     method === 'send-inbox-assistant' ||
     method === 'configuration' ||
+    method === 'desktop-configuration-profile' ||
     method === 'list-config-devices' ||
     method === 'enroll-config-device' ||
     method === 'revoke-config-device' ||
@@ -1250,12 +1252,14 @@ export class ComputerManager {
     const expected = {
       health: 'health',
       configuration: 'configuration-result',
+      'desktop-configuration-profile': 'desktop-configuration-profile',
       'lookup-inbox-assistant': 'inbox-assistant-context',
       'send-inbox-assistant': 'inbox-assistant-turn',
       'list-config-devices': 'config-devices',
       'enroll-config-device': 'config-enrollment',
       'revoke-config-device': 'config-devices',
       'read-config-target': 'configuration-result',
+      'inspect-config-draft': 'configuration-result',
       'propose-config-change': 'configuration-result',
       'decide-config-proposal': 'configuration-result',
       'list-config-changes': 'configuration-result',
@@ -1353,6 +1357,11 @@ export class ComputerManager {
       ...lessonResponses,
       'gate-rules': 'gate-rules',
     }[method];
+    if (
+      method === 'enroll-config-device' &&
+      response.type === 'configuration-result'
+    )
+      return response.result;
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
     switch (response.type) {
@@ -1414,6 +1423,8 @@ export class ComputerManager {
         return response.list;
       case 'configuration-result':
         return response.result;
+      case 'desktop-configuration-profile':
+        return response.profile;
       case 'inbox-assistant-context':
         return { context: response.context, sessionId: response.sessionId };
       case 'inbox-assistant-turn':

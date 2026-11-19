@@ -25,9 +25,12 @@ import {
   configurationEnrollmentSchema,
   configurationEnrollSchema,
   configurationHistoryInputSchema,
+  configurationInspectDraftSchema,
   configurationMutationSchema,
   configurationRequestSchema,
   configurationResultSchema,
+  configurationProfileInputSchema,
+  configurationProfileSchema,
   configurationTargetSchema,
   configurationUndoSchema,
   type ConfigurationHistoryInput,
@@ -35,6 +38,7 @@ import {
   type ConfigurationDevice,
   type ConfigurationEnroll,
   type ConfigurationEnrollment,
+  type ConfigurationProfile,
 } from './configuration';
 import {
   claudeAutonomyInputSchema,
@@ -681,6 +685,16 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
 export const hostRequestSchema = z.discriminatedUnion('method', [
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('inspect-config-draft'),
+    input: configurationInspectDraftSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('desktop-configuration-profile'),
+    input: configurationProfileInputSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('lookup-inbox-assistant'),
@@ -1568,6 +1582,11 @@ export type HostConnection = z.infer<typeof hostConnectionSchema>;
 export const hostResponseSchema = z.discriminatedUnion('type', [
   z.strictObject({
     id: z.uuid(),
+    type: z.literal('desktop-configuration-profile'),
+    profile: configurationProfileSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     type: z.literal('inbox-assistant-context'),
     context: configurationInboxContextSchema,
     sessionId: z.uuid().nullable(),
@@ -2193,6 +2212,13 @@ export type WorkflowsApi = {
 };
 export type DesktopApi = {
   configuration: {
+    draft: (
+      input: z.input<typeof configurationInspectDraftSchema>,
+      hostId: HostId,
+    ) => Promise<ConfigurationResult>;
+    profile: (
+      input: z.input<typeof configurationProfileInputSchema>,
+    ) => Promise<ConfigurationProfile>;
     lookup: (
       input: ConfigurationInboxLookup,
       hostId: HostId,

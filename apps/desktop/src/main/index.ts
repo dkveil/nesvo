@@ -46,9 +46,13 @@ import {
   configurationDecisionSchema,
   configurationEnrollSchema,
   configurationHistoryInputSchema,
+  configurationInspectDraftSchema,
   configurationInboxLookupSchema,
   configurationInboxSendSchema,
+  configurationProfileInputSchema,
+  configurationProfileSchema,
   configurationUndoSchema,
+  type ConfigurationProfile,
 } from '@nesvo/contracts';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import { findImportLink, SHARE_PROTOCOL } from './share-link';
@@ -559,13 +563,46 @@ void app.whenReady().then(async () => {
     workflowDemo && (!hostId || hostId === 'local')
       ? [...sessions, ...workflowDemo.sessions()]
       : sessions;
-  computers.subscribe(event =>
+  const applyProfile = (profile: ConfigurationProfile) => {
+    if (profile.colorScheme !== undefined) {
+      saveColorScheme(app.getPath('userData'), profile.colorScheme);
+      nativeTheme.themeSource = profile.colorScheme;
+    }
+    if (profile.keepRunning !== undefined) {
+      keepRunning = profile.keepRunning;
+      saveKeepRunningInBackground(app.getPath('userData'), keepRunning);
+    }
+  };
+  const configProfile = async (input: unknown) => {
+    const profile = configurationProfileSchema.parse(
+      await computers.execute(
+        'desktop-configuration-profile',
+        configurationProfileInputSchema.parse(input),
+        'local',
+      ),
+    );
+    applyProfile(profile);
+    return profile;
+  };
+  computers.subscribe(event => {
     send(
       event.type === 'host-snapshot'
         ? { ...event, sessions: withDemoSessions(event.sessions, event.hostId) }
         : event,
-    ),
-  );
+    );
+    if (event.type === 'host-snapshot' && event.hostId === 'local') {
+      void configProfile({
+        action: 'seed',
+        values: { colorScheme: nativeTheme.themeSource, keepRunning },
+      }).catch(() => undefined);
+    }
+    if (event.type === 'configuration-changed' && event.hostId === 'local')
+      void configProfile({ action: 'read' }).catch(() => undefined);
+  });
+  handle('nesvo:desktop-configuration-profile', (event, input: unknown) => {
+    authorize(event);
+    return configProfile(input);
+  });
   handle('nesvo:color-scheme', event => {
     authorize(event);
     return nativeTheme.themeSource;
@@ -574,11 +611,10 @@ void app.whenReady().then(async () => {
     authorize(event);
     return appliedColorScheme();
   });
-  handle('nesvo:set-color-scheme', (event, scheme: unknown) => {
+  handle('nesvo:set-color-scheme', async (event, scheme: unknown) => {
     authorize(event);
     const next = colorSchemeSchema.parse(scheme);
-    saveColorScheme(app.getPath('userData'), next);
-    nativeTheme.themeSource = next;
+    await configProfile({ action: 'save', values: { colorScheme: next } });
     window?.webContents.send(
       'nesvo:applied-color-scheme',
       appliedColorScheme(),
@@ -628,13 +664,15 @@ void app.whenReady().then(async () => {
     authorize(event);
     return keepRunning;
   });
-  handle('nesvo:set-keep-running-in-background', (event, enabled: unknown) => {
-    authorize(event);
-    const next = keepRunningInBackgroundSchema.parse(enabled);
-    saveKeepRunningInBackground(app.getPath('userData'), next);
-    keepRunning = next;
-    return keepRunning;
-  });
+  handle(
+    'nesvo:set-keep-running-in-background',
+    async (event, enabled: unknown) => {
+      authorize(event);
+      const next = keepRunningInBackgroundSchema.parse(enabled);
+      await configProfile({ action: 'save', values: { keepRunning: next } });
+      return keepRunning;
+    },
+  );
   handle('nesvo:request-attention', event => {
     authorize(event);
     if (!window || window.isDestroyed() || window.isFocused()) return;
@@ -1182,6 +1220,11 @@ void app.whenReady().then(async () => {
     },
   );
   const inboxRuleCalls = [
+    [
+      'nesvo:inspect-config-draft',
+      'inspect-config-draft',
+      configurationInspectDraftSchema,
+    ],
     [
       'nesvo:lookup-inbox-assistant',
       'lookup-inbox-assistant',

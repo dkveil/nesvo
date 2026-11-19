@@ -5,6 +5,7 @@ import {
   KeyRound,
   FolderGit2,
   GitFork,
+  History,
   Import,
   Inbox,
   Info,
@@ -39,6 +40,7 @@ export type SettingsPage =
   | 'workflows'
   | 'computers'
   | 'devices'
+  | 'change-history'
   | 'phone'
   | 'repositories'
   | 'sharing'
@@ -163,6 +165,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Monitor,
     group: 'Connections',
     keywords: 'ssh remote vps host machine add connect',
+  },
+  {
+    id: 'change-history',
+    label: 'Change history',
+    icon: History,
+    group: '',
+    keywords: 'configuration proposals devices undo review history',
   },
   {
     id: 'devices',

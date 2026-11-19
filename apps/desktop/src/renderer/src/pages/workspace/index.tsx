@@ -6025,10 +6025,26 @@ ${text}`
             ) : page === 'devices' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}
+                <ConfigurationDevicesSettings
+                  key={settingsHostId}
+                  computer={settingsComputer}
+                />
                 <DevicesSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   api={desktopApi(settingsHostId)}
+                />
+              </div>
+            ) : page === 'change-history' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <ConfigurationHistorySettings
+                  key={settingsHostId}
+                  computer={settingsComputer}
+                  openSession={id => {
+                    setSettingsPage(null);
+                    select(hostKey(id, settingsHostId));
+                  }}
                 />
               </div>
             ) : page === 'worktree-recipes' ? (
@@ -6148,3 +6164,7 @@ ${text}`
     </div>
   );
 }
+import {
+  ConfigurationDevicesSettings,
+  ConfigurationHistorySettings,
+} from '@/widgets/settings/configuration-settings';

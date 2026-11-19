@@ -1,13 +1,28 @@
 import { useMemo, useState } from 'react';
 import { FilePenLine } from 'lucide-react';
 import { parsePatchFiles } from '@pierre/diffs';
-import type { ConfigurationChange } from '@nesvo/contracts';
+import {
+  configurationValueSchema,
+  type ConfigurationChange,
+  type ConfigurationValue,
+} from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { DiffFileView } from '@/features/diff-viewer/diff-file-view';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { Disclosure } from '@/shared/ui/disclosure';
+import {
+  Dialog,
+  DialogCancel,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog';
+import { Field } from '@/shared/ui/field';
+import { Textarea } from '@/shared/ui/textarea';
 import { ListRow } from '@/shared/ui/list-row';
 import { StatusMessage } from '@/shared/ui/status-message';
 import type { HostedConfigurationChange } from './use-configuration-changes';
@@ -48,6 +63,12 @@ export function ConfigurationChangeRow({
     revoked: boolean;
   } | null>(null);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState<{
+    revision: number;
+    text: string;
+    markdown: boolean;
+  } | null>(null);
+  const [editPending, setEditPending] = useState(false);
   const { target, source } = change;
   const name =
     target.area === 'inbox-rules'
@@ -65,6 +86,57 @@ export function ConfigurationChangeRow({
       : source.kind === 'assistant'
         ? 'Inbox assistant'
         : 'Owner';
+  const openEditor = async () => {
+    setError('');
+    try {
+      const current = await window.nesvo.configuration.draft(
+        { id: change.id, revision: change.revision },
+        change.hostId,
+      );
+      if (!current.ok) {
+        setError(current.message);
+        return;
+      }
+      if (current.kind !== 'draft' || !current.draft) return;
+      const markdown = current.draft.kind === 'markdown';
+      setEditing({
+        revision: change.revision,
+        markdown,
+        text:
+          current.draft.kind === 'markdown'
+            ? current.draft.document
+            : JSON.stringify(current.draft, null, 2),
+      });
+    } catch (issue) {
+      setError(errorDetail(issue));
+    }
+  };
+  const previewEdit = async () => {
+    if (!editing) return;
+    setEditPending(true);
+    setError('');
+    try {
+      const draft: ConfigurationValue = editing.markdown
+        ? { kind: 'markdown', document: editing.text }
+        : configurationValueSchema.parse(JSON.parse(editing.text));
+      const result = await window.nesvo.configuration.decide(
+        {
+          id: change.id,
+          revision: editing.revision,
+          decision: 'edit',
+          actionId: crypto.randomUUID(),
+          draft,
+        },
+        change.hostId,
+      );
+      if (result.ok) setEditing(null);
+      else setError(result.message);
+    } catch {
+      setError('Check the proposal draft and try again.');
+    } finally {
+      setEditPending(false);
+    }
+  };
   const diff = useMemo(() => {
     if (change.diff.truncated) return null;
     try {
@@ -123,7 +195,14 @@ export function ConfigurationChangeRow({
         leading={<FilePenLine />}
         title={name}
         meta={statuses[change.status]}
-        description={[computer, scope, origin, change.operation]
+        description={[
+          computer,
+          scope,
+          origin,
+          change.operation,
+          new Date(change.updatedAt).toLocaleString(),
+          change.decidedBy ? `Decided by ${change.decidedBy}` : '',
+        ]
           .filter(Boolean)
           .join(' · ')}
         trailing={
@@ -165,6 +244,19 @@ export function ConfigurationChangeRow({
             </StatusMessage>
           )}
           <div className="flex flex-wrap items-center gap-1.5">
+            {(change.status === 'pending' || change.status === 'conflicted') &&
+              change.operation !== 'delete' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!online || !!working}
+                  onClick={() => void openEditor()}
+                >
+                  {change.status === 'conflicted'
+                    ? 'Prepare fresh draft'
+                    : 'Edit proposal'}
+                </Button>
+              )}
             {change.status === 'pending' && (
               <>
                 <Button
@@ -225,6 +317,53 @@ export function ConfigurationChangeRow({
           }
           onConfirm={() => act(confirm.action, true, confirm.revoked)}
         />
+      )}
+      {editing && (
+        <Dialog
+          open
+          onOpenChange={open => {
+            if (!open && !editPending) setEditing(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit proposal</DialogTitle>
+              <DialogDescription>
+                {name} · {computer}
+              </DialogDescription>
+            </DialogHeader>
+            <Field
+              id={`configuration-draft-${change.id}`}
+              label={editing.markdown ? 'Rule definition' : 'Draft value'}
+            >
+              <Textarea
+                id={`configuration-draft-${change.id}`}
+                value={editing.text}
+                rows={10}
+                resize="none"
+                onChange={event =>
+                  setEditing({ ...editing, text: event.target.value })
+                }
+              />
+            </Field>
+            {error && <StatusMessage tone="error">{error}</StatusMessage>}
+            <DialogFooter>
+              <DialogCancel
+                disabled={editPending}
+                onClick={() => setEditing(null)}
+              >
+                Cancel
+              </DialogCancel>
+              <Button
+                size="lg"
+                disabled={!editing.text.trim() || editPending}
+                onClick={() => void previewEdit()}
+              >
+                Review updated diff
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </article>
   );

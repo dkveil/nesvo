@@ -54,6 +54,53 @@ export type ConfigurationWriter =
     };
 
 export type ConfigurationVerb = 'read' | 'propose' | 'apply';
+
+export function revisionedSlot(
+  key: string,
+  current: () => { value: ConfigurationValue; revision: number },
+  save: (value: ConfigurationValue) => void,
+  classify: (
+    before: ConfigurationValue | null,
+    after: ConfigurationValue,
+  ) => Classification,
+  validate: (value: ConfigurationValue) => ConfigurationValue = value => value,
+): ConfigurationSlot<void> {
+  return {
+    read: () => {
+      const { value, revision } = current();
+      return {
+        version: { type: 'revision', revision },
+        value,
+        identity: key,
+        dependencies: '',
+      };
+    },
+    prepare: ({ draft }, before) => {
+      if (!draft || before.version.type !== 'revision')
+        throw new ConfigurationRefusal(
+          'invalid-request',
+          'Choose a value for this setting.',
+        );
+      const value = validate(draft);
+      return {
+        classification: classify(before.value, value),
+        after: {
+          ...before,
+          value,
+          version: { type: 'revision', revision: before.version.revision + 1 },
+        },
+      };
+    },
+    write: ({ to }) => {
+      if (!to.value)
+        throw new ConfigurationRefusal(
+          'invalid-request',
+          'Choose a value for this setting.',
+        );
+      save(to.value);
+    },
+  };
+}
 export type ConfigurationPrincipal = {
   source: ConfigurationSource;
   authorize: (verb: ConfigurationVerb, target: ConfigurationTarget) => void;
@@ -227,6 +274,10 @@ export class ConfigurationChanges {
     return this.store.list(input);
   }
 
+  draft(input: Pick<ConfigurationDecision, 'id' | 'revision'>) {
+    return this.requireProposal(input).mutation.draft;
+  }
+
   status(principal: ConfigurationPrincipal, id: string) {
     const receipt = this.store.receipt(
       principalId(principal.source),
@@ -352,7 +403,50 @@ export class ConfigurationChanges {
       });
       const duplicate = this.retry(action);
       if (duplicate) return duplicate;
-      const record = this.require(input.id, input.revision, 'pending');
+      const record =
+        input.decision === 'edit'
+          ? this.requireProposal(input)
+          : this.require(input.id, input.revision, 'pending');
+      if (input.decision === 'edit') {
+        const writer = this.writer(record.change.target);
+        const revise = (slot: ConfigurationSlot<unknown>) => {
+          const before = slot.read();
+          const mutation = readMutation({
+            ...record.mutation,
+            baseVersion: before.version,
+            draft: input.draft ?? null,
+          });
+          const { after, classification } = this.prepare(
+            slot,
+            mutation,
+            before,
+          );
+          const { change } = this.transition(record, 'pending', 'owner');
+          const next = {
+            ...record,
+            mutation,
+            before,
+            after,
+            change: {
+              ...change,
+              classification,
+              baseVersion: before.version,
+              diff: preview(before.value, after.value),
+            },
+          };
+          return { next, receipt: this.store.settle(action, next) };
+        };
+        const result =
+          writer.kind === 'database'
+            ? this.store.transaction(() =>
+                revise(writer.open(record.change.target)),
+              )
+            : await writer.locked(record.change.target, async slot =>
+                this.store.transaction(() => revise(slot)),
+              );
+        this.publish(result.next.change);
+        return result.receipt;
+      }
       if (input.decision === 'dismiss') {
         const dismissed = this.transition(record, 'dismissed', 'owner');
         const receipt = this.store.transaction(() =>
@@ -503,6 +597,15 @@ export class ConfigurationChanges {
         'The outcome of a file write is being reconciled.',
       );
     return record;
+  }
+
+  private requireProposal(
+    input: Pick<ConfigurationDecision, 'id' | 'revision'>,
+  ) {
+    const status = this.store.get(input.id)?.change.status;
+    if (status !== 'pending' && status !== 'conflicted')
+      conflict('This configuration proposal can no longer be edited.');
+    return this.require(input.id, input.revision, status);
   }
 
   private prepare(

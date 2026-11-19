@@ -1,5 +1,6 @@
 import {
   providerProfileSelectionSchema,
+  configurationSessionDefaultsSchema,
   providerSchema,
   sessionModeSchema,
 } from '@nesvo/contracts';
@@ -75,6 +76,23 @@ export function readNewSessionDefaults(): NewSessionDefaults {
 }
 
 export function saveNewSessionDefaults(defaults: NewSessionDefaults): void {
+  storeNewSessionDefaults(defaults);
+  const parsed = configurationSessionDefaultsSchema.safeParse({
+    provider: defaults.provider,
+    model: defaults.provider ? defaults.model : null,
+    mode:
+      defaults.provider && defaults.mode !== 'full-access'
+        ? defaults.mode
+        : null,
+    worktree: defaults.worktree,
+  });
+  if (parsed.success)
+    void window.nesvo.configuration
+      .profile({ action: 'save', values: { newSession: parsed.data } })
+      .catch(() => undefined);
+}
+
+export function storeNewSessionDefaults(defaults: NewSessionDefaults): void {
   try {
     localStorage.setItem(key, JSON.stringify(defaults));
   } catch {

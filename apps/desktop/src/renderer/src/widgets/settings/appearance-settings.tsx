@@ -49,8 +49,26 @@ export function AppearanceSettings({ api }: Props) {
       .finally(() => {
         if (active) setLoading(false);
       });
+    const unsubscribe = window.nesvo.subscribe(event => {
+      if (
+        event.type !== 'configuration-changed' ||
+        event.hostId !== 'local' ||
+        event.change.target.area !== 'appearance'
+      )
+        return;
+      void window.nesvo.configuration
+        .profile({ action: 'read' })
+        .then(profile => {
+          if (active && profile.colorScheme) {
+            confirmed.current = profile.colorScheme;
+            setScheme(profile.colorScheme);
+          }
+        })
+        .catch(() => undefined);
+    });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, [api]);
   const choose = async (next: ColorScheme) => {

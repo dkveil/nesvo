@@ -78,6 +78,7 @@ import {
 import {
   ConfigurationChanges,
   ConfigurationRefusal,
+  revisionedSlot,
   type ConfigurationPrincipal,
 } from './workflows/configuration-changes';
 import type { ConfigurationResult } from '@nesvo/contracts';
@@ -86,6 +87,7 @@ import {
   configurationFailure,
 } from './configuration-devices';
 import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
+import { DesktopConfigurationProfile } from './desktop-configuration-profile';
 import {
   WorkflowAssistant,
   WorkflowAssistantError,
@@ -313,6 +315,7 @@ const inboxFailure = (error: unknown, message: string) => ({
 
 type HostTransport = {
   directory: string;
+  desktopProfile?: boolean;
   incoming: AsyncIterable<unknown>;
   send: (response: HostMessage) => Promise<void>;
 };
@@ -335,6 +338,7 @@ const toHostMessage = (
 
 export const serveHost = ({
   directory,
+  desktopProfile = false,
   incoming,
   send: deliver,
 }: HostTransport) =>
@@ -933,17 +937,97 @@ export const serveHost = ({
         (source, target) =>
           configurationDevices.canPropose(source.deviceId, target),
       );
-      configuration.register('settings', inboxRules.configurationSettings());
+      const profile = desktopProfile
+        ? new DesktopConfigurationProfile(database)
+        : null;
+      const inboxSettings = inboxRules.configurationSettings();
+      configuration.register('settings', {
+        kind: 'database',
+        open: target => {
+          if (target.area === 'settings' && target.key === 'workflow-learning')
+            return revisionedSlot(
+              'workflow-learning',
+              () => ({
+                value: { kind: 'enabled', value: gateRuleStore.enabled() },
+                revision: gateRuleStore.enabledRevision(),
+              }),
+              value => {
+                if (value.kind !== 'enabled')
+                  throw new ConfigurationRefusal(
+                    'invalid-request',
+                    'Choose whether to generate workflow lessons.',
+                  );
+                gateRuleStore.setEnabled(value.value);
+              },
+              () => 'review',
+            );
+          if (
+            profile &&
+            target.area === 'settings' &&
+            (target.key === 'notifications' || target.key === 'keep-running')
+          )
+            return profile.slot(target);
+          if (inboxSettings.kind !== 'database')
+            throw new Error('Inbox settings require a database writer.');
+          return inboxSettings.open(target);
+        },
+      });
+      configuration.register('defaults', {
+        kind: 'database',
+        open: target => {
+          if (target.area === 'defaults' && target.key === 'folder')
+            return defaultFolder.configuration();
+          if (profile) return profile.slot(target);
+          throw new ConfigurationRefusal(
+            'unsupported',
+            'This computer has no desktop profile.',
+          );
+        },
+      });
+      if (profile)
+        configuration.register('appearance', {
+          kind: 'database',
+          open: target => profile.slot(target),
+        });
       configuration.register('inbox-rules', inboxRules.configurationRules());
       const configurationDevices: ConfigurationDevices =
         new ConfigurationDevices(
           database,
           configuration,
           computerId,
-          ['settings', 'inbox-rules'],
-          [],
+          profile
+            ? ['settings', 'inbox-rules', 'defaults', 'appearance']
+            : ['settings', 'inbox-rules', 'defaults'],
+          profile
+            ? [
+                { area: 'appearance', key: 'color-scheme' },
+                { area: 'settings', key: 'notifications' },
+              ]
+            : [],
           async (area, directory, signal) => {
-            if (area === 'settings') return [{ area, key: 'inbox-routing' }];
+            const desktop = profile?.read();
+            if (area === 'settings')
+              return [
+                { area, key: 'inbox-routing' },
+                { area, key: 'workflow-learning' },
+                ...(desktop?.keepRunning !== undefined
+                  ? [{ area, key: 'keep-running' as const }]
+                  : []),
+                ...(desktop?.notifications !== undefined
+                  ? [{ area, key: 'notifications' as const }]
+                  : []),
+              ];
+            if (area === 'appearance')
+              return desktop?.colorScheme
+                ? [{ area, key: 'color-scheme' }]
+                : [];
+            if (area === 'defaults')
+              return [
+                { area, key: 'folder' },
+                ...(desktop?.newSession
+                  ? [{ area, key: 'new-session' as const }]
+                  : []),
+              ];
             if (area !== 'inbox-rules') return [];
             const catalog = await inboxRules.catalog(directory, signal);
             if (
@@ -1469,6 +1553,26 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (request.method === 'desktop-configuration-profile') {
+          const { id, input } = request;
+          yield* Effect.promise(() =>
+            send(
+              profile
+                ? {
+                    type: 'desktop-configuration-profile',
+                    id,
+                    profile: profile.update(input.action, input.values),
+                  }
+                : {
+                    type: 'error',
+                    id,
+                    code: 'unavailable',
+                    message: 'This computer has no desktop profile.',
+                  },
+            ),
+          );
+          continue;
+        }
         if (
           request.method === 'configuration' ||
           request.method === 'list-config-devices' ||
@@ -1525,6 +1629,7 @@ export const serveHost = ({
         }
         if (
           request.method === 'read-config-target' ||
+          request.method === 'inspect-config-draft' ||
           request.method === 'propose-config-change' ||
           request.method === 'decide-config-proposal' ||
           request.method === 'list-config-changes' ||
@@ -1534,6 +1639,12 @@ export const serveHost = ({
           const { id } = request;
           const operation = async (): Promise<ConfigurationResult> => {
             switch (request.method) {
+              case 'inspect-config-draft':
+                return {
+                  ok: true,
+                  kind: 'draft',
+                  draft: changes.draft(request.input),
+                };
               case 'read-config-target':
                 return {
                   ok: true,
