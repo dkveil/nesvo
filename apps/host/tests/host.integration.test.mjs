@@ -3643,12 +3643,13 @@ test(
         { type: 'error', id: null, code: 'invalid-request' },
         JSON.stringify(input),
       );
-    const createCodex = async mode => {
+    const createCodex = async (mode, reviewEveryResult = false) => {
       const response = await finalHost.request('create-session', {
         ...create(''),
         provider: 'Codex',
         model: 'fixture-codex',
         mode,
+        ...(reviewEveryResult ? { reviewEveryResult: true } : {}),
       });
       assert.equal(response.type, 'session', JSON.stringify(response));
       assert.equal(response.session.providerSessionId, null);
@@ -3802,7 +3803,7 @@ test(
       ).interruption,
       disconnected.interruption,
     );
-    const readOnly = await createCodex('read-only');
+    const readOnly = await createCodex('read-only', true);
     await seedNativeSkill(readOnly.directory);
     const selectedCatalog = await finalHost.request('discover-skills', {
       sessionId: readOnly.id,
@@ -4721,6 +4722,7 @@ test(
       model: 'fixture-codex',
       role: 'orchestrator',
       mode: 'read-only',
+      reviewEveryResult: true,
     });
     assert.equal(rootResponse.type, 'session', JSON.stringify(rootResponse));
     const root = rootResponse.session;
@@ -8164,7 +8166,7 @@ test(
       })
     ).session;
     await host.review(
-      value => value.runId === answered.runId && value.status === 'pending',
+      value => value.runId === answered.runId && value.status === 'done',
     );
     const revision = (await host.request('list-scheduled-jobs', {})).list
       .scheduledJobs[0].revision;
@@ -12347,7 +12349,7 @@ test(
 );
 
 test(
-  'scheduled job runs become ordinary sessions with their result in the inbox',
+  'scheduled job runs become ordinary sessions with saved results',
   { timeout: 180_000 },
   async t => {
     const directory = await realpath(
@@ -12671,7 +12673,7 @@ test(
         );
         assert.equal(
           sessions.listReviews().find(item => item.id === run.reviewId)?.status,
-          'pending',
+          'done',
         );
         const normal = await interactive({
           title: 'Interactive Codex',
