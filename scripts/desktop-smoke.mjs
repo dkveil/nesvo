@@ -2171,18 +2171,23 @@ async function smokeDesktop() {
   await externalSettings
     .getByRole('button', { name: 'Revoke', exact: true })
     .click();
-  await page
-    .getByRole('alertdialog', { name: 'Revoke this message source?' })
+  const revokeSource = page.getByRole('alertdialog', {
+    name: 'Revoke this message source?',
+  });
+  await revokeSource
     .getByRole('button', { name: 'Revoke', exact: true })
     .click();
   await externalSettings
     .getByText('Fixture message source', { exact: true })
     .waitFor({ state: 'hidden' });
+  await revokeSource.waitFor({ state: 'hidden' });
   await page.evaluate(
     deviceId => window.nesvo.revokeExternalInboxDevice({ deviceId }),
     sourceDeviceId,
   );
-  await page.keyboard.press('Escape');
+  await initialContext
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
   await initialContext.waitFor({ state: 'hidden' });
   const scheduledJobCall = (method, ...args) =>
     page.evaluate(
