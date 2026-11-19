@@ -9,5 +9,5 @@ export function automationEditorDescription(values: AutomationValues): string {
     return 'Runs a workflow on a schedule. Each run is a workflow run with its result in the Inbox.';
   if (values.reviewMode)
     return 'Starts an agent review for each new or updated pull request. Draft reviews reach the Inbox and are never published automatically.';
-  return 'Runs a session on a schedule or when checks fail, with the result in the Inbox.';
+  return 'Runs a session on a schedule or when checks fail. The Inbox shows results that need review.';
 }

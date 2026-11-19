@@ -4037,9 +4037,11 @@ try {
     exact: true,
   });
   const openPicker = async (from, when = 'success') => {
-    await editor
-      .locator(`[data-node-add="${from}"][data-node-add-when="${when}"]`)
-      .click();
+    const add = editor.locator(
+      `[data-node-add="${from}"][data-node-add-when="${when}"]`,
+    );
+    await revealGraphControls([add]);
+    await add.click();
     await restartedPage.locator('[data-node-picker]').waitFor();
   };
   const addGraphStep = async (name, from = '__start') => {
@@ -4085,17 +4087,17 @@ try {
     box.y >= frame.y &&
     box.x + box.width <= frame.x + frame.width &&
     box.y + box.height <= frame.y + frame.height;
-  const revealHandles = async handles => {
+  const revealGraphControls = async controls => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const frame = await canvas.boundingBox();
       const boxes = await Promise.all(
-        handles.map(handle => handle.boundingBox()),
+        controls.map(control => control.boundingBox()),
       );
       if (boxes.every(box => inside(box, frame))) return;
       await fitGraph();
       await delay(250);
     }
-    throw new Error('Graph editor handles stay outside the canvas.');
+    throw new Error('Graph editor controls stay outside the canvas.');
   };
   const connectSteps = async (from, to) => {
     const sourceHandle = editor.getByLabel(`Connect from ${from}`, {
@@ -4104,7 +4106,7 @@ try {
     const targetHandle = editor.getByLabel(`Connect into ${to}`, {
       exact: true,
     });
-    await revealHandles([sourceHandle, targetHandle]);
+    await revealGraphControls([sourceHandle, targetHandle]);
     await sourceHandle.dragTo(targetHandle, { force: true });
     if (await edgeShown(from, to)) return;
     const notice = await restartedPage
