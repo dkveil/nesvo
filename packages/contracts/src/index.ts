@@ -1722,7 +1722,10 @@ export const hostHealthSchema = z.strictObject({
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),
   contractRevision: z.number().int().min(1).max(1_000_000).optional(),
-  capabilities: z.array(hostCapabilitySchema).max(64).optional(),
+  capabilities: z
+    .array(hostCapabilitySchema)
+    .max(hostCapabilitySchema.options.length)
+    .optional(),
 });
 
 export const hostConnectSchema = z.strictObject({

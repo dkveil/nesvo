@@ -168,7 +168,9 @@ export const computerSchema = z.strictObject({
   instanceId: z.uuid().nullable(),
   lastSyncedAt: z.iso.datetime().nullable(),
   error: z.string().max(2000).nullable(),
-  capabilities: z.array(hostCapabilitySchema).max(64),
+  capabilities: z
+    .array(hostCapabilitySchema)
+    .max(hostCapabilitySchema.options.length),
   ssh: sshComputerInputSchema.optional(),
 });
 export type Computer = z.infer<typeof computerSchema>;
