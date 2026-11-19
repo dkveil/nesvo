@@ -1140,6 +1140,91 @@ test(
   },
 );
 
+test('the Inbox assistant receives routing facts and proposes without answering its source item', async () => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-inbox-assistant-')),
+  );
+  const host = launch(directory, join(directory, 'provider'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
+  });
+  try {
+    const device = await host.request('enroll-external-inbox-device', {
+      name: 'Fixture sender',
+    });
+    const posted = await host.request('external-inbox', {
+      token: device.enrollment.token,
+      command: {
+        operation: 'post',
+        item: {
+          title: 'EXTERNAL_TITLE_SENTINEL',
+          body: 'EXTERNAL_BODY_SENTINEL',
+          actions: ['EXTERNAL_LABEL_SENTINEL', 'Decline'],
+          idempotencyKey: randomUUID(),
+        },
+      },
+    });
+    const itemId = posted.result.item.id;
+    const lookup = {
+      subject: { kind: 'rule', id: itemId },
+      provider: 'Codex',
+      model: 'fixture-codex',
+    };
+    const context = await host.request('lookup-inbox-assistant', lookup);
+    assert.equal(context.sessionId, null);
+    assert.equal(context.context.routing.source, 'no-parent');
+    assert.doesNotMatch(
+      JSON.stringify(context),
+      /EXTERNAL_(TITLE|BODY|LABEL)_SENTINEL/,
+    );
+    const turn = await host.request('send-inbox-assistant', {
+      ...lookup,
+      messageId: randomUUID(),
+      text: 'Keep future external items in the Inbox.',
+    });
+    assert.equal(turn.type, 'inbox-assistant-turn', JSON.stringify(turn));
+    let proposal;
+    for (let i = 0; i < 35 && !proposal; i++) {
+      const history = await host.request('list-config-changes', {
+        status: 'pending',
+      });
+      proposal = history.result.page.changes[0];
+      if (!proposal) await delay(100);
+    }
+    assert.equal(proposal?.source.sessionId, turn.sessionId);
+    const file = join(directory, 'inbox-rules', 'external-inbox-fixture.md');
+    assert.equal(existsSync(file), false);
+    const accepted = await host.request('decide-config-proposal', {
+      id: proposal.id,
+      revision: proposal.revision,
+      actionId: randomUUID(),
+      decision: 'accept',
+    });
+    assert.equal(accepted.result.receipt.status, 'applied');
+    assert.ok(existsSync(file));
+    const undone = await host.request('undo-config-change', {
+      id: proposal.id,
+      revision: accepted.result.receipt.revision,
+      actionId: randomUUID(),
+    });
+    assert.equal(undone.result.receipt.status, 'undone');
+    assert.equal(existsSync(file), false);
+    assert.equal(
+      (await host.request('list-inbox-items')).items.find(
+        item => item.id === itemId,
+      ).status,
+      'pending',
+    );
+    assert.equal(
+      (await host.request('lookup-inbox-assistant', lookup)).sessionId,
+      turn.sessionId,
+    );
+  } finally {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('host diagnostics redact secret patterns and secret environment values', () => {
   const secretValues = [
     'ghp_synthetictoken123456',

@@ -83,7 +83,7 @@ const CI_SWEEP_MS = 60_000;
 const CI_SESSIONS_PER_SWEEP = 20;
 const WORKFLOW_HOLD_POLL_MS = 500;
 
-type ApplicableRule = { rule: InboxRule; scope: InboxRuleScope };
+type ApplicableRule = { rule: InboxRule; scope: InboxRuleScope; contentHash: string };
 
 type CiStatus = {
   headSha: string;
@@ -488,6 +488,7 @@ export class InboxRules {
       : undefined;
     if (initialSession && !session) return 'not-found' as const;
     const now = Date.now();
+    const { route, ...routing } = this.resolveRoute(entry ?? null, session ?? null);
     const counts = this.ports.store.externalCounts(
       deviceId,
       new Date(now - 60_000).toISOString(),
@@ -517,7 +518,8 @@ export class InboxRules {
       sessionId: session?.id ?? null,
       sessionTitle: session?.title.slice(0, 200) ?? '',
       parentId: session?.parentId ?? null,
-      route: this.routeFor(entry?.rule ?? null, session ?? null),
+      route,
+      routing,
       status: 'pending',
       options: input.actions,
       presentation: {
@@ -720,7 +722,7 @@ export class InboxRules {
         project = [];
       }
       return [...global, ...project].flatMap(file =>
-        file.rule?.enabled ? [{ rule: file.rule, scope: file.scope }] : [],
+        file.rule?.enabled ? [{ rule: file.rule, scope: file.scope, contentHash: file.contentHash }] : [],
       );
     })();
     return rules;
@@ -775,17 +777,29 @@ export class InboxRules {
     return true;
   }
 
-  private routeFor(rule: InboxRule | null, session: Session | null): DecisionRoute {
+  private resolveRoute(entry: ApplicableRule | null, session: Session | null) {
     const group = session?.groupId
       ? this.ports.group(session.groupId)
       : undefined;
-    const route =
-      rule?.route ??
+    const configuredRoute =
+      entry?.rule.route ??
       session?.decisionRouteOverride ??
       session?.decisionRoute ??
       group?.defaults.decisionRoute ??
       this.settings().defaultRoute;
-    return session?.parentId ? route : 'inbox';
+    const source =
+      session?.parentId ? entry?.rule.route ? 'rule' : (session.decisionRouteOverride ?? session.decisionRoute) ? 'session' :
+        group?.defaults.decisionRoute ? 'group' : 'computer' : 'no-parent';
+    const route: DecisionRoute = session?.parentId ? configuredRoute : 'inbox';
+    return { route, source: source as 'rule' | 'session' | 'group' | 'computer' | 'no-parent', configuredRoute, matchedHash: entry?.contentHash ?? null };
+  }
+
+  ruleItem(id: string) {
+    return this.ports.store.get(id)?.item ?? null;
+  }
+
+  sessionRoute(session: Session | null): DecisionRoute {
+    return this.resolveRoute(null, session).route;
   }
 
   async prepareTurn(
@@ -1131,7 +1145,7 @@ export class InboxRules {
       !file.rule.repository &&
       !file.rule.workflow &&
       !file.rule.group
-        ? [{ rule: file.rule, scope: file.scope }]
+        ? [{ rule: file.rule, scope: file.scope, contentHash: file.contentHash }]
         : [],
     );
   }
@@ -1270,7 +1284,7 @@ export class InboxRules {
     input: CreateInput,
   ): RuleInboxItem | null {
     const { rule } = entry;
-    const route = this.routeFor(rule, session);
+    const { route, ...routing } = this.resolveRoute(entry, session);
     const values: Record<string, string> = {
       'rule.name': rule.name,
       'session.title': session?.title ?? 'A pull request',
@@ -1293,6 +1307,7 @@ export class InboxRules {
       sessionTitle: (session?.title ?? 'Pull request').slice(0, 200),
       parentId: session?.parentId ?? null,
       route,
+      routing,
       status: 'pending',
       options: rule.action === 'ask' ? (rule.options ?? []) : [],
       presentation: {

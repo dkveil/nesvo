@@ -71,6 +71,12 @@ export function installConfigurationTables(database: DatabaseSync): void {
       token_hash TEXT NOT NULL UNIQUE,
       grants TEXT NOT NULL CHECK (json_valid(grants))
     );
+    CREATE TABLE IF NOT EXISTS configuration_inbox_conversations (
+      subject TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+    );
   `);
 }
 

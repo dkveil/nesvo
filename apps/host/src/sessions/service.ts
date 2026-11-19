@@ -423,6 +423,7 @@ export type WorkflowTurn = {
   assistant?: boolean;
   privateResponse?: boolean;
   assistantPrompt?: string;
+  isolatedPrompt?: string;
 };
 
 export const isCoordinatorCandidate = (session: Session): boolean =>
@@ -517,6 +518,7 @@ type LaunchTurn = {
   ephemeral?: boolean;
   instructionsOnly?: boolean;
   assistantPrompt?: string;
+  isolatedContext?: boolean;
   previousSelection?: TurnSelection;
   unattended?: boolean;
   privateResponse?: boolean;
@@ -887,18 +889,24 @@ export class SessionService {
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
     this.emitReviews(superseded);
-    this.launch(session, prompt, {
-      readOnly: turn.readOnly,
-      skillId: turn.skillId,
-      skillHash: turn.skillHash,
-      savedSkill: turn.savedSkill,
-      outputSchema: turn.outputSchema,
-      ephemeral,
-      instructionsOnly: turn.instructionsOnly,
-      unattended: true,
-      assistantPrompt: turn.assistant ? turn.assistantPrompt : undefined,
-      privateResponse: turn.readOnly && turn.privateResponse,
-    });
+    this.launch(
+      session,
+      turn.isolatedPrompt ? `${turn.isolatedPrompt}\n\n${turn.text}` : prompt,
+      {
+        readOnly: turn.readOnly,
+        skillId: turn.skillId,
+        skillHash: turn.skillHash,
+        savedSkill: turn.savedSkill,
+        outputSchema: turn.outputSchema,
+        ephemeral,
+        instructionsOnly: turn.instructionsOnly,
+        unattended: true,
+        assistantPrompt: turn.assistant ? turn.assistantPrompt : undefined,
+        isolatedContext:
+          !!turn.isolatedPrompt && turn.assistant && turn.readOnly,
+        privateResponse: turn.readOnly && turn.privateResponse,
+      },
+    );
     return 'sent';
   }
 
@@ -4365,6 +4373,7 @@ export class SessionService {
       ephemeral,
       instructionsOnly,
       assistantPrompt,
+      isolatedContext,
       previousSelection,
       unattended,
       privateResponse,
@@ -4722,6 +4731,7 @@ export class SessionService {
                 ...(images.paths.length ? { images: images.paths } : {}),
                 ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
+                ...(isolatedContext ? { isolatedContext } : {}),
                 ...(selected
                   ? {
                       skillId: selected.native!.id,
@@ -4800,6 +4810,7 @@ export class SessionService {
                     }
                   : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
+                ...(isolatedContext ? { isolatedContext } : {}),
                 ...(assistantPrompt ? { assistantPrompt } : {}),
                 mode: readOnly ? 'read-only' : session.mode,
                 approvals:

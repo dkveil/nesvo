@@ -85,6 +85,7 @@ import {
   ConfigurationDevices,
   configurationFailure,
 } from './configuration-devices';
+import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
 import {
   WorkflowAssistant,
   WorkflowAssistantError,
@@ -383,6 +384,7 @@ export const serveHost = ({
       let outgoing = Promise.resolve();
       const lessons: { current?: LessonService } = {};
       const ruleMetrics = new LessonStore(database);
+      const gateRuleStore = new GateRuleStore(database);
       const gateRules: { current?: GateRuleService } = {};
       const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
@@ -978,6 +980,49 @@ export const serveHost = ({
         source: { kind: 'owner' },
         authorize: () => undefined,
       };
+      const inboxAssistant = new ConfigurationInboxAssistant(
+        database,
+        directory,
+        inboxRules,
+        sessions,
+        configuration,
+        subject => {
+          switch (subject.kind) {
+            case 'review': {
+              const review = reviewStore.get(subject.id);
+              return review
+                ? {
+                    sessionId: review.sessionId,
+                    explanation:
+                      'The session saved a result for review. Its review policy and the origin of the result affect future reviews.',
+                  }
+                : null;
+            }
+            case 'automation':
+              return scheduledJobStore.get(subject.id)
+                ? {
+                    sessionId: null,
+                    explanation:
+                      'This automation is waiting for owner approval. Its ask-first setting controls future requests.',
+                  }
+                : null;
+            case 'gate-rule-proposal': {
+              const proposal = gateRuleStore.proposal(subject.id)?.row;
+              return proposal
+                ? {
+                    sessionId: proposal.sessionId,
+                    explanation:
+                      'The workflow learning service proposed a gate rule. Workflow learning settings affect future proposals.',
+                  }
+                : null;
+            }
+            default:
+              return null;
+          }
+        },
+        findProjectRoot,
+        probes.controller.signal,
+      );
       const assistantChanges = new AssistantChanges({
         store: assistantChangeStore,
         configuration,
@@ -1047,7 +1092,7 @@ export const serveHost = ({
         Effect.sync(
           () =>
             new GateRuleService({
-              store: new GateRuleStore(database),
+              store: gateRuleStore,
               appliedChange: (sessionId, changeId) => {
                 const change = assistantChangeStore.get(
                   sessionId,
@@ -1388,6 +1433,39 @@ export const serveHost = ({
             .finally(() => {
               probes.pending.delete(pending);
             });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'lookup-inbox-assistant' ||
+          request.method === 'send-inbox-assistant'
+        ) {
+          const { id } = request;
+          const work = async (): Promise<HostReply> =>
+            request.method === 'lookup-inbox-assistant'
+              ? {
+                  type: 'inbox-assistant-context',
+                  id,
+                  ...(await inboxAssistant.lookup(request.input)),
+                }
+              : {
+                  type: 'inbox-assistant-turn',
+                  id,
+                  ...(await inboxAssistant.send(request.input)),
+                };
+          const pending = work()
+            .catch((error: unknown): HostReply => {
+              const result = configurationFailure(error);
+              return {
+                type: 'error',
+                id,
+                code: result.code === 'busy' ? 'busy' : 'unavailable',
+                message: result.message,
+              };
+            })
+            .then(send)
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
           probes.pending.add(pending);
           continue;
         }

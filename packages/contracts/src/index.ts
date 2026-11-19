@@ -9,6 +9,12 @@ import {
 } from './onboarding';
 export * from './onboarding';
 export * from './configuration';
+export * from './configuration-inbox';
+import {
+  configurationInboxContextSchema,
+  configurationInboxLookupSchema,
+  configurationInboxSendSchema,
+} from './configuration-inbox';
 import {
   configurationChangeSchema,
   configurationDecisionSchema,
@@ -667,6 +673,16 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
 export const hostRequestSchema = z.discriminatedUnion('method', [
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('lookup-inbox-assistant'),
+    input: configurationInboxLookupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('send-inbox-assistant'),
+    input: configurationInboxSendSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('configuration'),
@@ -1542,6 +1558,17 @@ export type HostConnect = z.infer<typeof hostConnectSchema>;
 export type HostConnection = z.infer<typeof hostConnectionSchema>;
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    id: z.uuid(),
+    type: z.literal('inbox-assistant-context'),
+    context: configurationInboxContextSchema,
+    sessionId: z.uuid().nullable(),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    type: z.literal('inbox-assistant-turn'),
+    sessionId: z.uuid(),
+  }),
   z.strictObject({
     id: z.uuid(),
     type: z.literal('config-devices'),

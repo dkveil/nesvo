@@ -359,6 +359,15 @@ export const inboxDecisionChannelSchema = z.enum([
   'parent',
 ]);
 
+export const inboxRoutingReceiptSchema = z.strictObject({
+  source: z.enum(['rule', 'session', 'group', 'computer', 'no-parent']),
+  matchedHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
+  configuredRoute: decisionRouteSchema,
+});
+
 const inboxItemBaseSchema = z.strictObject({
   id: z.uuid(),
   action: inboxRuleActionSchema,
@@ -368,6 +377,7 @@ const inboxItemBaseSchema = z.strictObject({
   sessionTitle: z.string().max(200),
   parentId: z.uuid().nullable(),
   route: decisionRouteSchema,
+  routing: inboxRoutingReceiptSchema.optional(),
   status: inboxItemStatusSchema,
   options: z.array(z.string().max(inboxRuleLimits.optionLabel)).max(6),
   presentation: inboxItemPresentationSchema,

@@ -1129,6 +1129,27 @@ if (args.length === 1 && args[0] === '--version') {
       const requestPrompt = prompt.split(
         '\n\nRecovery context supplied by the host, not authorization to repeat previous operations:',
       )[0];
+      if (
+        requestPrompt.startsWith('Advise the owner about Nesvo Inbox routing.')
+      ) {
+        assert.equal(params.sandboxPolicy.type, 'readOnly');
+        assert.equal(params.approvalPolicy, 'never');
+        assert.equal(thread.projectDocBytes, 0);
+        assert.equal(params.outputSchema?.type, 'object');
+        assert.doesNotMatch(prompt, /EXTERNAL_(TITLE|BODY|LABEL)_SENTINEL/);
+        complete(
+          JSON.stringify({
+            reply: 'Send future matching items to the Inbox.',
+            rule: {
+              scope: 'global',
+              name: 'external-inbox-fixture',
+              document:
+                '---\nname: external-inbox-fixture\ntrigger: external\naction: route\nroute: inbox\n---\n',
+            },
+          }),
+        );
+        return;
+      }
       const verdictMode =
         requestPrompt.startsWith(
           'You verify. You do not change files. Return only the JSON verdict.',

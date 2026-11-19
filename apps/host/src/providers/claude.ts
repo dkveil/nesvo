@@ -1360,6 +1360,7 @@ export function startClaude(options: {
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
+  isolatedContext?: boolean;
   assistantPrompt?: string;
   summaryInstructions?: string;
   mode: SessionMode;
@@ -1507,7 +1508,9 @@ export function startClaude(options: {
       const canAskQuestion = canAsk && options.questions === true;
       let askedQuestion = false;
       const webFetch = !!options.permissionRules && canAsk && !readOnly;
-      const tools = options.summaryInstructions
+      const textOnly =
+        !!options.summaryInstructions || !!options.isolatedContext;
+      const tools = textOnly
         ? ''
         : [
             ...permission.tools,
@@ -1533,7 +1536,7 @@ export function startClaude(options: {
           presentsPlan ||
           canAskQuestion ||
           !!options.browser);
-      const allowedTools = options.summaryInstructions
+      const allowedTools = textOnly
         ? ''
         : [
             ...permission.allowed,
@@ -1569,13 +1572,13 @@ export function startClaude(options: {
             integrations?.projectSettings ? 'user,project,local' : 'user',
           ]
         : [
-            ...(options.summaryInstructions || askRules.length
+            ...(textOnly || askRules.length
               ? [
                   ...isolatedMcpArgs,
                   '--settings',
                   JSON.stringify({
                     disableAllHooks: true,
-                    ...(options.summaryInstructions
+                    ...(textOnly
                       ? { autoMemoryEnabled: false, claudeMdExcludes: ['**'] }
                       : {}),
                     ...(askRules.length
@@ -1585,7 +1588,7 @@ export function startClaude(options: {
                 ]
               : isolatedToolArgs),
             '--setting-sources',
-            options.instructionsOnly ? '' : 'user',
+            options.instructionsOnly || options.isolatedContext ? '' : 'user',
           ];
       if (stopped) return { status: 'stopped', error: null };
       const args = [

@@ -1611,6 +1611,7 @@ type CodexRunOptions = {
   outputSchema?: Record<string, unknown>;
   mcpTurn?: VerifyMcpTurn;
   instructionsOnly?: boolean;
+  isolatedContext?: boolean;
   summaryInstructions?: string;
   images?: readonly CodexImage[];
   compact?: boolean;
@@ -2359,11 +2360,12 @@ export function startCodex(options: CodexRunOptions): {
       const isolateTools = unattended || (readOnly && !nativeMcpApproval);
       const mcpOnlyApprovals = readOnly && !isolateTools;
       const hooksOff = isolateTools || readOnly;
-      const features = options.summaryInstructions
-        ? [...isolatedFeatures, 'shell_tool']
-        : hooksOff
-          ? isolatedFeatures
-          : featuresWithoutHooks;
+      const features =
+        options.summaryInstructions || options.isolatedContext
+          ? [...isolatedFeatures, 'shell_tool']
+          : hooksOff
+            ? isolatedFeatures
+            : featuresWithoutHooks;
       const disabledServers = isolateTools ? Object.keys(configured) : null;
       const bootstrapExit = await peer.closeIdle();
       if (!bootstrapExit.confirmed)
