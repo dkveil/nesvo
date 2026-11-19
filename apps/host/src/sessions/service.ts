@@ -4873,7 +4873,12 @@ export class SessionService {
             }
           : event.approval,
       );
-      session.activity = 'Waiting for your decision…';
+      session.activity =
+        this.options.inbox?.approvalRequested(
+          structuredClone(session),
+          event.approval,
+          event.subject ?? null,
+        ) ?? 'Waiting for your decision…';
       this.publish(session);
       return;
     } else if (event.type === 'approval-resolved') {

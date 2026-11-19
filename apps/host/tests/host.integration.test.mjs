@@ -22657,7 +22657,9 @@ test('Claude matches and revokes scoped allow rules through the live prompt chan
     writeFile(manifest, JSON.stringify({ scripts: { lint } }));
   await setLint('node --test');
   const pidFile = join(directory, 'pids.json');
-  let host = launch(directory, pidFile);
+  const open = () =>
+    launch(directory, pidFile, inboxRuleEnvironment(directory));
+  let host = open();
   t.after(async () => {
     if (host.child.exitCode === null) await host.stop();
     await rm(directory, { recursive: true, force: true });
@@ -22826,7 +22828,7 @@ test('Claude matches and revokes scoped allow rules through the live prompt chan
   );
 
   await host.stop();
-  host = launch(directory, pidFile);
+  host = open();
   await finish(
     await send(
       first,
@@ -22836,6 +22838,42 @@ test('Claude matches and revokes scoped allow rules through the live prompt chan
       fetch('https://example.invalid/three'),
       mcp('mcp__search__list'),
     ),
+  );
+
+  const catalog = await saveInboxRule(
+    host,
+    '---\nname: hold-lint\ntrigger: command\npattern: "npm run lint*"\naction: hold\nshow: [command]\n---\nReview the lint command.\n',
+  );
+  run = await send(first, safe);
+  const held = await inboxItem(
+    host,
+    item =>
+      item.sessionId === first &&
+      item.rule.name === 'hold-lint' &&
+      item.status === 'pending',
+  );
+  assert.equal(held.binding, 'provider');
+  assert.equal(held.presentation.command, 'npm run lint');
+  assert.equal(
+    (
+      await host.request('decide-inbox-item', {
+        itemId: held.id,
+        decision: 'decline',
+      })
+    ).item.status,
+    'declined',
+  );
+  assert.equal(agent(await finish(run)).body, '[false]');
+  const holdRule = catalog.rules.find(item => item.name === 'hold-lint');
+  assert.equal(
+    (
+      await host.request('delete-inbox-rule', {
+        scope: holdRule.scope,
+        name: holdRule.name,
+        expectedHash: holdRule.contentHash,
+      })
+    ).type,
+    'inbox-rules',
   );
 
   const second = await create();
@@ -29205,7 +29243,10 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.equal(capabilities.at(-1), 'external-inbox');
+  assert.deepEqual(capabilities.slice(-2), [
+    'external-inbox',
+    'claude-autonomy',
+  ]);
 
   const invalid = await host.request('validate-inbox-rule', {
     text: '---\nname: Bad Name\ntrigger: command\naction: ask\n---\n',
