@@ -24,6 +24,7 @@ import {
   ConfigurationRefusal,
 } from './workflows/configuration-changes';
 import type { SetupProfileService } from './setup-profile-service';
+import { setupRuntimeRequirement } from './setup-runtime-requirements';
 
 type Observation = Omit<SetupFinding, 'revision' | 'verifiedAt'> & {
   identity?: string;
@@ -453,7 +454,8 @@ export class SetupDetection {
         label: declaration.label,
         description: masked
           ? 'Disabled by profile.'
-          : 'Declared in the profile. Runtime admission is withheld.',
+          : (setupRuntimeRequirement(declaration.key)?.description ??
+            'Declared in the profile. Runtime admission is withheld.'),
         source: 'Profile',
         evidence: 'projection',
         readiness: 'withheld',

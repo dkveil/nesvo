@@ -590,6 +590,8 @@ Setup detection serves the guide, Settings, the palette and the first repository
 
 Adoption records pending executable and authority entries as D85 proposals scoped to the profile, host instance and definition digest. Reloading or restarting reuses the same action identity for a matching definition, including dismissed entries. The owner can inspect or dismiss these proposals. Runtime admission stays withheld until a matching domain can verify the definition and its dependencies. Profile loading and proposal recovery launch no programs, watchers, scheduled jobs or provider turns.
 
+The profile review lists the required native domain capability alongside pending declarations. The D88 worktree provider, repository trust, read-only integration, provider usage and external session message contracts are separate from profile ownership. The profile foundation defers activation when those contracts and the corresponding admission adapters are unavailable. Existing manual recipes do not become approved profile executables.
+
 ## Decision routing
 
 Every human decision item has a route: `inbox` (default), `parent` (the parent or coordinator session's conversation) or `both`. The route resolves from the rule's `route`, then the session's `decisionRoute` (set for children of a workflow whose file declares `decisions:`), then the session group's default (`defaults.decisionRoute`), then the computer's default in Settings › Inbox rules (capability `decision-routing`). A session without a parent always routes to the Inbox.

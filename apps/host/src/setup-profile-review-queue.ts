@@ -10,6 +10,7 @@ import {
   type ConfigurationWriter,
 } from './workflows/configuration-changes';
 import type { LoadedSetupProfile } from './setup-profile-file';
+import { setupRuntimeRequirement } from './setup-runtime-requirements';
 
 const baseVersion = { type: 'revision', revision: 1 } as const;
 const source: ConfigurationPrincipal = {
@@ -143,9 +144,16 @@ export class SetupProfileReviewQueue {
 }
 
 function description(entry: SetupProfileDeclaration) {
+  const native = setupRuntimeRequirement(entry.key);
   return [
     entry.label,
     'Desired definition is withheld pending local runtime verification.',
     'Definition digest: ' + entry.revision,
+    ...(native
+      ? [
+          native.description,
+          'Required host capabilities: ' + native.capabilities.join(', '),
+        ]
+      : []),
   ].join('\n');
 }
