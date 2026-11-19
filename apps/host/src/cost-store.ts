@@ -13,7 +13,7 @@ import {
   type ReadCostsInput,
   type Session,
 } from '@nesvo/contracts';
-import { CostPrices, resolveRates } from './cost-prices';
+import { codexAutoReview, CostPrices, resolveRates } from './cost-prices';
 import { CostTranscripts } from './cost-transcripts';
 
 export function migrateCosts(database: DatabaseSync): void {
@@ -114,6 +114,7 @@ function accumulate(totals: CostTotals, row: UsageRow, cost: RecordCost) {
 }
 
 type UsageRow = {
+  path: string;
   provider: Provider;
   started_at: string;
   directory: string | null;
@@ -144,7 +145,10 @@ function grouping(
     case 'model':
       return {
         key: JSON.stringify([row.provider, row.model]),
-        label: `${row.provider} · ${row.model ?? 'Model unavailable'}`,
+        label:
+          row.provider === 'Codex' && row.model === codexAutoReview
+            ? `${codexAutoReview} · no public price`
+            : `${row.provider} · ${row.model ?? 'Model unavailable'}`,
       };
     case 'directory':
       return {
@@ -261,7 +265,7 @@ export class CostStore {
         SELECT usage.*, file.provider,
           row_number() OVER (
             PARTITION BY file.provider, usage.record_key
-            ORDER BY usage.reported IS NULL, usage.output DESC, usage.started_at, usage.path
+            ORDER BY usage.reported IS NULL, usage.output DESC, usage.model IS NULL, usage.started_at, usage.path
           ) AS rank
         FROM cost_transcript_usage AS usage
         JOIN cost_transcript_files AS file USING (path)
@@ -288,6 +292,7 @@ export class CostStore {
       LEFT JOIN session_groups AS groups ON groups.id = mapped.group_id
       WHERE ranked.rank = 1
     `);
+    let findModel: ReturnType<CostTranscripts['modelLookup']> | undefined;
     for (const entry of records.iterate(
       new Date(first - dayMs).toISOString(),
       now.toISOString(),
@@ -295,6 +300,10 @@ export class CostStore {
       const row = entry as UsageRow;
       const date = formatter.format(new Date(row.started_at));
       if (date < firstDate) continue;
+      if (row.provider === 'Codex' && row.model === null) {
+        findModel ??= this.transcripts.modelLookup();
+        row.model = findModel(row.path, row.started_at) ?? null;
+      }
       const key = JSON.stringify([row.model, row.fast]);
       if (!cache.has(key))
         cache.set(

@@ -1,16 +1,21 @@
 import { constants } from 'node:fs';
 import { open, opendir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CostReport, Provider } from '@nesvo/contracts';
 import { z } from 'zod';
 
 const maxLineBytes = 8 * 1024 * 1024;
 const workers = 4;
-const codexFields = ['"token_count"', '"session_meta"', '"turn_context"'].map(
-  field => Buffer.from(field),
-);
+const codexRevision = 2;
+const codexFields = [
+  '"token_count"',
+  '"session_meta"',
+  '"turn_context"',
+  '"thread_settings"',
+  '"thread_settings_applied"',
+].map(field => Buffer.from(field));
 const claudeFields = [Buffer.from('"usage"')];
 const count = z.number().int().nonnegative();
 const id = z.string().min(1).max(256);
@@ -43,17 +48,51 @@ const claudeSchema = z.object({
   }),
 });
 
-const codexContext = z.object({
-  type: z.enum(['session_meta', 'turn_context']),
-  payload: z.object({
-    id: z.uuid().optional(),
-    cwd: directory.optional(),
-    model: id.optional(),
-    turn_id: id.nullish(),
-    service_tier: z.string().nullish(),
-    thread_settings: z.object({ service_tier: z.string().nullish() }).nullish(),
-  }),
+const codexThreadId = z.uuid().nullish();
+const codexSource = z.object({
+  subagent: z
+    .object({
+      thread_spawn: z.object({ parent_thread_id: codexThreadId }).optional(),
+    })
+    .optional(),
 });
+const codexInstructions = z.object({
+  provenance: z.object({ type: z.literal('model'), model: id }),
+});
+const codexModelSettings = z.object({
+  model: id.nullish(),
+  service_tier: z.string().nullish(),
+});
+const codexContext = z
+  .object({
+    type: z.enum([
+      'session_meta',
+      'turn_context',
+      'thread_settings',
+      'event_msg',
+    ]),
+    timestamp: timestamp.optional(),
+    payload: codexModelSettings.extend({
+      type: z.string().optional(),
+      id: codexThreadId,
+      session_id: codexThreadId,
+      thread_id: codexThreadId,
+      parent_thread_id: codexThreadId,
+      forked_from_id: codexThreadId,
+      cwd: directory.optional(),
+      timestamp: timestamp.optional(),
+      turn_id: id.nullish(),
+      thread_settings: codexModelSettings.nullish(),
+      source: z.unknown().optional(),
+      base_instructions: z.unknown().optional(),
+    }),
+  })
+  .refine(
+    ({ type, payload }) =>
+      type !== 'event_msg' ||
+      payload.type === 'thread_settings_applied' ||
+      payload.type === 'thread_settings',
+  );
 
 const codexTokens = z.object({
   input_tokens: count,
@@ -79,9 +118,20 @@ const contextSchema = z.object({
   model: id.optional(),
   turnId: id.nullish(),
   tier: z.string().nullish(),
+  revision: z.number().int().optional(),
+  parentId: z.uuid().optional(),
+  forkedAt: timestamp.optional(),
+  modelHint: id.optional(),
+  modelHintAt: timestamp.optional(),
+  models: z.array(z.object({ model: id, at: timestamp.optional() })).optional(),
 });
 
 type Context = z.infer<typeof contextSchema>;
+const modelHintAt = (context: Context, at: string) =>
+  !context.modelHintAt || context.modelHintAt <= at
+    ? context.modelHint
+    : undefined;
+
 type Source = {
   provider: Provider;
   root: string;
@@ -171,17 +221,39 @@ function parseLine(
   }
   const settings = codexContext.safeParse(value);
   if (settings.success) {
-    const payload = settings.data.payload;
-    context.sessionId = payload.id ?? context.sessionId;
+    const { type, payload } = settings.data;
+    const at = settings.data.timestamp ?? payload.timestamp;
+    if (type === 'session_meta') {
+      context.sessionId = payload.id ?? payload.session_id ?? context.sessionId;
+      const source = codexSource.safeParse(payload.source).data;
+      context.parentId ??=
+        payload.parent_thread_id ??
+        payload.forked_from_id ??
+        source?.subagent?.thread_spawn?.parent_thread_id ??
+        undefined;
+      if (context.parentId) context.forkedAt ??= payload.timestamp ?? at;
+      if (!context.modelHint) {
+        const instructions = codexInstructions.safeParse(
+          payload.base_instructions,
+        ).data;
+        if (instructions) {
+          context.modelHint = instructions.provenance.model;
+          context.modelHintAt = at;
+        }
+      }
+    }
+    context.sessionId ??= payload.thread_id ?? undefined;
     context.directory = payload.cwd ?? context.directory;
-    context.model = payload.model ?? context.model;
+    const model = payload.model ?? payload.thread_settings?.model;
+    if (model && model !== context.model) {
+      context.model = model;
+      (context.models ??= []).push({ model, at });
+    }
     context.turnId = payload.turn_id ?? context.turnId;
-    if (
-      payload.thread_settings !== undefined ||
-      payload.service_tier !== undefined
-    )
-      context.tier =
-        payload.thread_settings?.service_tier ?? payload.service_tier ?? null;
+    const tier = payload.thread_settings?.service_tier;
+    if (tier !== undefined) context.tier = tier;
+    else if (payload.service_tier !== undefined)
+      context.tier = payload.service_tier;
     return null;
   }
   const event = codexSchema.safeParse(value);
@@ -206,7 +278,7 @@ function parseLine(
     at: event.data.timestamp,
     sessionId: context.sessionId,
     directory: context.directory,
-    model: context.model,
+    model: context.model ?? (context.parentId ? undefined : context.modelHint),
     fast: context.tier === 'fast' || context.tier === 'priority',
     uncached: usage.input_tokens - cached,
     read: cached,
@@ -324,6 +396,41 @@ export class CostTranscripts {
     return statuses;
   }
 
+  modelLookup() {
+    const files = new Map<string, { context: Context; home: string }>();
+    const threads = new Map<string, Context>();
+    for (const file of this.database
+      .prepare(
+        "SELECT path, root, context FROM cost_transcript_files WHERE provider = 'Codex' ORDER BY modified, path",
+      )
+      .iterate()) {
+      const context = contextSchema.parse(JSON.parse(String(file.context)));
+      const home = dirname(String(file.root));
+      files.set(String(file.path), { context, home });
+      if (context.sessionId)
+        threads.set(JSON.stringify([home, context.sessionId]), context);
+    }
+    return (path: string, at: string) => {
+      const file = files.get(path);
+      if (!file?.context.parentId) return;
+      const { home } = file;
+      let context: Context | undefined = file.context;
+      const localHint = modelHintAt(file.context, at);
+      const visited = new Set([file.context.sessionId]);
+      while (context?.parentId && !visited.has(context.parentId)) {
+        visited.add(context.parentId);
+        if (context.forkedAt && context.forkedAt < at) at = context.forkedAt;
+        context = threads.get(JSON.stringify([home, context.parentId]));
+        const model =
+          context?.models?.findLast(entry => !entry.at || entry.at <= at)
+            ?.model ??
+          (context && modelHintAt(context, at));
+        if (model) return model;
+      }
+      return localHint;
+    };
+  }
+
   private async scanFile(
     source: Source,
     path: string,
@@ -341,15 +448,22 @@ export class CostTranscripts {
       const stat = await file.stat();
       if (!stat.isFile()) return false;
       const identity = JSON.stringify([stat.dev, stat.ino, stat.birthtimeMs]);
+      const previous = cached
+        ? contextSchema.parse(JSON.parse(String(cached.context)))
+        : undefined;
       const same =
-        cached?.identity === identity && cached.provider === source.provider;
+        cached?.identity === identity &&
+        cached.provider === source.provider &&
+        (source.provider !== 'Codex' || previous?.revision === codexRevision);
       if (same && cached.size === stat.size && cached.modified === stat.mtimeMs)
         return !cached.incomplete;
       const append = same && stat.size > Number(cached.size);
       let offset = append ? Number(cached.offset) : 0;
-      const context = append
-        ? contextSchema.parse(JSON.parse(String(cached.context)))
-        : {};
+      const context: Context = append
+        ? previous!
+        : source.provider === 'Codex'
+          ? { revision: codexRevision }
+          : {};
       let incomplete = !!(append && cached.incomplete);
       const rows: Usage[] = [];
       let chunks: Buffer[] = [];

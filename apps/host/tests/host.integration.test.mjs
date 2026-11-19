@@ -1222,6 +1222,16 @@ test(
         cache_read_input_token_cost: 0.002,
         fast_mode_multiplier: 2,
       },
+      'gpt-6-astra': {
+        input_cost_per_token: 0.02,
+        output_cost_per_token: 0.06,
+        cache_read_input_token_cost: 0.003,
+      },
+      'codex-auto-review': {
+        input_cost_per_token: 1,
+        output_cost_per_token: 1,
+        cache_read_input_token_cost: 1,
+      },
     };
     await writeFile(
       join(directory, 'cost-prices.json'),
@@ -1552,6 +1562,103 @@ test(
       'cost-budget-deleted',
     );
     assert.deepEqual((await request('list-cost-budgets')).list.budgets, []);
+
+    const relativeTime = offset =>
+      new Date(Date.parse(timestamp) + offset).toISOString();
+    const parentId = randomUUID();
+    const forkId = randomUUID();
+    const childId = randomUUID();
+    const metadata = (id, offset, fields = {}) => ({
+      type: 'session_meta',
+      timestamp: relativeTime(offset),
+      payload: { id, cwd: directory, ...fields },
+    });
+    const settings = (id, offset, model) => ({
+      type: 'event_msg',
+      timestamp: relativeTime(offset),
+      payload: {
+        type: 'thread_settings_applied',
+        thread_id: id,
+        thread_settings: { model },
+      },
+    });
+    const provenanceFile = join(rollouts, 'rollout-provenance.jsonl');
+    await writeFile(
+      provenanceFile,
+      jsonl(
+        metadata(randomUUID(), -5_000, {
+          base_instructions: {
+            provenance: { type: 'model', model: 'gpt-6-astra' },
+          },
+        }),
+        { type: 'turn_context', payload: { turn_id: 'no-model' } },
+        codexEvent(3_000),
+      ),
+    );
+    await writeFile(
+      join(archive, 'rollout-parent.jsonl'),
+      jsonl(
+        metadata(parentId, -5_000),
+        settings(parentId, -4_000, 'gpt-cost-fixture'),
+        settings(parentId, -1_000, 'future-model'),
+      ),
+    );
+    await writeFile(
+      join(rollouts, 'rollout-fork.jsonl'),
+      jsonl(
+        metadata(forkId, -3_000, { forked_from_id: parentId }),
+        codexEvent(4_000),
+      ),
+    );
+    await writeFile(
+      join(rollouts, 'rollout-child.jsonl'),
+      jsonl(
+        metadata(childId, -2_000, {
+          source: { subagent: { thread_spawn: { parent_thread_id: forkId } } },
+        }),
+        codexEvent(5_000),
+        settings(childId, 0, 'codex-auto-review'),
+        codexEvent(6_000),
+      ),
+    );
+    await writeFile(
+      join(rollouts, 'rollout-unknown.jsonl'),
+      jsonl(metadata(randomUUID(), -5_000), codexEvent(7_000)),
+    );
+    const modelReport = await read('day', 'model');
+    const model = label =>
+      modelReport.groups.find(group => group.label === label);
+    assert.equal(round(model('Codex · gpt-6-astra').costUsd), 1.84);
+    assert.equal(model('Codex · gpt-6-astra').estimatedCostTurns, 1);
+    assert.equal(round(model('Codex · gpt-cost-fixture').costUsd), 2.72);
+    assert.equal(model('Codex · gpt-cost-fixture').turnCount, 2);
+    assert.equal(model('Codex · future-model'), undefined);
+    const autoReview = model('codex-auto-review · no public price');
+    assert.equal(autoReview.costUsd, null);
+    assert.equal(autoReview.unknownCostTurns, 1);
+    assert.equal(autoReview.inputTokens, 100);
+    assert.equal(autoReview.cachedInputTokens, 80);
+    assert.equal(autoReview.outputTokens, 20);
+    const unknown = model('Codex · Model unavailable');
+    assert.equal(unknown.costUsd, null);
+    assert.equal(unknown.turnCount, 1);
+
+    await host.stop();
+    const legacy = new DatabaseSync(path);
+    try {
+      legacy
+        .prepare(
+          "UPDATE cost_transcript_files SET context = json_remove(context, '$.revision') WHERE path = ?",
+        )
+        .run(provenanceFile);
+      legacy
+        .prepare('UPDATE cost_transcript_usage SET model = NULL WHERE path = ?')
+        .run(provenanceFile);
+    } finally {
+      legacy.close();
+    }
+    host = open();
+    assert.deepEqual(await read('day', 'model'), modelReport);
   },
 );
 

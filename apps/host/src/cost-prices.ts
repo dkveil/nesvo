@@ -5,6 +5,7 @@ import { z } from 'zod';
 const priceUrl =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 const refreshInterval = 86_400_000;
+export const codexAutoReview = 'codex-auto-review';
 const rate = z.number().nonnegative();
 const rateSchema = z.object({
   input_cost_per_token: rate,
@@ -84,6 +85,7 @@ export function resolveRates(prices: Prices, model: string, fast: boolean) {
   const name = model
     .toLowerCase()
     .replace(/^(?:(?:openai|anthropic|chatgpt|codex)[/.])+/, '');
+  if (name === codexAutoReview) return;
   const undated = name.replace(/-(?:\d{4}-\d{2}-\d{2}|\d{8})(?=-|$)/, '');
   const base = undated.replace(
     /-(?:latest|preview|fast|thinking|low|medium|high|xhigh|minimal)$/,
