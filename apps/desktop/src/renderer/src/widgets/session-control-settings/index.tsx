@@ -7,10 +7,9 @@ import type {
   SessionMode,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
-import { Checkbox } from '@/shared/ui/checkbox';
+import { Field } from '@/shared/ui/field';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -180,26 +179,28 @@ export function SessionControlSettings({
           title="Providers"
           description="Child sessions can use these providers."
         >
-          <div className="flex flex-wrap justify-end gap-3">
-            {PROVIDERS.map(provider => (
-              <Label key={provider} className="flex items-center gap-2">
-                <Checkbox
-                  checked={policy.providers.includes(provider)}
-                  disabled={locked}
-                  onCheckedChange={value =>
-                    void save({
-                      ...policy,
-                      providers: toggled(
-                        policy.providers,
-                        provider,
-                        value === true,
-                      ),
-                    })
-                  }
-                />
-                {provider}
-              </Label>
-            ))}
+          <div className="w-52">
+            {PROVIDERS.map(provider => {
+              const id =
+                provider === 'Claude Code'
+                  ? 'coordinator-claude'
+                  : 'coordinator-codex';
+              return (
+                <Field key={provider} id={id} layout="switch" label={provider}>
+                  <Switch
+                    id={id}
+                    checked={policy.providers.includes(provider)}
+                    disabled={locked}
+                    onCheckedChange={on =>
+                      void save({
+                        ...policy,
+                        providers: toggled(policy.providers, provider, on),
+                      })
+                    }
+                  />
+                </Field>
+              );
+            })}
           </div>
         </SettingsRow>
         <SettingsRow
@@ -208,10 +209,10 @@ export function SessionControlSettings({
         >
           <Input
             id="session-control-models"
-            className="w-56"
+            className="w-52"
             value={models}
             disabled={locked}
-            placeholder="Any model"
+            placeholder="e.g. sonnet, gpt-5"
             onChange={event => setModels(event.target.value)}
             onBlur={() => {
               const next = parseModels(models);
@@ -224,26 +225,25 @@ export function SessionControlSettings({
           title="Child permission modes"
           description="The most a coordinating session can give a child. It can never turn on permission bypass."
         >
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-            {CHILD_MODES.map(({ mode, label }) => (
-              <Label key={mode} className="flex items-center gap-2">
-                <Checkbox
-                  checked={policy.childModes.includes(mode)}
-                  disabled={locked}
-                  onCheckedChange={value =>
-                    void save({
-                      ...policy,
-                      childModes: toggled(
-                        policy.childModes,
-                        mode,
-                        value === true,
-                      ),
-                    })
-                  }
-                />
-                {label}
-              </Label>
-            ))}
+          <div className="w-52">
+            {CHILD_MODES.map(({ mode, label }) => {
+              const id = 'coordinator-mode-' + mode;
+              return (
+                <Field key={mode} id={id} layout="switch" label={label}>
+                  <Switch
+                    id={id}
+                    checked={policy.childModes.includes(mode)}
+                    disabled={locked}
+                    onCheckedChange={on =>
+                      void save({
+                        ...policy,
+                        childModes: toggled(policy.childModes, mode, on),
+                      })
+                    }
+                  />
+                </Field>
+              );
+            })}
           </div>
         </SettingsRow>
         <SettingsRow

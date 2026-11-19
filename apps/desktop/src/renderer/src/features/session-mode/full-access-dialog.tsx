@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Checkbox } from '@/shared/ui/checkbox';
+import { Label } from '@/shared/ui/label';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -23,9 +25,11 @@ export function FullAccessDialog({
   onConfirm: () => Promise<void>;
   onClose: () => void;
 }) {
+  const [acknowledged, setAcknowledged] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const confirm = async () => {
+    if (!acknowledged || pending) return;
     setPending(true);
     setError('');
     try {
@@ -50,24 +54,34 @@ export function FullAccessDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Allow Full access in this session?</DialogTitle>
+          <DialogTitle size="sm">
+            Allow Full access in this session?
+          </DialogTitle>
           <DialogDescription className="text-ui leading-relaxed text-foreground">
             From the next turn, {provider} can run commands and change files
-            without approval, including outside this folder. It can access the
-            network and sensitive data available to your account.
+            without approval, including outside this folder. It can use the
+            network and access sensitive data available to your account.
           </DialogDescription>
         </DialogHeader>
-        <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <p className="flex min-w-0 items-center gap-1.5 rounded-control bg-code-background px-3 py-2 text-xs text-muted-foreground">
           <span className="shrink-0">Session folder ·</span>
           <MiddleTruncatedText path value={directory} className="font-mono" />
         </p>
+        <Label className="flex items-center gap-2 text-ui">
+          <Checkbox
+            checked={acknowledged}
+            disabled={pending}
+            onCheckedChange={value => setAcknowledged(value === true)}
+          />
+          I understand
+        </Label>
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
         <DialogFooter>
           <DialogCancel disabled={pending} onClick={onClose} autoFocus />
           <Button
-            variant="outline"
-            className="text-warning-foreground"
-            disabled={pending}
+            variant="destructive"
+            size="lg"
+            disabled={pending || !acknowledged}
             onClick={() => void confirm()}
           >
             Allow Full access
