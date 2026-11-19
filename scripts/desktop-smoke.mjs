@@ -3810,8 +3810,13 @@ async function smokeDesktop() {
     child => child.title === 'Fixture worker B',
   );
   await screenshot('-workers');
-  const waitingOn = label => page.getByText(label, { exact: true });
-  await waitingOn('Waiting on 2 child sessions').waitFor();
+  const subsessionBar = page.locator('[data-subsession-bar]');
+  const showAgents = label =>
+    subsessionBar.getByRole('button', {
+      name: `${label}, show agents`,
+      exact: true,
+    });
+  await showAgents('2 workers running').waitFor();
   const childCards = page.getByRole('region', { name: 'Child sessions' });
   const runningChildA = childCards.getByRole('button', {
     name: /^Fixture worker A Running/,
@@ -3864,7 +3869,7 @@ async function smokeDesktop() {
   await page
     .getByRole('button', { name: 'Back to parent session', exact: true })
     .click();
-  await waitingOn('Waiting on 1 child session').waitFor();
+  await showAgents('1 worker running').waitFor();
   await childCards
     .getByRole('button', { name: /^Fixture worker A Stopped/ })
     .waitFor();
