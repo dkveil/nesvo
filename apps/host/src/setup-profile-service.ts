@@ -26,6 +26,7 @@ import {
   SetupProfileFileError,
   type LoadedSetupProfile,
 } from './setup-profile-file';
+import { SetupProfileReviewQueue } from './setup-profile-review-queue';
 
 const target = {
   area: 'setup-profile',
@@ -106,6 +107,7 @@ function selectionText(selection: Selection | null) {
 
 export class SetupProfileService {
   private readonly defaultFile: string;
+  private readonly reviews?: SetupProfileReviewQueue;
 
   constructor(
     directory: string | undefined,
@@ -115,6 +117,15 @@ export class SetupProfileService {
     this.defaultFile = defaultSetupProfilePath(directory);
     changes?.register('setup-profile', this.writer());
     changes?.register('setup-profile-file', this.routeWriter());
+    if (changes)
+      this.reviews = new SetupProfileReviewQueue(changes, () => {
+        const current = this.current();
+        if (!current.selection || !current.instanceId) return null;
+        return {
+          profile: current.selection.profile,
+          instanceId: current.instanceId,
+        };
+      });
   }
 
   private current() {
@@ -198,7 +209,7 @@ export class SetupProfileService {
     }
   }
 
-  apply(
+  async apply(
     input: Extract<SetupProfileInput, { action: 'apply' }>,
     principal = desktop,
   ) {
@@ -212,7 +223,7 @@ export class SetupProfileService {
         'conflict',
         'The computer identity changed. Preview the profile again.',
       );
-    return this.changes.submit(principal, 'apply', {
+    const result = await this.changes.submit(principal, 'apply', {
       actionId: input.actionId,
       target,
       operation: 'update',
@@ -222,6 +233,8 @@ export class SetupProfileService {
         value: { path: resolve(input.file), digest: input.revision },
       },
     });
+    if (result.receipt.status === 'applied') await this.recoverPendingReviews();
+    return result;
   }
 
   editRouting(input: Extract<SetupProfileInput, { action: 'edit-routing' }>) {
@@ -296,6 +309,11 @@ export class SetupProfileService {
         },
         drift,
       );
+  }
+
+  async recoverPendingReviews() {
+    if (!this.reviews || this.inspect().status !== 'current') return;
+    await this.reviews?.synchronize();
   }
 
   private writer(): ConfigurationWriter {

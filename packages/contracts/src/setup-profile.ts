@@ -53,8 +53,16 @@ const environmentVariable = z.strictObject({
   name: z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/),
   from: setupSecretReferenceSchema,
 });
-const command = z.strictObject({
-  executable: setupProfilePathSchema,
+export const setupProfileDirectCommandSchema = z.strictObject({
+  executable: setupProfilePathSchema.refine(value => {
+    const leaf = value.split(/[\\/]/u).at(-1)?.toLowerCase() ?? '';
+    return (
+      !/\.(?:cmd|bat|ps1)$/u.test(leaf) &&
+      !/^(?:sh|ash|bash|dash|fish|zsh|ksh|csh|tcsh|cmd|powershell|pwsh)(?:\.exe)?$/u.test(
+        leaf,
+      )
+    );
+  }, 'Use a direct executable without a shell.'),
   argv: z
     .array(
       z
@@ -69,6 +77,7 @@ const command = z.strictObject({
   timeoutMs: z.number().int().min(100).max(300000).optional(),
   maxOutputBytes: z.number().int().min(1024).max(262144).optional(),
 });
+const command = setupProfileDirectCommandSchema;
 const disabled = z.strictObject({ id, disabled: z.literal(true) });
 const withIds = <T extends z.ZodType<{ id: string }>>(item: T) =>
   z
@@ -115,7 +124,7 @@ const worktree = z.discriminatedUnion('kind', [
     status: command.optional(),
   }),
 ]);
-const recipe = z.strictObject({
+export const setupProfileRecipeSchema = z.strictObject({
   id,
   name: label,
   repository: repo,
@@ -193,7 +202,7 @@ export const setupProfileDocumentSchema = z.strictObject({
     })
     .optional(),
   worktrees: withIds(worktree).optional(),
-  recipes: withIds(recipe).optional(),
+  recipes: withIds(setupProfileRecipeSchema).optional(),
   repositoryTrust: withIds(
     z.strictObject({ id, pattern: repo, effect: z.enum(['allow', 'deny']) }),
   ).optional(),

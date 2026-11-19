@@ -57,6 +57,7 @@ const areas: Record<ConfigurationArea, string> = {
   authority: 'Permissions',
   'setup-profile': 'Setup profile',
   'setup-profile-file': 'Profile file',
+  'setup-review': 'Setup reviews',
 };
 const isOnline = (computer?: Computer) =>
   computer?.status === 'connected' &&
@@ -309,6 +310,7 @@ export function ConfigurationDevicesSettings({
     area =>
       area !== 'setup-profile' &&
       area !== 'setup-profile-file' &&
+      area !== 'setup-review' &&
       (area !== 'appearance' || computer?.kind === 'local'),
   );
   useEffect(() => {

@@ -35,6 +35,7 @@ export const configurationAreaSchema = z.enum([
   'authority',
   'setup-profile',
   'setup-profile-file',
+  'setup-review',
   ...configurationFileAreas,
   ...configurationRecordAreas,
 ]);
@@ -107,6 +108,10 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
   z.strictObject({
     area: z.literal('setup-profile-file'),
     key: z.enum(['routing', 'shared-routing']),
+  }),
+  z.strictObject({
+    area: z.literal('setup-review'),
+    id: z.string().min(1).max(120),
   }),
   z.strictObject({
     area: z.literal('defaults'),
@@ -185,6 +190,14 @@ export const configurationValueSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('setup-profile'),
     value: z.strictObject({ path: path.nullable(), digest: hash.nullable() }),
+  }),
+  z.strictObject({
+    kind: z.literal('setup-review'),
+    value: z.strictObject({
+      digest: hash,
+      scope: hash,
+      label: z.string().min(1).max(120),
+    }),
   }),
   z.strictObject({ kind: z.literal('enabled'), value: z.boolean() }),
   z.strictObject({ kind: z.literal('folder'), value: path.nullable() }),

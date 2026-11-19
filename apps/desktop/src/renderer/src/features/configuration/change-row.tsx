@@ -80,6 +80,7 @@ export function ConfigurationChangeRow({
   const [reviewRevocation, setReviewRevocation] = useState(false);
   const openAuthoritySettings = useContext(AuthoritySettingsContext);
   const { target, source } = change;
+  const withheldSetup = target.area === 'setup-review';
   const effect = change.ownerEffect;
   const permission = change.sessionMode;
   const canReview =
@@ -103,7 +104,9 @@ export function ConfigurationChangeRow({
       : source.kind === 'assistant'
         ? 'Inbox assistant'
         : source.kind === 'system'
-          ? 'Profile file changed'
+          ? change.target.area === 'setup-review'
+            ? 'Setup profile'
+            : 'Profile file changed'
           : 'Owner';
   const openEditor = async () => {
     setError('');
@@ -405,6 +408,7 @@ export function ConfigurationChangeRow({
           )}
           <div className="flex flex-wrap items-center gap-1.5">
             {canReview &&
+              !withheldSetup &&
               (change.operation !== 'delete' ||
                 change.status === 'conflicted') && (
                 <Button
@@ -420,7 +424,7 @@ export function ConfigurationChangeRow({
                       : 'Edit proposal'}
                 </Button>
               )}
-            {change.status === 'pending' && (
+            {change.status === 'pending' && !withheldSetup && (
               <Button
                 size="sm"
                 disabled={!online || !!working || change.diff.truncated}
@@ -455,6 +459,11 @@ export function ConfigurationChangeRow({
               >
                 Dismiss
               </Button>
+            )}
+            {withheldSetup && canReview && (
+              <StatusMessage tone="warning">
+                Runtime verification is unavailable on this computer.
+              </StatusMessage>
             )}
             {change.status === 'applied' &&
               !effect &&

@@ -1548,6 +1548,10 @@ export const serveHost = ({
             : ['session-mode', 'claude-allow-rule', 'devices'],
         );
       yield* Effect.promise(() => configuration.recover());
+      if (!workLaptopMode)
+        yield* Effect.promise(() =>
+          setupProfile.recoverPendingReviews().catch(() => undefined),
+        );
       yield* Effect.acquireRelease(
         Effect.sync(() => {
           const timer = setInterval(() => {
