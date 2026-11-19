@@ -581,7 +581,7 @@ try {
       Buffer.from(encoded, 'base64'),
     );
   };
-  const waitState = async (id, status) => {
+  const waitState = async (id, status, previousRunId) => {
     const deadline = Date.now() + 20_000;
     let session;
     while (Date.now() < deadline) {
@@ -592,7 +592,8 @@ try {
           ),
         id,
       );
-      if (session?.status === status) return session;
+      if (session?.status === status && session.runId !== previousRunId)
+        return session;
       await delay(100);
     }
     assert.fail(`Session ${id} expected ${status}: ${JSON.stringify(session)}`);
@@ -2935,14 +2936,7 @@ try {
       messageId: randomUUID(),
       text: prompt,
     });
-    await page.waitForFunction(
-      async id =>
-        (await window.nesvo.listSessions()).some(
-          item => item.id === id && item.status === 'completed',
-        ),
-      session.id,
-    );
-    return session;
+    return waitState(session.id, 'completed');
   };
   const questionSession = await outcomeSession(
     'Release channel',
@@ -3047,15 +3041,12 @@ try {
     .getByRole('button', { name: 'Stable', exact: true })
     .click();
   await questionRow.waitFor({ state: 'hidden' });
-  await page.waitForFunction(async id => {
-    const session = (await window.nesvo.listSessions()).find(
-      item => item.id === id,
-    );
-    return (
-      session?.status === 'completed' &&
-      session.messages.at(-2)?.body === 'Stable'
-    );
-  }, questionSession.id);
+  const repliedSession = await waitState(
+    questionSession.id,
+    'completed',
+    questionSession.runId,
+  );
+  assert.equal(repliedSession.messages.at(-2)?.body, 'Stable');
   await doneRow.click();
   await navigation
     .getByRole('button', { name: /^Documentation scan .* Done$/ })
@@ -5288,7 +5279,7 @@ try {
         name: smokeAutomation.name,
         schedule: smokeAutomation.schedule,
         run: smokeRuns.runs[0].status,
-        accepted: acceptedReview.status,
+        savedResult: savedReview.status,
         missed: [missedRun.status, missedRun.missedCount],
       },
     }),
@@ -5452,14 +5443,35 @@ try {
     .getByRole('button', { name: 'Start', exact: true })
     .click();
   await startRequest.waitFor({ state: 'hidden' });
-  await changePage
-    .getByRole('article')
-    .filter({ hasText: 'Automation · Smoke change trigger' })
-    .waitFor();
+  const changeResultDeadline = Date.now() + 20_000;
+  let changeResultSaved = false;
+  while (Date.now() < changeResultDeadline && !changeResultSaved) {
+    changeResultSaved = await changePage.evaluate(async id => {
+      const [run] = (
+        await window.nesvo.scheduledJobs.listRuns('local', id, null)
+      ).runs;
+      return (
+        run?.status === 'completed' &&
+        (await window.nesvo.listReviews()).some(
+          review => review.id === run.reviewId && review.status === 'done',
+        )
+      );
+    }, changedJobId);
+    if (!changeResultSaved) await delay(50);
+  }
+  assert.ok(
+    changeResultSaved,
+    'The approved automation did not save its Done result',
+  );
+  assert.equal(
+    await changePage
+      .getByRole('article')
+      .filter({ hasText: 'Automation · Smoke change trigger' })
+      .count(),
+    0,
+  );
   console.log(
-    JSON.stringify({
-      automationChangeTrigger: 'approved and delivered to Inbox',
-    }),
+    JSON.stringify({ automationChangeTrigger: 'approved and saved as Done' }),
   );
   await smokeGateRuleFlow({
     application,
