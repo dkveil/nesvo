@@ -28,6 +28,7 @@ import { Switch } from '@/shared/ui/switch';
 
 type Props = {
   workflowName: string;
+  lanesEnabled: boolean;
   directory: string;
   specs: TaskSpecSummary[];
   statuses: ProviderStates;
@@ -57,6 +58,7 @@ const initialPick = (statuses: ProviderStates): Pick => {
 
 export function RunPopover({
   workflowName,
+  lanesEnabled,
   directory,
   specs,
   statuses,
@@ -69,6 +71,7 @@ export function RunPopover({
   const [specPath, setSpecPath] = useState('');
   const [pick, setPick] = useState<Pick | null>(null);
   const [isolation, setIsolation] = useState(false);
+  const [full, setFull] = useState(false);
   const [starting, setStarting] = useState(false);
   const [failure, setFailure] = useState('');
   const mine = specs.filter(spec => spec.workflow === workflowName);
@@ -96,6 +99,7 @@ export function RunPopover({
     const input: StartWorkflowTaskInput = {
       specPath: chosenSpec.source.path,
       workflowName,
+      ...(full && lanesEnabled ? { forceFullLane: true } : {}),
       provider: current.provider,
       model: current.model,
       ...(effort ? { effort } : {}),
@@ -154,6 +158,15 @@ export function RunPopover({
             </SelectContent>
           </Select>
         </Field>
+        {lanesEnabled && (
+          <Field id={`${id}-full`} label="Use full lane">
+            <Switch
+              id={`${id}-full`}
+              checked={full}
+              onCheckedChange={setFull}
+            />
+          </Field>
+        )}
         <Field id={`${id}-author`} label="Author" as="span">
           <div className="flex items-center gap-2">
             <ModelPicker

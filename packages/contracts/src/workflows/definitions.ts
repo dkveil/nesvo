@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workflowLanesSchema } from './lanes';
 import { checkIntentSchema, checkPreferencesSchema } from './checks';
 import { promptSkillSchema, type PromptSkill } from '../skills';
 import { decisionRouteSchema } from '../decision-route';
@@ -347,6 +348,7 @@ const workflowStepNamesSchema = z
   .refine(values => !hasDuplicates(values), 'List each step once.');
 
 const workflowDefinitionShape = {
+  lanes: workflowLanesSchema.optional(),
   name: stepNameSchema,
   description: z.string().max(workflowDefinitionLimits.description).default(''),
   body: z.string().max(workflowDefinitionLimits.body).default(''),

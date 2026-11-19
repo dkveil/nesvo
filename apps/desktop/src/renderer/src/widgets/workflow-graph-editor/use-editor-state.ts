@@ -376,7 +376,9 @@ export function useEditorState({
   }, []);
 
   const setWorkflowFields = (
-    fields: Partial<{ name: string; description: string; body: string }>,
+    fields: Partial<
+      Pick<EditorDocument, 'name' | 'description' | 'body' | 'lanes'>
+    >,
   ) =>
     mutate(current => ({ ...current, ...fields }), {
       merge: `workflow:${Object.keys(fields).join(',')}`,

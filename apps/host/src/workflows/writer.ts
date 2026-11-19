@@ -372,6 +372,7 @@ async function referencingWorkflows(
         name: workflow.name,
         steps: workflow.steps.map(item => item.name),
         edges: workflow.edges,
+        lanes: workflow.lanes,
         layout: workflow.layout,
       },
     ]),
@@ -390,6 +391,7 @@ async function referencingWorkflows(
         name: checked.name ?? entry.slice(0, -3),
         steps: checked.steps,
         edges: checked.edges,
+        lanes: checked.lanes,
         layout: checked.layout,
       });
     }
@@ -665,6 +667,7 @@ export async function saveDefinition(
         name: input.name,
         steps: checked.steps,
         edges: checked.edges,
+        lanes: checked.lanes,
         layout: checked.layout,
       };
       const steps = new Map(catalog.steps.map(step => [step.name, step]));

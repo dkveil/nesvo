@@ -799,7 +799,18 @@ if (args.length === 1 && args[0] === '--version') {
   const checkResolution = prompt.startsWith(
     'Select a test check for this workflow step.',
   );
-  if (checkResolution) {
+  const workflowTriage = prompt.startsWith(
+    'Classify the proposed plan for this workflow.',
+  );
+  if (workflowTriage) {
+    assert.equal(values.get('--permission-mode'), 'plan');
+    assert.equal(values.get('--no-session-persistence'), true);
+    assert.equal(values.get('--setting-sources'), '');
+    assert.deepEqual(
+      Object.keys(JSON.parse(values.get('--json-schema')).properties).sort(),
+      ['area', 'lane', 'rationale', 'risk', 'size'],
+    );
+  } else if (checkResolution) {
     assert.equal(values.get('--permission-mode'), 'plan');
     assert.equal(values.get('--no-session-persistence'), true);
     assert.equal(values.get('--setting-sources'), '');
@@ -1124,6 +1135,19 @@ if (args.length === 1 && args[0] === '--version') {
       rationale:
         'Selected the first intended test suite in the project inventory.',
     });
+    process.exit(0);
+  }
+  if (workflowTriage) {
+    const assessment = prompt.includes('fixture:uncertain')
+      ? { lane: 'missing' }
+      : {
+          size: 'small',
+          risk: 'low',
+          area: 'Documentation',
+          lane: 'light',
+          rationale: 'The plan changes one line of documentation.',
+        };
+    verdict('Workflow plan classification.', assessment);
     process.exit(0);
   }
   const passVerdict = {

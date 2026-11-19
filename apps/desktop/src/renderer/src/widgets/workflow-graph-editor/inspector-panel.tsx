@@ -26,6 +26,14 @@ import {
   type NodeIssue,
 } from '@/entities/workflow-graph';
 import type { ProviderStates } from '@/entities/session';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select';
+import { Field } from '@/shared/ui/field';
 import { PanelBody } from '@/shared/ui/panel';
 import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
@@ -162,6 +170,14 @@ export function InspectorPanel({
           <PanelBody>
             {gateRules}
             <div className="space-y-3 p-3">
+              {overlay.run.lane && (
+                <p className="text-ui text-muted-foreground">
+                  {overlay.run.lane.effective === 'light'
+                    ? 'Light lane'
+                    : 'Full lane'}
+                  . {overlay.run.lane.rationale}
+                </p>
+              )}
               <div className="flex items-center gap-2 text-ui">
                 <StepStateIcon state={runStep.state} className="size-4" />
                 <span className="min-w-0 flex-1 truncate font-medium">
@@ -233,6 +249,51 @@ export function InspectorPanel({
         )}
         {selection.kind === 'workflow' && (
           <PanelBody>
+            <Field
+              id="workflow-deep-review"
+              label="Optional deep review"
+              className="p-3"
+              hint="Light runs omit this review. Uncertain or larger changes use the full lane."
+            >
+              <Select
+                value={document.lanes?.light.omit ?? 'none'}
+                onValueChange={omit =>
+                  state.setWorkflowFields({
+                    lanes:
+                      omit === 'none'
+                        ? undefined
+                        : {
+                            light: {
+                              max_changed_files: 5,
+                              max_changed_lines: 100,
+                              ...document.lanes?.light,
+                              omit,
+                            },
+                            full: {},
+                          },
+                  })
+                }
+              >
+                <SelectTrigger id="workflow-deep-review">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Disabled</SelectItem>
+                  {document.nodes
+                    .filter(
+                      item =>
+                        item.step.type === 'agent' &&
+                        item.step.phase === 'pre-done' &&
+                        !item.step.required,
+                    )
+                    .map(item => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.id}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </Field>
             <WorkflowInspector
               name={document.name}
               description={document.description}

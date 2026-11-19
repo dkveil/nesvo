@@ -12,6 +12,8 @@ import {
   type GraphEdge,
   type DesktopEvent,
   type WorkflowRun,
+  type WorkflowTriage,
+  type Review,
   type WorkflowCiWait,
   type WorkflowChildItem,
   type WorkflowRunStatus,
@@ -26,6 +28,7 @@ import {
   type StepType,
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
+import { laneDecision, lightDiffRisk } from './triage';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import {
@@ -171,6 +174,11 @@ export type RunnerPorts = {
   stepExecutors: Partial<Record<StepType, StepExecutor>>;
   projectMappingApproved?: (root: string, hash: string) => boolean;
   author?: AuthorPort;
+  triage?: (
+    run: WorkflowRun,
+    signal: AbortSignal,
+  ) => Promise<WorkflowTriage | null>;
+  review?: (sessionId: string) => Review | undefined;
   stopChildren?: (runId: string) => void;
   createManualSession?: (run: WorkflowRun) => string;
   environment?: NodeJS.ProcessEnv;
@@ -328,6 +336,7 @@ const failureAttention = (step: WorkflowStepRecord) =>
   );
 
 const needsPlanningTurn = (workflow: ResolvedWorkflow) =>
+  Boolean(workflow.lanes) ||
   workflow.steps.some(
     step =>
       step.phase === 'plan' &&
@@ -511,9 +520,13 @@ const routedEdgeState = (
   const value =
     input.kind === 'stack'
       ? run.projectProfile?.stack
-      : input.kind === 'output' && outputs && Object.hasOwn(outputs, input.key)
-        ? outputs[input.key]
-        : undefined;
+      : input.kind === 'lane'
+        ? run.lane?.effective
+        : input.kind === 'output' &&
+            outputs &&
+            Object.hasOwn(outputs, input.key)
+          ? outputs[input.key]
+          : undefined;
   if (value === undefined) return 'missing';
   const matches =
     condition.operator === '=='
@@ -523,6 +536,7 @@ const routedEdgeState = (
 };
 
 export const conditionalGraph = (run: WorkflowRun) =>
+  Boolean(run.workflow.lanes) ||
   run.workflow.graph.edges.some(edge => edge.predicate) ||
   run.workflow.steps.some(step => step.join === 'reached' || step.required);
 
@@ -644,6 +658,18 @@ const checkingMove = (
     !run.workflow.graph.explicit &&
     rows.some(step => FAILED_STEP_STATES.includes(step.state));
   const pending = rows.filter(step => step.state === 'pending');
+  const skippedReview = pending.find(
+    step =>
+      run.lane?.effective === 'light' &&
+      step.name === run.workflow.lanes?.light.omit,
+  );
+  if (skippedReview)
+    return {
+      kind: 'mark-unreached',
+      step: skippedReview,
+      reason: 'Not reached: the light lane omits this optional review.',
+      closed: true,
+    };
   const ready = halted
     ? []
     : pending.filter(
@@ -680,6 +706,10 @@ const checkingMove = (
     const reopened = rows.find(
       step =>
         step.state === 'unreached' &&
+        !(
+          run.lane?.effective === 'light' &&
+          step.name === run.workflow.lanes?.light.omit
+        ) &&
         !routes(step).closed &&
         !routes(step).dead,
     );
@@ -772,6 +802,9 @@ export class WorkflowRunner {
   private readonly evidence: RunnerPorts['evidence'];
   private readonly executors: RunnerPorts['stepExecutors'];
   private readonly author: AuthorPort | undefined;
+  private readonly triage: RunnerPorts['triage'];
+  private readonly review: RunnerPorts['review'];
+  private readonly triaging = new Map<string, AbortController>();
   private readonly stopChildren: RunnerPorts['stopChildren'];
   private readonly createManualSession: RunnerPorts['createManualSession'];
   private readonly environment: NodeJS.ProcessEnv;
@@ -797,6 +830,8 @@ export class WorkflowRunner {
     this.evidence = ports.evidence;
     this.executors = ports.stepExecutors;
     this.author = ports.author;
+    this.triage = ports.triage;
+    this.review = ports.review;
     this.stopChildren = ports.stopChildren;
     this.createManualSession = ports.createManualSession;
     this.environment = ports.environment ?? process.env;
@@ -1078,6 +1113,8 @@ export class WorkflowRunner {
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear();
     for (const runId of [...this.busy.keys()]) this.clearBusy(runId);
+    for (const controller of this.triaging.values())
+      controller.abort('shutdown');
     for (const step of this.active.values()) step.controller.abort('shutdown');
     while (this.pending.size > 0 || this.active.size > 0)
       await Promise.all([
@@ -1122,6 +1159,7 @@ export class WorkflowRunner {
           return;
         continue;
       }
+      if (await this.prepareLane(run)) continue;
       const steps = this.store.stepsForRun(runId);
       if (this.observeRecoveringChildren(run, steps)) return;
       if (
@@ -1152,6 +1190,99 @@ export class WorkflowRunner {
       }
       if (!this.perform(run, steps, move)) return;
     }
+  }
+
+  private async prepareLane(run: WorkflowRun): Promise<boolean> {
+    const lanes = run.workflow.lanes;
+    if (!lanes || this.closed || TERMINAL_STATUSES.includes(run.status))
+      return false;
+    const planId = turnMessageId(run.id, 'plan', 1);
+    const planningComplete =
+      run.status === 'planning' &&
+      this.author?.turnState(run, planId) === 'completed';
+    if (
+      !run.lane &&
+      (planningComplete || run.manual || !run.sessionId || run.parent)
+    ) {
+      const forceFull = Boolean(run.forceFullLane);
+      const planMessageId = planningComplete ? planId : null;
+      if (!planningComplete || forceFull || !this.triage || run.triageStarted)
+        return Boolean(
+          this.writeRun(run, {
+            lane: laneDecision(null, planMessageId, forceFull),
+          }),
+        );
+      if (!this.writeRun(run, { triageStarted: true })) return true;
+      const reserved = this.store.getRun(run.id);
+      if (!reserved) return true;
+      const controller = new AbortController();
+      this.triaging.set(run.id, controller);
+      try {
+        const signal = AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(60_000),
+        ]);
+        const assessment = await this.triage(reserved, signal).catch(
+          () => null,
+        );
+        if (controller.signal.aborted || this.closed) return true;
+        const current = this.store.getRun(run.id);
+        if (current?.revision === reserved.revision)
+          this.writeRun(current, {
+            lane: laneDecision(assessment, planMessageId, false),
+          });
+        return true;
+      } finally {
+        this.triaging.delete(run.id);
+      }
+    }
+    if (
+      run.lane?.effective !== 'light' ||
+      !run.sessionId ||
+      !['implementing', 'fixing', 'checking'].includes(run.status) ||
+      (run.status === 'checking' && run.phase === 'plan') ||
+      this.author?.turnState(run, turnMessageId(run.id, 'implement', 1)) !==
+        'completed'
+    )
+      return false;
+    const review = this.review?.(run.sessionId);
+    if (run.status === 'fixing') {
+      const correction = requestedCorrection(
+        run,
+        this.store.stepsForRun(run.id),
+      );
+      if (
+        correction &&
+        this.author?.turnState(
+          run,
+          correctionMessageId(
+            run.id,
+            correction.step.id,
+            correction.step.attempt,
+          ),
+        ) !== 'completed'
+      )
+        return false;
+    }
+    if (
+      review &&
+      review.id === run.lane.review?.id &&
+      review.version === run.lane.review.version
+    )
+      return false;
+    const risk = lightDiffRisk(review, lanes);
+    if (!risk && !review) return false;
+    return Boolean(
+      this.writeRun(run, {
+        lane: {
+          ...run.lane,
+          ...(risk ? ({ effective: 'full', rationale: risk } as const) : {}),
+          ...(review
+            ? { review: { id: review.id, version: review.version } }
+            : {}),
+        },
+      }),
+    );
   }
 
   private observeRecoveringChildren(
@@ -1247,6 +1378,7 @@ export class WorkflowRunner {
   }
 
   private abortSteps(runId: string): void {
+    this.triaging.get(runId)?.abort('stop');
     for (const step of this.active.values())
       if (step.runId === runId) step.controller.abort('stop');
   }
@@ -1759,6 +1891,8 @@ export class WorkflowRunner {
         | 'currentStepIndex'
         | 'semanticsVersion'
         | 'projectProfile'
+        | 'triageStarted'
+        | 'lane'
       >
     >,
   ): boolean {

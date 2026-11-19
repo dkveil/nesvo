@@ -68,7 +68,12 @@ type WorkflowAutomationContext = {
 
 type AuthorSessions = Pick<
   SessionService,
-  'turnState' | 'turnReply' | 'failedSkillTurn' | 'sendWorkflowTurn' | 'continueWithFeedback' | 'stopActive'
+  | 'turnState'
+  | 'turnReply'
+  | 'failedSkillTurn'
+  | 'sendWorkflowTurn'
+  | 'continueWithFeedback'
+  | 'stopActive'
 >;
 
 type TaskSessions = Pick<
@@ -447,6 +452,7 @@ export class WorkflowTasks {
       gateProvider: input.gateProvider,
       gateModel: input.gateModel,
       status: 'pending',
+      ...(workflow.lanes && input.forceFullLane ? { forceFullLane: true } : {}),
       phase: null,
       currentStepIndex: null,
       attention: null,

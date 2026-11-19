@@ -251,7 +251,9 @@ export function StepResult({
       )}
       {record?.skip ? (
         <p className="leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-          Skipped: {record.skip.reason}
+          {record.state === 'unreached'
+            ? record.skip.reason
+            : `Skipped: ${record.skip.reason}`}
         </p>
       ) : result?.check ? (
         <>

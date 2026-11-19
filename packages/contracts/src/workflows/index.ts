@@ -1,5 +1,6 @@
 export * from './definitions';
 export * from './checks';
+export * from './lanes';
 export * from './results';
 export * from './runs';
 export * from './metrics';

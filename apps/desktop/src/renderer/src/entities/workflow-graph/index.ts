@@ -1,3 +1,4 @@
+import type { WorkflowLanes } from '@nesvo/contracts';
 import {
   formatEdge,
   workflowDefinitionSchema,
@@ -53,6 +54,7 @@ export type EditorEdge = {
 
 export type EditorDocument = {
   name: string;
+  lanes?: WorkflowLanes | undefined;
   description: string;
   body: string;
   scope: DefinitionScope;
@@ -489,6 +491,7 @@ export const fromCatalog = (
   }
   return {
     name: workflow.name,
+    lanes: workflow.lanes,
     description: workflow.description,
     body: workflow.body,
     scope: workflow.source.scope,
@@ -531,6 +534,7 @@ export const toFileText = (document: EditorDocument): string => {
   const lines = [`name: ${yamlName(document.name)}`];
   if (document.description)
     lines.push(`description: ${yamlText(document.description)}`);
+  if (document.lanes) lines.push(`lanes: ${JSON.stringify(document.lanes)}`);
   lines.push(`steps: [${names.map(yamlName).join(', ')}]`);
   lines.push('edges:');
   for (const edge of document.edges)
@@ -642,6 +646,7 @@ const graphToDocumentIssue = (
 const workflowFieldIssues = (document: EditorDocument): DocumentIssue[] => {
   const parsed = workflowDefinitionSchema.safeParse({
     name: document.name,
+    lanes: document.lanes,
     description: document.description,
     body: document.body,
     steps: document.nodes.map(node => node.id),
@@ -705,6 +710,7 @@ export const validateDocument = (
   const resolution = resolveGraph(
     {
       name: document.name || 'workflow',
+      lanes: document.lanes,
       steps: document.nodes.map(node => node.id),
       edges: document.edges.map(edge => formatEdge(toGraphEdge(edge))),
       layout: document.layout,

@@ -60,12 +60,7 @@ export type LoadedSpec = {
 };
 
 export type DefinitionErrorKind =
-  | 'invalid'
-  | 'not-found'
-  | 'cancelled'
-  | 'timeout'
-  | 'busy'
-  | 'unavailable';
+  'invalid' | 'not-found' | 'cancelled' | 'timeout' | 'busy' | 'unavailable';
 
 export class DefinitionError extends Error {
   readonly kind: DefinitionErrorKind;
@@ -134,6 +129,8 @@ const knownFields: Record<Kind, readonly string[]> = {
     'name',
     'type',
     'phase',
+    'join',
+    'required',
     'skill',
     'prompt_skill',
     'timeout',
@@ -156,7 +153,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'policy',
     'max_depth',
   ],
-  workflow: ['name', 'description', 'decisions', 'steps', ...graphFields],
+  workflow: ['name', 'description', 'decisions', 'lanes', 'steps', ...graphFields],
   spec: ['workflow', 'pipeline', 'title'],
 };
 const legacyFields: Partial<Record<Kind, Record<string, string>>> = {
@@ -1198,6 +1195,7 @@ export async function loadCatalog(
     if (checked.issues.some(item => item.severity === 'error')) continue;
     resolvedWorkflows.push({
       name: definition.name,
+      ...(definition.lanes ? { lanes: definition.lanes } : {}),
       description: definition.description,
       body: definition.body,
       source: source(entry),
@@ -1260,6 +1258,7 @@ export async function loadCatalog(
 }
 
 export type DocumentCheck = {
+  lanes?: GraphInput['lanes'];
   name: string | null;
   step: StepDefinition | null;
   steps: string[];
@@ -1297,6 +1296,7 @@ export function checkDocument(
     name: parsed.name,
     step: null,
     steps: parsed.value?.steps ?? [],
+    lanes: parsed.value?.lanes,
     edges: parsed.value?.edges ?? null,
     layout: parsed.value?.layout ?? null,
     lines: graphLines(parsed.yaml),

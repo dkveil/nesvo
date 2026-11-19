@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workflowLaneDecisionSchema } from './lanes';
 import { checkProjectProfileSchema } from './checks';
 import { promptSkillSchema } from '../skills';
 import { ruleEntryCitationSchema } from '../rule-entries';
@@ -90,6 +91,9 @@ export const workflowRunSchema = z.strictObject({
   id: idSchema,
   revision: revisionSchema,
   workflow: resolvedWorkflowSchema,
+  forceFullLane: z.literal(true).optional(),
+  triageStarted: z.literal(true).optional(),
+  lane: workflowLaneDecisionSchema.optional(),
   semanticsVersion: z.literal(1).optional(),
   projectProfile: checkProjectProfileSchema.optional(),
   specPath: z.string().min(1).max(workflowLimits.directory),

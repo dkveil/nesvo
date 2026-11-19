@@ -47,6 +47,7 @@ export const startWorkflowTaskSchema = z
   .strictObject({
     specPath: specPathSchema,
     workflowName: stepNameSchema,
+    forceFullLane: z.literal(true).optional(),
     title: z.string().trim().min(1).max(workflowCommandLimits.title).optional(),
     provider: providerSchema,
     model: modelSchema,

@@ -1,3 +1,4 @@
+import type { WorkflowLanes } from './lanes';
 import type { StepEffect, StepPhase, StepType } from './definitions';
 import {
   parseUntilCondition,
@@ -37,6 +38,7 @@ export type GraphStep = {
 export type GraphLayout = Readonly<Record<string, readonly [number, number]>>;
 export type GraphInput = {
   name: string;
+  lanes?: WorkflowLanes | undefined;
   steps: readonly string[];
   edges?: readonly string[] | null | undefined;
   layout?: GraphLayout | null | undefined;
@@ -58,6 +60,7 @@ export type GraphRule =
   | 'E11'
   | 'E12'
   | 'E13'
+  | 'E14'
   | 'W1'
   | 'W2'
   | 'W3'
@@ -645,6 +648,7 @@ export const resolveGraph = (
   layoutWarnings(input.layout, members, report);
   validateHostSteps(input.steps, stepsByName, { edges }, report);
   const conditional =
+    Boolean(input.lanes) ||
     edges.some(edge => edge.predicate) ||
     known.some(
       step =>
@@ -654,6 +658,18 @@ export const resolveGraph = (
   for (const { edge, index } of listed ?? []) {
     if (!edge.predicate) continue;
     const condition = parseWorkflowCondition(edge.predicate);
+    if (
+      condition?.input.kind === 'lane' &&
+      (edge.to !== input.lanes?.light.omit ||
+        condition.operator !== '==' ||
+        condition.value !== 'full')
+    )
+      report.add(
+        'E14',
+        'A lane condition can only require the full lane for the declared deep review.',
+        [edge.from, edge.to],
+        index,
+      );
     if (condition?.input.kind !== 'output') continue;
     const reference = condition.input.step;
     const source = stepsByName.get(edge.from);
@@ -672,6 +688,32 @@ export const resolveGraph = (
         [edge.from, edge.to],
         index,
       );
+  }
+  if (input.lanes) {
+    const omit = input.lanes.light.omit;
+    const optional = stepsByName.get(omit);
+    if (
+      !members.has(omit) ||
+      optional?.type !== 'agent' ||
+      optional.phase !== 'pre-done' ||
+      optional.required
+    )
+      report.add(
+        'E14',
+        'The light lane may omit one optional pre-done agent review.',
+        [omit],
+      );
+    for (const edge of outgoing({ edges }, omit)) {
+      if (
+        stepsByName.get(edge.to)?.join !== 'reached' ||
+        !incoming({ edges }, edge.to).some(source => source.from !== omit)
+      )
+        report.add(
+          'E14',
+          'Steps after the optional review need a reached join with a common input.',
+          [omit, edge.to],
+        );
+    }
   }
   if (conditional) {
     const gates = known.filter(

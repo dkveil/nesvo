@@ -201,6 +201,7 @@ export function Toolbar({
         {onRun && (
           <RunPopover
             workflowName={state.document.name}
+            lanesEnabled={Boolean(state.document.lanes)}
             directory={directory}
             specs={state.catalog.specs}
             statuses={statuses}

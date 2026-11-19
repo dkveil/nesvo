@@ -303,6 +303,18 @@ edges:
 
 Use `join: reached` on `results` to omit routes disabled by a false condition. It waits for all active inputs and requires at least one. A failed active input still has to satisfy its outcome. A missing condition input needs attention. Use `required: true` to require a step to pass even on conditional graphs. Human and CI gates are required on these graphs.
 
+### Light and full lanes
+
+Declare both lanes to classify a plan before implementation. Name one optional pre-done agent review for the light lane. Common checks remain required, and successors of the deep review use a reached join with a common input.
+
+```yaml
+lanes:
+  light: { omit: deep-review, max_changed_files: 5, max_changed_lines: 100 }
+  full: {}
+```
+
+The Run menu lets you choose full in advance. The host also chooses full when a plan is uncertain or a saved diff is incomplete, touches protected files or exceeds the light limits. Full remains in effect after corrections. The run inspector shows the effective lane and its reason.
+
 ## Validation in plain words
 
 Errors make the workflow invalid: the catalog lists it only through its issues, and a save is refused.

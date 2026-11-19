@@ -349,6 +349,60 @@ export async function smokePortableCheck({
       .getByRole('button', { name: 'Fit graph', exact: true })
       .click();
     await screenshots('d83-2-conditional-route');
+    if (process.env.NESVO_D90_STAGE === '3') {
+      await editor
+        .getByRole('button', { name: 'Close graph editor', exact: true })
+        .click();
+      await write(
+        home,
+        'steps/deep-review.md',
+        '---\nname: deep-review\ntype: agent\nphase: pre-done\n---\nfixture:verdict-pass\n',
+      );
+      await write(
+        home,
+        'workflows/lane-smoke.md',
+        '---\nname: lane-smoke\nsteps: [deep-review]\nlanes: { light: { omit: deep-review }, full: {} }\n---\n',
+      );
+      const specPath = '.agents/tasks/lane-smoke.md';
+      await write(
+        typescript,
+        specPath,
+        '---\nworkflow: lane-smoke\n---\nA small documentation task.\n',
+      );
+      const task = await page.evaluate(
+        ({ directory, specPath }) =>
+          window.nesvo.workflows.startTask('local', {
+            directory,
+            specPath,
+            workflowName: 'lane-smoke',
+            provider: 'Claude Code',
+            model: 'sonnet',
+            mode: 'read-only',
+            isolation: 'none',
+            gateProvider: 'Claude Code',
+            gateModel: 'sonnet',
+          }),
+        { directory: typescript, specPath },
+      );
+      await page.waitForFunction(async runId => {
+        const detail = await window.nesvo.workflows.getRun('local', runId);
+        return (
+          detail.run.status === 'passed' &&
+          detail.run.lane?.effective === 'light'
+        );
+      }, task.id);
+      await list.getByRole('button', { name: 'Read', exact: true }).click();
+      await list
+        .getByRole('button', { name: 'Edit lane-smoke', exact: true })
+        .click();
+      if ((await lastRun.getAttribute('aria-pressed')) !== 'true')
+        await lastRun.click();
+      await editor
+        .locator('[data-editor-node="deep-review"][data-run-state="unreached"]')
+        .click();
+      await editor.getByText(/Light lane/).waitFor();
+      await screenshots('d83-3-light-lane');
+    }
   }
   for (const detail of results) {
     const result = detail.steps[0].result;

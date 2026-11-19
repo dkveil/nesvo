@@ -16429,6 +16429,65 @@ test(
     );
 
     await t.test(
+      'triage pins light before implementation and chooses full for uncertainty or owner choice',
+      async () => {
+        const workflowRoot = join(repository, '.agents', 'workflows');
+        await write(
+          join(workflowRoot, 'steps', 'deep-review.md'),
+          stepFile({
+            name: 'deep-review',
+            type: 'agent',
+            phase: 'pre-done',
+            body: 'fixture:verdict-pass',
+          }),
+        );
+        for (const [name, spec, forceFull] of [
+          ['light-task', 'A small documentation task.', false],
+          ['uncertain-task', 'fixture:uncertain', false],
+          ['full-task', 'A small documentation task.', true],
+        ]) {
+          await write(
+            join(workflowRoot, 'workflows', name + '.md'),
+            stepFile({
+              name,
+              steps: '[deep-review]',
+              lanes: '{ light: { omit: deep-review }, full: {} }',
+              body: '',
+            }),
+          );
+          await write(
+            join(repository, '.agents', 'tasks', name + '.md'),
+            stepFile({ workflow: name, body: spec }),
+          );
+          const run = await started(
+            name,
+            forceFull ? { forceFullLane: true } : {},
+          );
+          const observed = await settled(run.id);
+          assert.equal(
+            observed.run.status,
+            'passed',
+            JSON.stringify(observed.run),
+          );
+          const light = name === 'light-task';
+          assert.equal(observed.run.lane.effective, light ? 'light' : 'full');
+          assert.equal(
+            observed.run.lane.planMessageId,
+            workflowTurnId(run.id, 'plan'),
+          );
+          assert.equal(
+            observed.run.triageStarted,
+            forceFull ? undefined : true,
+          );
+          assert.equal(
+            stepNamed(observed, 'deep-review').state,
+            light ? 'unreached' : 'passed',
+          );
+        }
+      },
+    );
+
+    await t.test(
       'a failing check with on_fail stop fails the run without another turn',
       async () => {
         const run = await started('failing');
@@ -21981,6 +22040,34 @@ test(
             context,
           ).message,
           /input for the route/,
+        );
+        const laneRun = {
+          ...conditional,
+          lane: {
+            requested: 'light',
+            effective: 'light',
+            rationale: 'Small change',
+            planMessageId: null,
+          },
+          workflow: {
+            ...conditional.workflow,
+            lanes: {
+              light: {
+                omit: 'typescript',
+                max_changed_files: 5,
+                max_changed_lines: 100,
+              },
+              full: {},
+            },
+          },
+        };
+        assert.equal(
+          nextMove(
+            laneRun,
+            [inspect, row(laneRun, 1, 'pending'), kotlin, joined],
+            context,
+          ).closed,
+          true,
         );
         const mixed = makeRun(
           [
