@@ -2624,7 +2624,7 @@ try {
   await screenshot('-agents-stopped');
   await page.keyboard.press('Escape');
   await agentsPanel.waitFor({ state: 'detached' });
-  await sessionCardToggle.click();
+  await sessionCardToggle.press('Enter');
   const remainingSubsessions = sessionCard.getByRole('region', {
     name: 'Subsessions · 1 running',
     exact: true,
