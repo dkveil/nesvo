@@ -170,14 +170,14 @@ const waitApproval = (hostId, id, runId) =>
     value => value?.runId === runId && value.pendingApprovals.length === 1,
     'Operation approval missing',
   );
-const waitReview = (hostId, runId, status = 'pending') =>
+const waitReview = (hostId, runId) =>
   waitFor(
     () => hostSnapshot(hostId),
     value =>
       value.reviews.some(
-        review => review.runId === runId && review.status === status,
+        review => review.runId === runId && review.status === 'pending',
       ),
-    `Review with status ${status} missing`,
+    'Pending review missing',
   ).then(value => value.reviews.find(review => review.runId === runId));
 const send = (hostId, sessionId, text, messageId = randomUUID()) =>
   page.evaluate(
@@ -195,6 +195,7 @@ const create = (hostId, title, mode = 'read-only') =>
         model: 'fixture-codex',
         mode,
         directory: '',
+        reviewEveryResult: true,
       },
     },
   );
@@ -239,7 +240,7 @@ const inboxRow = (label, hostId) =>
     .getByRole('article', { name: label, exact: true })
     .and(page.locator(`[data-host-id="${hostId}"]`));
 const openInbox = async () => {
-  await page.getByRole('button', { name: /^Inbox/ }).click();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   await page.getByRole('region', { name: 'Inbox', exact: true }).waitFor();
 };
 
@@ -761,7 +762,6 @@ try {
   const localReview = await waitReview(
     'local',
     (await session('local', local.id)).runId,
-    'done',
   );
   assert.equal(localReview.hostId, 'local');
   await connectRemote();
@@ -906,6 +906,7 @@ try {
       path: 'target.txt',
     }),
   );
+  await selectSession(remoteId, parent.id);
   await page.getByRole('button', { name: 'Open files', exact: true }).click();
   const files = page.getByRole('region', {
     name: 'Workspace files',
