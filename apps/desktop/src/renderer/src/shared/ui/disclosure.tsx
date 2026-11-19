@@ -27,6 +27,7 @@ type NativeDisclosureProps = Omit<
     open?: boolean;
     defaultOpen?: boolean;
     lazyContent?: boolean;
+    variant?: 'default' | 'flat';
     onOpenChange?: (open: boolean) => void;
     triggerLabel?: string;
     triggerTone?: DisclosureTone;
@@ -34,7 +35,9 @@ type NativeDisclosureProps = Omit<
   };
 
 const triggerClass =
-  'group/disclosure focus-ring flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-control px-2 text-left text-ui text-foreground transition-colors duration-fast not-data-disabled:hover:bg-accent data-disabled:cursor-not-allowed data-disabled:opacity-50';
+  'group/disclosure focus-ring flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-control px-2 text-left text-ui text-foreground transition-colors duration-fast data-disabled:cursor-not-allowed data-disabled:opacity-50';
+
+const triggerHoverClass = 'not-data-disabled:hover:bg-accent';
 
 const mutedTriggerClass = 'text-xs leading-5 font-normal text-muted-foreground';
 
@@ -111,6 +114,7 @@ export function Disclosure({
         aria-label={triggerLabel}
         className={cn(
           triggerClass,
+          triggerHoverClass,
           triggerTone === 'muted' && mutedTriggerClass,
         )}
       >
@@ -138,6 +142,7 @@ export function NativeDisclosure({
   open,
   defaultOpen = false,
   lazyContent = false,
+  variant = 'default',
   onOpenChange,
   className,
   contentClassName,
@@ -165,6 +170,7 @@ export function NativeDisclosure({
         className={cn(
           triggerClass,
           triggerTone === 'muted' && mutedTriggerClass,
+          variant === 'default' && triggerHoverClass,
           'cursor-default list-none [&::-webkit-details-marker]:hidden',
         )}
       >

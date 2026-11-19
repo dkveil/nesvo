@@ -351,6 +351,7 @@ export function SessionReviews({
             lazyContent
             triggerLabel={earlierLabel}
             title={earlierLabel}
+            variant="flat"
             open={earlierOpen}
             onOpenChange={setEarlierOpen}
             className="border-t pt-1"
