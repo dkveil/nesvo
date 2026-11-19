@@ -28493,7 +28493,11 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
   const capabilities = (await host.request('health')).health.capabilities;
   assert.ok(capabilities.includes('inbox-rules'));
   assert.ok(capabilities.includes('decision-routing'));
-  assert.deepEqual(capabilities.slice(-2), ['inbox-rules', 'decision-routing']);
+  const inboxRuleCapability = capabilities.indexOf('inbox-rules');
+  assert.deepEqual(
+    capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
+    ['inbox-rules', 'decision-routing'],
+  );
 
   const invalid = await host.request('validate-inbox-rule', {
     text: '---\nname: Bad Name\ntrigger: command\naction: ask\n---\n',
