@@ -48,7 +48,7 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
   `,
     )
     .all(managerRowLimit);
-  const groups = projectRows.flatMap((row, order) => {
+  const groups = projectRows.flatMap(row => {
     const id = sourceText(row.project_id, 512);
     return id
       ? [
@@ -60,7 +60,7 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
             directory: sourceText(row.workspace_root),
             archivedAt: sourceDate(row.archived_at),
             profile: null,
-            order,
+            order: 0,
           },
         ]
       : [];
@@ -91,7 +91,7 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
   `,
     )
     .all(managerRowLimit);
-  const sessions = rows.flatMap((row, order) => {
+  const sessions = rows.flatMap(row => {
     const id = sourceText(row.thread_id, 512);
     const projectId = sourceText(row.project_id, 512);
     if (!id || !projectId) return [];
@@ -139,7 +139,7 @@ function inspect(database: DatabaseSync, root: string): ManagerSource {
         branch: sourceText(row.branch, 512),
         provider,
         blocked,
-        order,
+        order: 0,
       },
     ];
   });
