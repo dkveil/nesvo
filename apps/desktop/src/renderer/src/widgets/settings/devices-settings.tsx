@@ -141,7 +141,7 @@ export function DevicesSettings({ computer, api }: Props) {
     <>
       <SettingsSection title="External Inbox devices">
         <form
-          className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2"
           onSubmit={event => {
             event.preventDefault();
             void enroll();
@@ -166,7 +166,6 @@ export function DevicesSettings({ computer, api }: Props) {
           </Field>
           <Button
             type="submit"
-            variant="ghost"
             disabled={
               !available ||
               busy ||
@@ -183,7 +182,7 @@ export function DevicesSettings({ computer, api }: Props) {
             description="Copy it now and store it as a secret. The host can only verify it after this."
           >
             <Button
-              variant="ghost"
+              variant="secondary"
               onClick={() =>
                 void navigator.clipboard.writeText(enrollment.token).then(
                   () => setCopied(true),
@@ -202,7 +201,7 @@ export function DevicesSettings({ computer, api }: Props) {
           devices.map(device => (
             <SettingsRow key={device.id} title={device.name}>
               <Button
-                variant="ghost"
+                variant="destructive"
                 disabled={busy}
                 aria-label={`Revoke ${device.name}`}
                 onClick={() => void revoke(device.id)}
@@ -227,7 +226,7 @@ export function DevicesSettings({ computer, api }: Props) {
       </SettingsSection>
       <SettingsSection title="Install the Nesvo CLI">
         {cli ? (
-          <div className="space-y-2 px-2 py-2">
+          <div className="space-y-2 px-3 py-2">
             <Field
               id="bundled-inbox-cli"
               label="Bundled CLI"
@@ -249,7 +248,7 @@ export function DevicesSettings({ computer, api }: Props) {
             </p>
           </div>
         ) : (
-          <div className="px-2 py-2">
+          <div className="px-3 py-2">
             <StatusMessage tone={cli === null ? 'error' : 'loading'}>
               {cli === null
                 ? 'The bundled CLI is unavailable.'
@@ -260,7 +259,7 @@ export function DevicesSettings({ computer, api }: Props) {
       </SettingsSection>
       {cli && (
         <SettingsSection title="Connect an MCP client">
-          <div className="space-y-2 px-2 py-2">
+          <div className="space-y-2 px-3 py-2">
             <p className="text-2xs leading-4 text-muted-foreground">
               Add the snippet to your client configuration. Supply the token
               through <code>NESVO_INBOX_TOKEN</code> or an owner-only file
