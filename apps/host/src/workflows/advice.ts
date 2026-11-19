@@ -12,6 +12,7 @@ type AdviceSessions = Pick<
   | 'sendWorkflowTurn'
   | 'stopActive'
   | 'finished'
+  | 'snapshot'
 >;
 
 export async function workflowAdvice<T>(
@@ -24,11 +25,17 @@ export async function workflowAdvice<T>(
   signal: AbortSignal,
 ): Promise<T | null> {
   signal.throwIfAborted();
+  const origin = run.sessionId ? sessions.snapshot(run.sessionId) : undefined;
+  const effort =
+    origin?.provider === run.gateProvider && origin.model === run.gateModel
+      ? (origin.effort ?? undefined)
+      : undefined;
   const session = sessions.create(
     {
       title: `${run.workflow.name} / ${title}`.slice(0, 100),
       provider: run.gateProvider,
       model: run.gateModel,
+      effort,
       mode: 'read-only',
       directory: run.directory,
     },

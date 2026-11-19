@@ -808,6 +808,11 @@ if (args.length === 1 && args[0] === '--version') {
   if (workflowRecommendation) {
     assert.equal(values.get('--permission-mode'), 'plan');
     assert.equal(values.get('--no-session-persistence'), true);
+    const output = JSON.parse(values.get('--json-schema'));
+    assert.deepEqual(
+      output.required.toSorted(),
+      Object.keys(output.properties).toSorted(),
+    );
   } else if (workflowTriage) {
     assert.equal(values.get('--permission-mode'), 'plan');
     assert.equal(values.get('--no-session-persistence'), true);
@@ -1148,6 +1153,7 @@ if (args.length === 1 && args[0] === '--version') {
       recommendation: 'approve',
       reason: 'The evidence supports this result.',
       references: [],
+      uncertainPaths: [],
     });
     process.exit(0);
   }
