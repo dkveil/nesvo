@@ -7803,22 +7803,19 @@ test(
     assert.ok(Date.now() - aborting < 500, String(Date.now() - aborting));
     await processesGone([hung], tracked);
     await rm(pidFile);
-    const stuck = [];
-    const stuckPids = [];
-    for (let index = 0; index < 4; index++) {
-      const reading = readGitBranch(directory, idle);
-      reading.catch(() => undefined);
-      stuck.push(reading);
-      stuckPids.push(await readerPid());
-      await rm(pidFile);
-    }
+    const readerFolders = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        mkdtemp(join(directory, `reader-${index}-`)),
+      ),
+    );
+    const settled = Promise.allSettled(
+      readerFolders.map(folder => readGitBranch(folder, idle)),
+    );
     await assert.rejects(readGitBranch(directory, idle), /stuck/);
-    const settled = await Promise.allSettled(stuck);
     assert.equal(
-      settled.every(result => result.status === 'rejected'),
+      (await settled).every(result => result.status === 'rejected'),
       true,
     );
-    await processesGone(stuckPids, tracked);
   },
 );
 
