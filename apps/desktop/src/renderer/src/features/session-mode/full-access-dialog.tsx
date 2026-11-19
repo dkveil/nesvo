@@ -19,17 +19,20 @@ export function FullAccessDialog({
   provider,
   onConfirm,
   onClose,
+  reReview,
 }: {
   directory: string;
   provider: string;
   onConfirm: () => Promise<void>;
   onClose: () => void;
+  reReview?: { description: string; onConfirm: () => void };
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
+  const [reviewedAgain, setReviewedAgain] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const confirm = async () => {
-    if (!acknowledged || pending) return;
+    if (!acknowledged || pending || (reReview && !reviewedAgain)) return;
     setPending(true);
     setError('');
     try {
@@ -76,12 +79,27 @@ export function FullAccessDialog({
           I understand
         </Label>
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
+        {reReview && (
+          <Label className="flex items-center gap-2 text-ui">
+            <Checkbox
+              checked={reviewedAgain}
+              disabled={pending}
+              onCheckedChange={value => {
+                setReviewedAgain(value === true);
+                if (value === true) reReview.onConfirm();
+              }}
+            />
+            {reReview.description}
+          </Label>
+        )}
         <DialogFooter>
           <DialogCancel disabled={pending} onClick={onClose} autoFocus />
           <Button
             variant="destructive"
             size="lg"
-            disabled={pending || !acknowledged}
+            disabled={
+              pending || !acknowledged || Boolean(reReview && !reviewedAgain)
+            }
             onClick={() => void confirm()}
           >
             Allow Full access

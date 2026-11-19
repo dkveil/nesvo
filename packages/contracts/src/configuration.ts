@@ -6,6 +6,7 @@ import { ruleEntrySchema } from './rule-entries';
 import { createCostBudgetSchema } from './costs';
 import { scheduledJobDefinitionSchema } from './scheduled-jobs';
 import { moveSessionGroupSchema, sessionGroupSchema } from './session-groups';
+import { allowScopeSchema } from './claude-autonomy';
 import {
   externalInboxDeviceSchema,
   externalInboxTokenSchema,
@@ -47,6 +48,35 @@ export const configurationLimits = {
 const key = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
 const path = z.string().min(1).max(4096);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+export const configurationAuthoritySubjectSchema = z.enum([
+  'session-mode',
+  'claude-allow-rule',
+  'devices',
+  'phone-access',
+  'computers',
+]);
+export type ConfigurationAuthoritySubject = z.infer<
+  typeof configurationAuthoritySubjectSchema
+>;
+const authorityValue = z.union([
+  sessionModeSchema,
+  z.strictObject({
+    kind: z.literal('claude-allow-rule'),
+    scope: allowScopeSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('devices'),
+    name: z.string().trim().min(1).max(64),
+  }),
+  z.strictObject({
+    kind: z.literal('phone-access'),
+    action: z.enum(['enable', 'pair']),
+  }),
+  z.strictObject({
+    kind: z.literal('computers'),
+    name: z.string().trim().min(1).max(80),
+  }),
+]);
 const fileScope = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('global') }),
   z.strictObject({ kind: z.literal('project'), root: path }),
@@ -56,8 +86,8 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
   z.strictObject({ area: configurationRecordAreaSchema, id: z.uuid() }),
   z.strictObject({
     area: z.literal('authority'),
-    subject: z.literal('session-mode'),
-    id: z.uuid(),
+    subject: configurationAuthoritySubjectSchema,
+    id: z.string().min(1).max(200),
   }),
   z.strictObject({
     area: z.literal('settings'),
@@ -117,7 +147,7 @@ export const configurationProfileInputSchema = z.strictObject({
 export type ConfigurationProfile = z.infer<typeof configurationProfileSchema>;
 
 export const configurationValueSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('authority'), value: sessionModeSchema }),
+  z.strictObject({ kind: z.literal('authority'), value: authorityValue }),
   z.strictObject({
     kind: z.literal('session-groups'),
     value: sessionGroupSchema
@@ -186,6 +216,14 @@ export const configurationMutationSchema = z
     if (input.draft && input.draft.kind !== kind)
       issue('draft', 'The value does not match the target.');
     if (
+      target.area === 'authority' &&
+      input.draft?.kind === 'authority' &&
+      (typeof input.draft.value === 'string'
+        ? target.subject !== 'session-mode'
+        : target.subject !== input.draft.value.kind)
+    )
+      issue('draft', 'The authority proposal does not match its subject.');
+    if (
       ('key' in target || target.area === 'authority') &&
       input.operation !== 'update'
     )
@@ -234,6 +272,50 @@ export const configurationDecisionSchema = z.strictObject({
 export const configurationInspectDraftSchema = configurationDecisionSchema.pick(
   { id: true, revision: true },
 );
+export const configurationOwnerFlowLinkSchema = z.strictObject({
+  ...configurationInspectDraftSchema.shape,
+  actionId: z.uuid(),
+  reviewRevocation: z.boolean().default(false),
+});
+export const configurationOwnerEffectSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('full-access'), sessionId: z.uuid() }),
+  z.strictObject({
+    kind: z.literal('claude-allow-rule'),
+    sessionId: z.uuid(),
+    runId: z.uuid(),
+    requestId: z.string().min(1).max(200),
+    fingerprint: hash,
+    scope: allowScopeSchema,
+  }),
+  z.strictObject({ kind: z.literal('devices') }),
+  z.strictObject({
+    kind: z.literal('phone-access'),
+    action: z.enum(['enable', 'pair']),
+  }),
+  z.strictObject({ kind: z.literal('computers') }),
+]);
+export const configurationOwnerFlowStartSchema =
+  configurationOwnerFlowLinkSchema.extend({
+    effect: configurationOwnerEffectSchema,
+  });
+export const configurationOwnerFlowOutcomeSchema = z.strictObject({
+  id: z.uuid(),
+  description: z.string().min(1).max(200),
+  resourceId: z.uuid().optional(),
+});
+export const configurationOwnerFlowFinishSchema = z.strictObject({
+  claim: z.uuid(),
+  outcome: configurationOwnerFlowOutcomeSchema.omit({ id: true }).nullable(),
+});
+export type ConfigurationOwnerFlowLink = z.input<
+  typeof configurationOwnerFlowLinkSchema
+>;
+export type ConfigurationOwnerFlowStart = z.output<
+  typeof configurationOwnerFlowStartSchema
+>;
+export type ConfigurationOwnerFlowFinish = z.output<
+  typeof configurationOwnerFlowFinishSchema
+>;
 export const configurationUndoSchema = z.strictObject({
   id: z.uuid(),
   revision: z.number().int().positive(),
@@ -282,6 +364,8 @@ export const configurationChangeSchema = z.strictObject({
   sessionMode: sessionModeConfirmationSchema
     .extend({ provider: providerSchema })
     .optional(),
+  ownerEffect: configurationOwnerEffectSchema.optional(),
+  outcome: configurationOwnerFlowOutcomeSchema.omit({ id: true }).optional(),
   diff: configurationDiffSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -358,7 +442,10 @@ export const configurationCapabilitiesSchema = z.strictObject({
     .max(configurationAreaSchema.options.length),
   directApply: z.array(configurationTargetSchema).max(10),
   nameOnlyGroupRename: z.boolean(),
-  authoritySubjects: z.array(z.literal('session-mode')).max(1).default([]),
+  authoritySubjects: z
+    .array(configurationAuthoritySubjectSchema)
+    .max(5)
+    .default([]),
 });
 const configurationListSchema = z.strictObject({
   targets: z
@@ -398,6 +485,17 @@ export const configurationRequestSchema = z.strictObject({
 });
 export const configurationResultSchema = z.union([
   configurationErrorSchema,
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('owner-flow'),
+    claim: z.uuid(),
+    change: configurationChangeSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('owner-outcome'),
+    receipt: configurationReceiptSchema.nullable(),
+  }),
   z.strictObject({
     ok: z.literal(true),
     kind: z.literal('draft'),
@@ -456,6 +554,9 @@ export type ConfigurationMutation = z.infer<typeof configurationMutationSchema>;
 export type ConfigurationSource = z.infer<typeof configurationSourceSchema>;
 export type ConfigurationDecision = z.infer<typeof configurationDecisionSchema>;
 export type ConfigurationUndo = z.infer<typeof configurationUndoSchema>;
+export type ConfigurationOwnerEffect = z.infer<
+  typeof configurationOwnerEffectSchema
+>;
 export type ConfigurationError = z.infer<typeof configurationErrorSchema>;
 export type ConfigurationChange = z.infer<typeof configurationChangeSchema>;
 export type ConfigurationReceipt = z.infer<typeof configurationReceiptSchema>;

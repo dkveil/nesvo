@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { FilePenLine } from 'lucide-react';
 import { parsePatchFiles } from '@pierre/diffs';
 import {
   configurationValueSchema,
   type ConfigurationChange,
   type ConfigurationValue,
+  type DesktopSession,
 } from '@nesvo/contracts';
 import { errorDetail, modeLabel } from '@/entities/session';
 import { DiffFileView } from '@/features/diff-viewer/diff-file-view';
@@ -26,6 +27,9 @@ import { Textarea } from '@/shared/ui/textarea';
 import { ListRow } from '@/shared/ui/list-row';
 import { StatusMessage } from '@/shared/ui/status-message';
 import type { HostedConfigurationChange } from './use-configuration-changes';
+import { AuthoritySettingsContext } from './authority-review';
+import { FullAccessDialog } from '@/features/session-mode/full-access-dialog';
+import { ApprovalActions } from '@/features/session-mode/approval-actions';
 
 type Action = 'accept' | 'dismiss' | 'undo';
 const statuses: Record<ConfigurationChange['status'], string> = {
@@ -70,7 +74,13 @@ export function ConfigurationChangeRow({
     markdown: boolean;
   } | null>(null);
   const [editPending, setEditPending] = useState(false);
+  const [authoritySession, setAuthoritySession] =
+    useState<DesktopSession | null>(null);
+  const [authorityWarning, setAuthorityWarning] = useState('');
+  const [reviewRevocation, setReviewRevocation] = useState(false);
+  const openAuthoritySettings = useContext(AuthoritySettingsContext);
   const { target, source } = change;
+  const effect = change.ownerEffect;
   const permission = change.sessionMode;
   const canReview =
     change.status === 'pending' || change.status === 'conflicted';
@@ -167,6 +177,108 @@ export function ConfigurationChangeRow({
     }
   }, [change.diff]);
 
+  const reviewLink = () => ({
+    id: change.id,
+    revision: change.revision,
+    actionId: crypto.randomUUID(),
+    reviewRevocation,
+  });
+  const reviewAuthority = async () => {
+    if (!effect) return;
+    setWorking('accept');
+    setError('');
+    setAuthorityWarning('');
+    setReviewRevocation(false);
+    try {
+      if (
+        effect.kind === 'full-access' ||
+        effect.kind === 'claude-allow-rule'
+      ) {
+        const session = await window.nesvo.getSession(
+          { sessionId: effect.sessionId },
+          change.hostId,
+        );
+        if (
+          effect.kind === 'claude-allow-rule' &&
+          (session.runId !== effect.runId ||
+            !session.pendingApprovals.some(
+              approval =>
+                approval.id === effect.requestId &&
+                approval.fingerprint === effect.fingerprint,
+            ))
+        )
+          throw new Error(
+            'The pending Claude operation changed. Prepare a fresh proposal.',
+          );
+        setAuthoritySession(session);
+        return;
+      }
+      const link = {
+        hostId: change.hostId,
+        review: { ...reviewLink(), reviewRevocation: false },
+      };
+      if (effect.kind === 'phone-access') {
+        openAuthoritySettings?.({ ...link, ...effect });
+        return;
+      }
+      const loaded = await window.nesvo.configuration.draft(
+        { id: change.id, revision: change.revision },
+        change.hostId,
+      );
+      if (!loaded.ok) throw new Error(loaded.message);
+      const value =
+        loaded.kind === 'draft' && loaded.draft?.kind === 'authority'
+          ? loaded.draft.value
+          : null;
+      if (
+        !value ||
+        typeof value === 'string' ||
+        !('name' in value) ||
+        value.kind !== effect.kind
+      )
+        throw new Error('The proposal changed. Review its latest version.');
+      openAuthoritySettings?.({ ...link, kind: effect.kind, name: value.name });
+    } catch (issue) {
+      setError(errorDetail(issue));
+    } finally {
+      setWorking(null);
+    }
+  };
+  const pendingRule =
+    effect?.kind === 'claude-allow-rule'
+      ? authoritySession?.pendingApprovals.find(
+          approval => approval.id === effect.requestId,
+        )
+      : undefined;
+  const completeReview = async (
+    operation: Parameters<
+      typeof window.nesvo.configuration.completeReview
+    >[0]['operation'],
+  ) => {
+    setWorking('accept');
+    setAuthorityWarning('');
+    try {
+      const result = await window.nesvo.configuration.completeReview(
+        { review: reviewLink(), operation },
+        change.hostId,
+      );
+      if (!result.recorded)
+        setError(
+          'The action completed. Inspect the unsettled receipt in Change history.',
+        );
+      setAuthoritySession(null);
+    } catch (issue) {
+      if (errorDetail(issue).includes('device grant changed')) {
+        setAuthorityWarning(
+          'The proposing device grant changed. Confirm that you still want to review this action.',
+        );
+      }
+      throw issue;
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const act = async (action: Action, confirmed = false, reReview = false) => {
     setWorking(action);
     setError('');
@@ -237,6 +349,7 @@ export function ConfigurationChangeRow({
           change.operation,
           new Date(change.updatedAt).toLocaleString(),
           change.decidedBy ? `Decided by ${change.decidedBy}` : '',
+          change.outcome?.description,
         ]
           .filter(Boolean)
           .join(' · ')}
@@ -310,7 +423,8 @@ export function ConfigurationChangeRow({
                 size="sm"
                 disabled={!online || !!working || change.diff.truncated}
                 onClick={() => {
-                  if (change.classification === 'authority')
+                  if (effect) void reviewAuthority();
+                  else if (change.classification === 'authority')
                     setConfirm({
                       action: 'accept',
                       revision: change.revision,
@@ -323,7 +437,11 @@ export function ConfigurationChangeRow({
                   else void act('accept');
                 }}
               >
-                {permission ? 'Review permission change' : 'Accept'}
+                {effect
+                  ? 'Open confirmation'
+                  : permission
+                    ? 'Review permission change'
+                    : 'Accept'}
               </Button>
             )}
             {canReview && (
@@ -337,6 +455,7 @@ export function ConfigurationChangeRow({
               </Button>
             )}
             {change.status === 'applied' &&
+              !effect &&
               permission?.from !== 'full-access' && (
                 <Button
                   variant="ghost"
@@ -361,6 +480,92 @@ export function ConfigurationChangeRow({
       </Disclosure>
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       {!online && <StatusMessage>Offline snapshot</StatusMessage>}
+      {authoritySession && effect?.kind === 'full-access' && (
+        <FullAccessDialog
+          directory={authoritySession.directory}
+          provider={authoritySession.provider}
+          reReview={
+            authorityWarning
+              ? {
+                  description: authorityWarning,
+                  onConfirm: () => setReviewRevocation(true),
+                }
+              : undefined
+          }
+          onClose={() => setAuthoritySession(null)}
+          onConfirm={() =>
+            completeReview({
+              kind: effect.kind,
+              directory: authoritySession.directory,
+              sessionId: effect.sessionId,
+            })
+          }
+        />
+      )}
+      {authoritySession &&
+        effect?.kind === 'claude-allow-rule' &&
+        pendingRule && (
+          <Dialog
+            open
+            onOpenChange={open => {
+              if (!open && !working) setAuthoritySession(null);
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Review Claude allow rule</DialogTitle>
+                <DialogDescription>
+                  Saving this rule also approves the pending operation in{' '}
+                  {authoritySession.title}.
+                </DialogDescription>
+              </DialogHeader>
+              <p className="text-ui">{pendingRule.title}</p>
+              <ApprovalActions
+                approval={pendingRule}
+                hostId={change.hostId}
+                sessionId={effect.sessionId}
+                runId={effect.runId}
+                initialScope={effect.scope}
+                onCancel={() => setAuthoritySession(null)}
+                enabled={!working}
+                onDecide={input => {
+                  if (
+                    input.decision !== 'accept' ||
+                    input.allowScope !== effect.scope ||
+                    input.allowPattern === undefined
+                  )
+                    return;
+                  void completeReview({
+                    kind: effect.kind,
+                    input: {
+                      decision: 'accept',
+                      sessionId: effect.sessionId,
+                      runId: effect.runId,
+                      requestId: effect.requestId,
+                      fingerprint: effect.fingerprint,
+                      allowScope: effect.scope,
+                      allowPattern: input.allowPattern,
+                    },
+                  }).catch(issue => setError(errorDetail(issue)));
+                }}
+              />
+              {authorityWarning && !reviewRevocation ? (
+                <StatusMessage tone="warning">
+                  {authorityWarning}{' '}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setReviewRevocation(true)}
+                  >
+                    Review again
+                  </Button>
+                </StatusMessage>
+              ) : (
+                error && <StatusMessage tone="error">{error}</StatusMessage>
+              )}
+            </DialogContent>
+          </Dialog>
+        )}
       {confirm && confirm.revision === change.revision && (
         <ConfirmDialog
           open

@@ -369,6 +369,8 @@ function requiredCapability(
     method === 'propose-config-change' ||
     method === 'decide-config-proposal' ||
     method === 'list-config-changes' ||
+    method === 'start-config-owner-flow' ||
+    method === 'finish-config-owner-flow' ||
     method === 'undo-config-change'
   )
     return 'configuration';
@@ -1263,6 +1265,8 @@ export class ComputerManager {
       'propose-config-change': 'configuration-result',
       'decide-config-proposal': 'configuration-result',
       'list-config-changes': 'configuration-result',
+      'start-config-owner-flow': 'configuration-result',
+      'finish-config-owner-flow': 'configuration-result',
       'undo-config-change': 'configuration-result',
       'claude-status': 'claude-status',
       'codex-status': 'codex-status',

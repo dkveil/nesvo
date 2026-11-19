@@ -39,6 +39,8 @@ export function ApprovalActions({
   hostId,
   enabled,
   compact = false,
+  initialScope,
+  onCancel,
   onDecide,
 }: {
   approval: Approval;
@@ -47,10 +49,14 @@ export function ApprovalActions({
   hostId: string;
   enabled: boolean;
   compact?: boolean;
+  initialScope?: AllowScope;
+  onCancel?: () => void;
   onDecide: (decision: Decision) => void;
 }) {
   const fieldId = useId();
-  const [editor, setEditor] = useState<AllowScope | 'deny' | null>(null);
+  const [editor, setEditor] = useState<AllowScope | 'deny' | null>(
+    initialScope ?? null,
+  );
   const [pattern, setPattern] = useState(() => patternBody(approval));
   const [message, setMessage] = useState('');
   const [checked, setChecked] = useState<{
@@ -235,7 +241,7 @@ export function ApprovalActions({
               size="sm"
               type="button"
               variant="ghost"
-              onClick={() => setEditor(null)}
+              onClick={onCancel ?? (() => setEditor(null))}
             >
               Cancel
             </Button>

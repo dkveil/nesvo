@@ -81,7 +81,10 @@ import {
   revisionedSlot,
   type ConfigurationPrincipal,
 } from './workflows/configuration-changes';
-import type { ConfigurationResult } from '@nesvo/contracts';
+import type {
+  ConfigurationResult,
+  ConfigurationTarget,
+} from '@nesvo/contracts';
 import {
   ConfigurationDevices,
   configurationFailure,
@@ -1026,7 +1029,15 @@ export const serveHost = ({
       const authorityAreas = workLaptopMode ? [] : (['authority'] as const);
       configuration.register(
         'authority',
-        authorityConfiguration(database, sessions, directory, workLaptopMode),
+        authorityConfiguration(
+          database,
+          sessions,
+          directory,
+          workLaptopMode,
+          computerId,
+          Boolean(profile),
+          () => Boolean(claudeAutonomy.epoch()),
+        ),
       );
       const definitionAreas = [
         'workflows',
@@ -1104,15 +1115,30 @@ export const serveHost = ({
               ]
             : [],
           async (area, project, signal) => {
-            if (area === 'authority')
-              return sessions
-                .list()
-                .filter(session => supportsModeProposal(session, directory))
-                .map(({ id }) => ({
-                  area,
-                  subject: 'session-mode',
-                  id,
-                }));
+            if (area === 'authority') {
+              const targets: ConfigurationTarget[] = [
+                { area, subject: 'devices', id: computerId },
+              ];
+              if (profile)
+                targets.push(
+                  { area, subject: 'phone-access', id: computerId },
+                  { area, subject: 'computers', id: computerId },
+                );
+              for (const session of sessions.list()) {
+                if (!supportsModeProposal(session, directory)) continue;
+                targets.push({ area, subject: 'session-mode', id: session.id });
+                if (session.provider !== 'Claude Code' || !session.runId)
+                  continue;
+                for (const approval of session.pendingApprovals)
+                  if (approval.allowPattern && approval.fingerprint)
+                    targets.push({
+                      area,
+                      subject: 'claude-allow-rule',
+                      id: approval.id,
+                    });
+              }
+              return targets;
+            }
             if (area === 'session-groups')
               return housekeeping.list().groups.map(({ id }) => ({ area, id }));
             if (area === 'budgets')
@@ -1200,6 +1226,15 @@ export const serveHost = ({
               }));
           },
           findProjectRoot,
+          profile
+            ? [
+                'session-mode',
+                'claude-allow-rule',
+                'devices',
+                'phone-access',
+                'computers',
+              ]
+            : ['session-mode', 'claude-allow-rule', 'devices'],
         );
       yield* Effect.promise(() => configuration.recover());
       yield* Effect.acquireRelease(
@@ -1792,6 +1827,8 @@ export const serveHost = ({
           request.method === 'inspect-config-draft' ||
           request.method === 'propose-config-change' ||
           request.method === 'decide-config-proposal' ||
+          request.method === 'start-config-owner-flow' ||
+          request.method === 'finish-config-owner-flow' ||
           request.method === 'list-config-changes' ||
           request.method === 'undo-config-change'
         ) {
@@ -1799,6 +1836,19 @@ export const serveHost = ({
           const { id } = request;
           const operation = async (): Promise<ConfigurationResult> => {
             switch (request.method) {
+              case 'start-config-owner-flow':
+                return {
+                  ok: true,
+                  kind: 'owner-flow',
+                  ...(await changes.startOwnerFlow(request.input)),
+                };
+              case 'finish-config-owner-flow':
+                return {
+                  ok: true,
+                  kind: 'owner-outcome',
+                  receipt:
+                    (await changes.finishOwnerFlow(request.input)) ?? null,
+                };
               case 'inspect-config-draft':
                 return {
                   ok: true,

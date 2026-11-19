@@ -15,6 +15,18 @@ import {
 } from '@/features/default-session-folder';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
+import { Checkbox } from '@/shared/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog';
+import {
+  isChangedDeviceGrant,
+  type SettingsAuthorityReview,
+} from '@/features/configuration/authority-review';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { Field } from '@/shared/ui/field';
 import { WorktreeDefaultRow } from '@/features/new-thread/worktree-default-row';
@@ -43,6 +55,7 @@ type Props = {
   onEditingChange?: (editing: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
   onboarding?: boolean;
+  review?: Extract<SettingsAuthorityReview, { kind: 'computers' }>;
 };
 
 const syncFormat = new Intl.DateTimeFormat('en', {
@@ -104,6 +117,7 @@ export function ManageComputers({
   onBusyChange,
   onEditingChange,
   onboarding = false,
+  review,
 }: Props) {
   const [error, setError] = useState('');
   const { workLaptopPolicy } = api;
@@ -116,7 +130,10 @@ export function ManageComputers({
       .then(policy => setRestricted(policy.enabled))
       .catch(failure => setError(errorDetail(failure)));
   }, [workLaptopPolicy]);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(Boolean(review));
+  const [activeReview, setActiveReview] = useState(review);
+  const [revoked, setRevoked] = useState(false);
+  const [reviewedAgain, setReviewedAgain] = useState(false);
   useEffect(() => {
     onEditingChange?.(adding);
   }, [adding, onEditingChange]);
@@ -128,7 +145,7 @@ export function ManageComputers({
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const [fields, setFields] = useState({
-    name: '',
+    name: review?.name ?? '',
     hostname: '',
     username: '',
     port: '22',
@@ -146,6 +163,7 @@ export function ManageComputers({
     try {
       await operation();
     } catch (failure) {
+      if (isChangedDeviceGrant(failure)) setRevoked(true);
       setError(errorDetail(failure));
     } finally {
       setPending('');
@@ -174,9 +192,32 @@ export function ManageComputers({
     }
     const folder = fields.defaultFolder.trim();
     void action('add', async () => {
-      const computer = await api.addComputer(parsed.data);
+      let computer: Computer;
+      if (activeReview) {
+        const { result, recorded } =
+          await window.nesvo.configuration.completeReview(
+            {
+              review: {
+                ...activeReview.review,
+                reviewRevocation: reviewedAgain,
+              },
+              operation: { kind: 'computers', input: parsed.data },
+            },
+            activeReview.hostId,
+          );
+        if (result.kind !== 'computers')
+          throw new Error('The connection result is missing.');
+        computer = result.value;
+        setActiveReview(undefined);
+        if (!recorded)
+          setError(
+            'The computer connected. Inspect the unsettled receipt in Change history.',
+          );
+      } else {
+        computer = await api.addComputer(parsed.data);
+        await api.connectComputer(computer.id);
+      }
       setAdding(false);
-      await api.connectComputer(computer.id);
       if (!folder) return;
       try {
         await defaultFolders.save(computer.id, folder);
@@ -425,72 +466,117 @@ export function ManageComputers({
         }
       />
       {adding && (
-        <SettingsSection title="Add SSH computer">
-          <form className="space-y-3 p-3" onSubmit={submit}>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {field('name', 'Computer name', 'My VPS', true)}
-              {field('hostname', 'SSH hostname', 'server.example.com', true)}
-              {field('username', 'SSH user', 'Use SSH configuration')}
-              {field('port', 'Port', '22', true)}
-              {field(
-                'entryPath',
-                'Host entry path',
-                '/home/user/nesvo/apps/host/dist/main.js',
-                true,
-              )}
-              {field(
-                'runtimeDirectory',
-                'Runtime directory',
-                '/home/user/.nesvo-runtime',
-                true,
-              )}
-            </div>
-            {field(
-              'defaultFolder',
-              'Default session folder',
-              'Optional, for example /home/user/development',
-            )}
-            <Disclosure
-              title="Advanced SSH options"
-              triggerTone={onboarding ? 'muted' : 'default'}
-              className="-mx-2"
-              contentClassName="grid gap-3 px-2 pt-2 text-foreground sm:grid-cols-3"
+        <Dialog
+          open
+          onOpenChange={open => {
+            if (!open && !pending) {
+              setAdding(false);
+              setActiveReview(undefined);
+            }
+          }}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Add SSH computer</DialogTitle>
+              <DialogDescription>
+                Use an SSH identity and host key you already verified.
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              className="max-h-[65vh] space-y-3 overflow-y-auto px-1 pb-1"
+              onSubmit={submit}
             >
+              <div className="grid gap-3 sm:grid-cols-2">
+                {field('name', 'Computer name', 'My VPS', true)}
+                {field('hostname', 'SSH hostname', 'server.example.com', true)}
+                {field('username', 'SSH user', 'Use SSH configuration')}
+                {field('port', 'Port', '22', true)}
+                {field(
+                  'entryPath',
+                  'Host entry path',
+                  '/home/user/nesvo/apps/host/dist/main.js',
+                  true,
+                )}
+                {field(
+                  'runtimeDirectory',
+                  'Runtime directory',
+                  '/home/user/.nesvo-runtime',
+                  true,
+                )}
+              </div>
               {field(
-                'nodePath',
-                'Node executable',
-                'Optional, for example /usr/bin/node',
+                'defaultFolder',
+                'Default session folder',
+                'Optional, for example /home/user/development',
               )}
-              {field('identityFile', 'Identity file', 'Use SSH configuration')}
-              {field(
-                'knownHostsFile',
-                'Known hosts file',
-                'Use SSH configuration',
-              )}
-            </Disclosure>
-            <p className="text-xs leading-5 text-muted-foreground">
-              {pending
-                ? 'Wait for the connection attempt to finish to edit this form.'
-                : 'Enter the host entry and runtime paths on a Linux server with Node installed.'}
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="md"
-                disabled={!!pending}
-                onClick={() => setAdding(false)}
+              <Disclosure
+                title="Advanced SSH options"
+                triggerTone={onboarding ? 'muted' : 'default'}
+                className="-mx-2"
+                contentClassName="grid gap-3 px-2 pt-2 text-foreground sm:grid-cols-3"
               >
-                Cancel
-              </Button>
-              <Button type="submit" size="md" disabled={!!pending}>
-                {pending === 'add' ? 'Connecting…' : 'Add and connect'}
-              </Button>
-            </div>
-          </form>
-        </SettingsSection>
+                {field(
+                  'nodePath',
+                  'Node executable',
+                  'Optional, for example /usr/bin/node',
+                )}
+                {field(
+                  'identityFile',
+                  'Identity file',
+                  'Use SSH configuration',
+                )}
+                {field(
+                  'knownHostsFile',
+                  'Known hosts file',
+                  'Use SSH configuration',
+                )}
+              </Disclosure>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {pending
+                  ? 'Wait for the connection attempt to finish to edit this form.'
+                  : 'Enter the host entry and runtime paths on a Linux server with Node installed.'}
+              </p>
+              {activeReview && revoked && (
+                <label className="flex items-center gap-2 text-ui">
+                  <Checkbox
+                    checked={reviewedAgain}
+                    onCheckedChange={checked =>
+                      setReviewedAgain(checked === true)
+                    }
+                  />
+                  I reviewed the proposal after the device grant changed.
+                </label>
+              )}
+              {error && <InlineNotice tone="error">{error}</InlineNotice>}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="md"
+                  disabled={!!pending}
+                  onClick={() => {
+                    setAdding(false);
+                    setActiveReview(undefined);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="md"
+                  disabled={
+                    !!pending ||
+                    Boolean(activeReview && revoked && !reviewedAgain)
+                  }
+                >
+                  {pending === 'add' ? 'Connecting…' : 'Add and connect'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
       )}
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {!adding && error && <InlineNotice tone="error">{error}</InlineNotice>}
     </div>
   );
 }

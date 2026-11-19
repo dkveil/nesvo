@@ -38,6 +38,7 @@ import {
   type CatalogWorkflowMethod,
 } from './computer-manager';
 import { mobileAccess } from './mobile-access';
+import { completeConfigurationReview } from './configuration-owner-flow';
 import { launchMcpTerminal, launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { openAttachmentFile } from './attachment-files';
@@ -906,6 +907,19 @@ void app.whenReady().then(async () => {
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  handle(
+    'nesvo:complete-configuration-review',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return completeConfigurationReview(
+        input,
+        route(hostId),
+        computers,
+        mobile,
+        policy.enabled,
+      );
+    },
+  );
   handle('nesvo:about', event => {
     authorize(event);
     return aboutInfo(hostDirectory);

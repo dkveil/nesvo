@@ -28,6 +28,7 @@ export const claudeAutonomyInputSchema = z.discriminatedUnion('action', [
     action: z.literal('confirm-full-access'),
     sessionId: z.uuid(),
     directory: z.string().min(1).max(4096),
+    expectedModeRevision: z.number().int().positive().optional(),
   }),
   z.strictObject({ action: z.literal('remove-rule'), id: z.uuid() }),
   z.strictObject({

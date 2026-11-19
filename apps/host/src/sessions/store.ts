@@ -172,6 +172,12 @@ const decodeSummary = (
 type QuarantinedSession = { id: string; document: string; error: string };
 
 export class SessionStore {
+  modeRevision(id: string): number {
+    const row = this.database
+      .prepare('SELECT revision FROM session_mode_revisions WHERE id = ?')
+      .get(id);
+    return Number(row?.revision);
+  }
   constructor(private readonly database: DatabaseSync) {}
 
   list(): Session[] {

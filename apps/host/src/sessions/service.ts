@@ -3130,11 +3130,30 @@ export class SessionService {
           'invalid-request',
           'The installed provider does not offer Full access.',
         );
-      autonomy.confirm(
-        this.acceptingSession(input.sessionId),
-        input.directory,
-        epoch,
-      );
+      const current = this.acceptingSession(input.sessionId);
+      if (input.expectedModeRevision !== undefined) {
+        this.ensureSessionIdle(
+          current,
+          'Finish the current turn before confirming Full access.',
+        );
+        if (
+          current.queue.length ||
+          current.externalAttachment ||
+          this.store.modeRevision(current.id) !== input.expectedModeRevision
+        )
+          throw new SessionError(
+            'invalid-request',
+            'The session changed. Review Full access again.',
+          );
+      }
+      autonomy.confirm(current, input.directory, epoch);
+      if (input.expectedModeRevision !== undefined)
+        this.changeSelection(
+          current.id,
+          { mode: 'full-access' },
+          { kind: 'owner', via: 'desktop', sessionId: null },
+          true,
+        );
     }
     return autonomy.get();
   }
@@ -4002,8 +4021,13 @@ export class SessionService {
     sessionId: string,
     change: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
     actor?: StageActor,
+    confirmedFullAccess = false,
   ): Session {
-    const { session, selection } = this.validateSelection(sessionId, change);
+    const { session, selection } = this.validateSelection(
+      sessionId,
+      change,
+      confirmedFullAccess,
+    );
     const from = session.mode;
     session.model = selection.model;
     session.effort = selection.effort;
@@ -4035,13 +4059,14 @@ export class SessionService {
   validateSelection(
     sessionId: string,
     change: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
+    confirmedFullAccess = false,
   ): { session: Session; selection: TurnSelection } {
     const session = this.acceptingSession(sessionId);
     this.ensureSessionIdle(
       session,
       'This session is running. Change it after the turn finishes or send the change with the next message.',
     );
-    if (change.mode === 'full-access')
+    if (change.mode === 'full-access' && !confirmedFullAccess)
       throw new SessionError(
         'invalid-request',
         'Confirm Full access in the session composer.',

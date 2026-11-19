@@ -11,6 +11,10 @@ import {
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { ConfigurationChangeRow } from '@/features/configuration/change-row';
+import {
+  isChangedDeviceGrant,
+  type SettingsAuthorityReview,
+} from '@/features/configuration/authority-review';
 import type { HostedConfigurationChange } from '@/features/configuration/use-configuration-changes';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
@@ -281,13 +285,18 @@ export function ConfigurationHistorySettings({
 
 export function ConfigurationDevicesSettings({
   computer,
+  review,
 }: {
   computer?: Computer;
+  review?: Extract<SettingsAuthorityReview, { kind: 'devices' }>;
 }) {
   const [devices, setDevices] = useState<ConfigurationDevice[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(Boolean(review));
+  const [activeReview, setActiveReview] = useState(review);
+  const [revoked, setRevoked] = useState(false);
+  const [reviewedAgain, setReviewedAgain] = useState(false);
   const [revoke, setRevoke] = useState<ConfigurationDevice | null>(null);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(review?.name ?? '');
   const [grants, setGrants] = useState<ConfigurationGrant[]>([]);
   const [token, setToken] = useState('');
   const [working, setWorking] = useState(false);
@@ -325,6 +334,29 @@ export function ConfigurationDevicesSettings({
     setWorking(true);
     setError('');
     try {
+      if (activeReview) {
+        const { result, recorded } =
+          await window.nesvo.configuration.completeReview(
+            {
+              review: {
+                ...activeReview.review,
+                reviewRevocation: reviewedAgain,
+              },
+              operation: { kind: 'devices', input: { name, grants } },
+            },
+            hostId,
+          );
+        if (result.kind !== 'devices')
+          throw new Error('The device enrollment result is missing.');
+        setToken(result.value.token);
+        setDevices(previous => [...previous, result.value.device]);
+        setActiveReview(undefined);
+        if (!recorded)
+          setError(
+            'The device was enrolled. Inspect the unsettled receipt in Change history.',
+          );
+        return;
+      }
       const result = await window.nesvo.configuration.enroll(
         { name, grants },
         hostId,
@@ -334,6 +366,7 @@ export function ConfigurationDevicesSettings({
         setDevices(previous => [...previous, result.device]);
       } else if (!result.ok) setError(result.message);
     } catch (issue) {
+      if (isChangedDeviceGrant(issue)) setRevoked(true);
       setError(errorDetail(issue));
     } finally {
       setWorking(false);
@@ -341,6 +374,7 @@ export function ConfigurationDevicesSettings({
   };
   const close = () => {
     setAdding(false);
+    setActiveReview(undefined);
     setToken('');
     setName('');
     setGrants([]);
@@ -398,7 +432,10 @@ export function ConfigurationDevicesSettings({
               </DialogDescription>
             </DialogHeader>
             {token ? (
-              <CodeBlock code={token} wrap />
+              <>
+                <CodeBlock code={token} wrap />
+                {error && <StatusMessage tone="warning">{error}</StatusMessage>}
+              </>
             ) : (
               <form
                 id="config-device-form"
@@ -511,6 +548,17 @@ export function ConfigurationDevicesSettings({
                   Direct apply covers name-only group changes, appearance and
                   designated presentation settings.
                 </StatusMessage>
+                {activeReview && revoked && (
+                  <label className="flex items-center gap-2 text-ui">
+                    <Checkbox
+                      checked={reviewedAgain}
+                      onCheckedChange={checked =>
+                        setReviewedAgain(checked === true)
+                      }
+                    />
+                    I reviewed the proposal after the device grant changed.
+                  </label>
+                )}
                 {error && <StatusMessage tone="error">{error}</StatusMessage>}
               </form>
             )}
@@ -531,6 +579,7 @@ export function ConfigurationDevicesSettings({
                     disabled={
                       !name.trim() ||
                       !grants.length ||
+                      Boolean(activeReview && revoked && !reviewedAgain) ||
                       working ||
                       grants.some(
                         grant =>

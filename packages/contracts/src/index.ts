@@ -10,6 +10,11 @@ import {
 export * from './onboarding';
 export * from './configuration';
 export * from './configuration-inbox';
+import type {
+  DesktopConfigurationOwnerInput,
+  DesktopConfigurationOwnerResult,
+} from './configuration-owner-flow';
+export * from './configuration-owner-flow';
 import {
   configurationInboxContextSchema,
   configurationInboxLookupSchema,
@@ -27,6 +32,8 @@ import {
   configurationHistoryInputSchema,
   configurationInspectDraftSchema,
   configurationMutationSchema,
+  configurationOwnerFlowFinishSchema,
+  configurationOwnerFlowStartSchema,
   configurationRequestSchema,
   configurationResultSchema,
   configurationProfileInputSchema,
@@ -711,6 +718,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: configurationRequestSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-config-devices') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('start-config-owner-flow'),
+    input: configurationOwnerFlowStartSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('finish-config-owner-flow'),
+    input: configurationOwnerFlowFinishSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('enroll-config-device'),
@@ -2212,6 +2229,10 @@ export type WorkflowsApi = {
 };
 export type DesktopApi = {
   configuration: {
+    completeReview: (
+      input: DesktopConfigurationOwnerInput,
+      hostId: HostId,
+    ) => Promise<DesktopConfigurationOwnerResult>;
     draft: (
       input: z.input<typeof configurationInspectDraftSchema>,
       hostId: HostId,

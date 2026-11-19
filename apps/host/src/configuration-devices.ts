@@ -7,6 +7,7 @@ import {
   configurationRevision,
   externalInboxLimits,
   type ConfigurationArea,
+  type ConfigurationAuthoritySubject,
   type ConfigurationDevice,
   type ConfigurationEnroll,
   type ConfigurationError,
@@ -97,6 +98,7 @@ export class ConfigurationDevices {
       path: string,
       signal: AbortSignal,
     ) => Promise<string>,
+    private readonly authoritySubjects: readonly ConfigurationAuthoritySubject[],
   ) {}
 
   list() {
@@ -258,7 +260,7 @@ export class ConfigurationDevices {
               authoritySubjects:
                 this.supported.includes('authority') &&
                 device.grants.some(grant => grant.area === 'authority')
-                  ? ['session-mode']
+                  ? [...this.authoritySubjects]
                   : [],
             },
           };
@@ -339,11 +341,13 @@ export class ConfigurationDevices {
   ) {
     const catalog = await this.catalog(input.area, input.project, signal);
     const key = (target: ConfigurationTarget) =>
-      'scope' in target
-        ? target.name
-        : 'key' in target
-          ? target.key
-          : target.id;
+      target.area === 'authority'
+        ? `${target.subject}/${target.id}`
+        : 'scope' in target
+          ? target.name
+          : 'key' in target
+            ? target.key
+            : target.id;
     const ordered = catalog
       .filter(target => key(target) > (input.cursor ?? ''))
       .sort((left, right) =>

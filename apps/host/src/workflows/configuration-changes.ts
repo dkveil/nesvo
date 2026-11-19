@@ -7,6 +7,8 @@ import {
   type ConfigurationError,
   type ConfigurationHistoryInput,
   type ConfigurationMutation,
+  type ConfigurationOwnerFlowStart,
+  type ConfigurationOwnerFlowFinish,
   type ConfigurationReceipt,
   type ConfigurationSource,
   type ConfigurationTarget,
@@ -238,7 +240,9 @@ function modeConfirmation(
   if (
     before.version.type !== 'revision' ||
     before.value?.kind !== 'authority' ||
-    after.value?.kind !== 'authority'
+    typeof before.value.value !== 'string' ||
+    after.value?.kind !== 'authority' ||
+    typeof after.value.value !== 'string'
   )
     throw new ConfigurationRefusal(
       'unavailable',
@@ -259,7 +263,7 @@ function reviewFields(
   classification: Classification,
 ) {
   const mode =
-    target.area === 'authority'
+    target.area === 'authority' && target.subject === 'session-mode'
       ? modeConfirmation(target, before, after)
       : undefined;
   return {
@@ -268,6 +272,7 @@ function reviewFields(
       mode && before.provider
         ? { ...mode, provider: before.provider }
         : undefined,
+    ownerEffect: after.ownerEffect,
     baseVersion: before.version,
     classification,
     diff: preview(before, after),
@@ -277,6 +282,13 @@ function reviewFields(
 export class ConfigurationChanges {
   private tail: Promise<unknown> = Promise.resolve();
   private writers = new Map<ConfigurationTarget['area'], ConfigurationWriter>();
+  private readonly ownerFlows = new Map<
+    string,
+    {
+      action: ConfigurationAction;
+      record: StoredConfigurationChange;
+    }
+  >();
 
   constructor(
     private readonly store: ConfigurationChangeStore,
@@ -538,6 +550,11 @@ export class ConfigurationChanges {
         this.publish(dismissed.change);
         return receipt;
       }
+      if (record.change.ownerEffect)
+        throw new ConfigurationRefusal(
+          'review-required',
+          'Complete this proposal in its desktop confirmation flow.',
+        );
       const authorize = () => {
         const { source, target } = record.change;
         if (
@@ -609,6 +626,11 @@ export class ConfigurationChanges {
       const duplicate = this.retry(action);
       if (duplicate) return duplicate;
       const record = this.require(input.id, input.revision, 'applied');
+      if (record.change.ownerEffect)
+        throw new ConfigurationRefusal(
+          'review-required',
+          'Make a new owner decision in the original settings flow.',
+        );
       const target = record.change.target;
       const restore = (slot: ConfigurationSlot<unknown>) => {
         const before = slot.read();
@@ -660,6 +682,83 @@ export class ConfigurationChanges {
           restore,
         )
       ).receipt;
+    });
+  }
+
+  startOwnerFlow(input: ConfigurationOwnerFlowStart) {
+    return this.serial(async () => {
+      if (this.workLaptopMode)
+        throw new ConfigurationRefusal('unsupported', workLaptopRestriction);
+      const action = this.action({ kind: 'owner' }, input.actionId, {
+        ownerFlow: input,
+      });
+      if (this.retry(action))
+        throw new ConfigurationRefusal(
+          'conflict',
+          'This confirmation was already used. Check Change history.',
+        );
+      const record = this.require(input.id, input.revision, 'pending');
+      const { target, source, ownerEffect } = record.change;
+      if (!ownerEffect || !same(ownerEffect, input.effect))
+        throw new ConfigurationRefusal(
+          'review-required',
+          'Confirm the reviewed action in its desktop flow.',
+        );
+      if (
+        source.kind === 'device' &&
+        !this.deviceCanPropose(source, target) &&
+        !input.reviewRevocation
+      )
+        throw new ConfigurationRefusal(
+          'review-required',
+          'Review this proposal again after its device grant changed.',
+        );
+      const writer = this.writer(target);
+      if (writer.kind !== 'database')
+        throw new ConfigurationRefusal(
+          'unsupported',
+          'The confirmation flow is unavailable.',
+        );
+      const claim = randomUUID();
+      const intent = this.store.transaction(() => {
+        const slot = writer.open(target);
+        const before = slot.read();
+        const { after } = this.prepare(slot, record.mutation, before);
+        if (!same(before, record.before) || !same(after, record.after))
+          conflict('The reviewed action changed. Prepare a fresh proposal.');
+        const next = this.transition(record, 'inspection-required', 'owner');
+        this.store.settle(action, next);
+        return next;
+      });
+      this.ownerFlows.set(claim, { action, record: intent });
+      this.publish(intent.change);
+      return { claim, change: record.change };
+    });
+  }
+
+  finishOwnerFlow(input: ConfigurationOwnerFlowFinish) {
+    return this.serial(async () => {
+      const running = this.ownerFlows.get(input.claim);
+      if (!running)
+        throw new ConfigurationRefusal(
+          'conflict',
+          'This confirmation is no longer active. Check Change history.',
+        );
+      const { id, revision } = running.record.change;
+      this.require(id, revision, 'inspection-required');
+      this.ownerFlows.delete(input.claim);
+      if (!input.outcome) return;
+      const change = this.transition(running.record, 'applied', 'owner');
+      change.change.resultingVersion = null;
+      change.change.outcome = {
+        ...input.outcome,
+        description: configurationText(input.outcome.description).slice(0, 200),
+      };
+      const receipt = this.store.transaction(() =>
+        this.store.settleOwnerFlow(running.action, change),
+      );
+      this.publish(change.change);
+      return receipt;
     });
   }
 

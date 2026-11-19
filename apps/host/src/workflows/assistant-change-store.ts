@@ -7,6 +7,7 @@ import {
   type ConfigurationHistoryInput,
   type ConfigurationMutation,
   type ConfigurationReceipt,
+  type ConfigurationOwnerEffect,
   type ConfigurationValue,
   type ConfigurationVersion,
   type Provider,
@@ -22,6 +23,7 @@ export type ConfigurationSnapshot = {
   state?: string;
   label?: string;
   provider?: Provider;
+  ownerEffect?: ConfigurationOwnerEffect;
 };
 
 type CommitAction = { apply: () => void; rollback?: () => void };
@@ -321,6 +323,26 @@ export class ConfigurationChangeStore {
     `,
       )
       .run(intent.record.change.id, JSON.stringify(intent));
+  }
+
+  settleOwnerFlow(
+    action: ConfigurationAction,
+    record: StoredConfigurationChange,
+  ): ConfigurationReceipt {
+    this.save(record);
+    const { id, status, revision, resultingVersion } = record.change;
+    const receipt = { id, status, revision, resultingVersion };
+    this.database
+      .prepare(
+        'UPDATE configuration_receipts SET result = ? WHERE principal = ? AND id = ? AND fingerprint = ?',
+      )
+      .run(
+        JSON.stringify(receipt),
+        action.principal,
+        action.id,
+        action.fingerprint,
+      );
+    return receipt;
   }
 
   intents(): ConfigurationIntent[] {

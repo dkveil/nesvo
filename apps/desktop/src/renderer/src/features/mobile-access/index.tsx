@@ -9,11 +9,17 @@ import { Copy, Smartphone } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
+import { Checkbox } from '@/shared/ui/checkbox';
+import {
+  isChangedDeviceGrant,
+  type SettingsAuthorityReview,
+} from '@/features/configuration/authority-review';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { Textarea } from '@/shared/ui/textarea';
 
 type Props = {
+  review?: Extract<SettingsAuthorityReview, { kind: 'phone-access' }>;
   api: Pick<
     DesktopApi,
     | 'mobileStatus'
@@ -24,7 +30,10 @@ type Props = {
   >;
 };
 
-export function MobileAccess({ api }: Props) {
+export function MobileAccess({ api, review }: Props) {
+  const [activeReview, setActiveReview] = useState(review);
+  const [revoked, setRevoked] = useState(false);
+  const [reviewedAgain, setReviewedAgain] = useState(false);
   const [status, setStatus] = useState<MobileGatewayStatus | null>(null);
   const [pairing, setPairing] = useState<MobilePairing | null>(null);
   const [revoking, setRevoking] = useState<MobileDevice | null>(null);
@@ -73,6 +82,7 @@ export function MobileAccess({ api }: Props) {
     try {
       await operation();
     } catch (failure) {
+      if (isChangedDeviceGrant(failure)) setRevoked(true);
       setError(errorDetail(failure));
     } finally {
       busy.current = false;
@@ -81,9 +91,42 @@ export function MobileAccess({ api }: Props) {
   };
   const validPairing =
     pairing && Date.parse(pairing.expiresAt) > now ? pairing : null;
+  const complete = async (action: 'enable' | 'pair') => {
+    if (activeReview?.action !== action) return null;
+    const { result, recorded } =
+      await window.nesvo.configuration.completeReview(
+        {
+          review: { ...activeReview.review, reviewRevocation: reviewedAgain },
+          operation: { kind: 'phone-access', action },
+        },
+        activeReview.hostId,
+      );
+    setActiveReview(undefined);
+    if (!recorded)
+      setError(
+        'The action completed. Inspect the unsettled receipt in Change history.',
+      );
+    return result;
+  };
   return (
     <div className="space-y-8">
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {activeReview && (
+        <InlineNotice>
+          {activeReview.action === 'enable'
+            ? 'Review the proposal to enable Phone access.'
+            : 'Review the proposal to create a one-time pairing link.'}
+          {revoked && (
+            <label className="flex items-center gap-2 text-ui">
+              <Checkbox
+                checked={reviewedAgain}
+                onCheckedChange={checked => setReviewedAgain(checked === true)}
+              />
+              I reviewed the proposal after the device grant changed.
+            </label>
+          )}
+        </InlineNotice>
+      )}
       {!status ? (
         error ? (
           <InlineNotice>Phone access is unavailable.</InlineNotice>
@@ -105,12 +148,24 @@ export function MobileAccess({ api }: Props) {
             >
               <Button
                 variant="outline"
-                disabled={!!pending}
+                disabled={
+                  !!pending ||
+                  Boolean(
+                    activeReview?.action === 'enable' &&
+                    (status.enabled || (revoked && !reviewedAgain)),
+                  )
+                }
                 onClick={() =>
                   void action('access', async () => {
-                    const next = status.enabled
-                      ? await api.disableMobile()
-                      : await api.enableMobile();
+                    const result = status.enabled
+                      ? null
+                      : await complete('enable');
+                    const next =
+                      result?.kind === 'enable'
+                        ? result.value
+                        : status.enabled
+                          ? await api.disableMobile()
+                          : await api.enableMobile();
                     setStatus(next);
                     setPairing(null);
                   })
@@ -128,10 +183,22 @@ export function MobileAccess({ api }: Props) {
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-ui font-medium">Pair a phone</p>
                   <Button
-                    disabled={!!pending}
+                    disabled={
+                      !!pending ||
+                      Boolean(
+                        activeReview?.action === 'pair' &&
+                        revoked &&
+                        !reviewedAgain,
+                      )
+                    }
                     onClick={() =>
                       void action('pair', async () => {
-                        setPairing(await api.pairMobile());
+                        const result = await complete('pair');
+                        setPairing(
+                          result?.kind === 'pair'
+                            ? result.value
+                            : await api.pairMobile(),
+                        );
                         setCopied(false);
                         setNow(Date.now());
                       })

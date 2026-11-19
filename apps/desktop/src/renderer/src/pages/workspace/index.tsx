@@ -272,6 +272,10 @@ import { useMcpConnections } from '@/features/session-mcp/use-mcp-connections';
 import { McpSettings } from '@/widgets/settings/mcp-settings';
 import { McpRepositoryNotice } from '@/features/session-mcp/mcp-repository-notice';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
+import {
+  AuthoritySettingsContext,
+  type SettingsAuthorityReview,
+} from '@/features/configuration/authority-review';
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
 import { ContextMeter } from '@/features/conversation-context/context-meter';
 import { conversationActions } from '@/features/conversation-context/conversation-actions';
@@ -878,6 +882,8 @@ export function Workspace({
   }
   const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const [authoritySettings, setAuthoritySettings] =
+    useState<SettingsAuthorityReview | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
   const [seen, setSeen] = useState<Record<string, number>>(readSeen);
@@ -3818,7 +3824,7 @@ ${text}`
       selectedProviderState.status?.status !== 'ready')
       ? selectedProviderState
       : null;
-  return (
+  const workspace = (
     <div
       className={cn(
         'relative flex h-dvh min-h-0 overflow-hidden bg-background',
@@ -5924,10 +5930,16 @@ ${text}`
       {settingsPage && (
         <Settings
           page={settingsPage}
-          onPageChange={setSettingsPage}
+          onPageChange={page => {
+            setAuthoritySettings(null);
+            setSettingsPage(page);
+          }}
           fallbackFocus={navigationToggle}
           onOpenChange={open => {
-            if (!open) setSettingsPage(null);
+            if (!open) {
+              setAuthoritySettings(null);
+              setSettingsPage(null);
+            }
           }}
         >
           {(page, onBusyChange) =>
@@ -6019,19 +6031,47 @@ ${text}`
               />
             ) : page === 'computers' ? (
               <ManageComputers
+                key={
+                  authoritySettings?.kind === 'computers'
+                    ? authoritySettings.review.id
+                    : 'computers'
+                }
+                review={
+                  authoritySettings?.kind === 'computers'
+                    ? authoritySettings
+                    : undefined
+                }
                 computers={store.computers}
                 defaultFolders={defaultFolders}
                 api={desktopApi()}
                 onBusyChange={onBusyChange}
               />
             ) : page === 'phone' ? (
-              <MobileAccess api={desktopApi()} />
+              <MobileAccess
+                key={
+                  authoritySettings?.kind === 'phone-access'
+                    ? authoritySettings.review.id
+                    : 'phone'
+                }
+                review={
+                  authoritySettings?.kind === 'phone-access'
+                    ? authoritySettings
+                    : undefined
+                }
+                api={desktopApi()}
+              />
             ) : page === 'devices' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <ConfigurationDevicesSettings
-                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}:${authoritySettings?.review.id ?? ''}`}
                   computer={settingsComputer}
+                  review={
+                    authoritySettings?.kind === 'devices' &&
+                    authoritySettings.hostId === settingsHostId
+                      ? authoritySettings
+                      : undefined
+                  }
                 />
                 <DevicesSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
@@ -6166,5 +6206,20 @@ ${text}`
         }}
       />
     </div>
+  );
+  return (
+    <AuthoritySettingsContext.Provider
+      value={review =>
+        guardEditor(() => {
+          setAuthoritySettings(review);
+          setAccountSettingsHostId(review.hostId);
+          setSettingsPage(
+            review.kind === 'phone-access' ? 'phone' : review.kind,
+          );
+        })
+      }
+    >
+      {workspace}
+    </AuthoritySettingsContext.Provider>
   );
 }

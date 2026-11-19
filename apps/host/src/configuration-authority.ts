@@ -1,4 +1,4 @@
-import type { Session } from '@nesvo/contracts';
+import type { ConfigurationTarget, Session } from '@nesvo/contracts';
 import type { DatabaseSync } from 'node:sqlite';
 import { isAbsolute, relative, sep } from 'node:path';
 import { workLaptopRestriction } from '@nesvo/contracts';
@@ -43,6 +43,9 @@ export function authorityConfiguration(
   sessions: SessionService,
   dataDirectory: string,
   workLaptopMode: boolean,
+  computerId: string,
+  desktopProfile: boolean,
+  fullAccessEnabled: () => boolean,
 ): ConfigurationWriter {
   const revisions = database.prepare(
     'SELECT revision FROM session_mode_revisions WHERE id = ?',
@@ -52,6 +55,67 @@ export function authorityConfiguration(
     open(target) {
       if (target.area !== 'authority' || workLaptopMode)
         throw new ConfigurationRefusal('unsupported', workLaptopRestriction);
+      if (target.subject !== 'session-mode') {
+        const operation = authorityOperation(
+          target,
+          sessions,
+          dataDirectory,
+          computerId,
+          desktopProfile,
+        );
+        const snapshot: ConfigurationSnapshot = {
+          identity: target.id,
+          label: operation.label,
+          dependencies: operation.dependencies,
+          version: { type: 'revision', revision: 1 },
+          value: null,
+        };
+        return {
+          read: () => snapshot,
+          prepare({ draft }, before) {
+            if (
+              draft?.kind !== 'authority' ||
+              typeof draft.value === 'string' ||
+              draft.value.kind !== target.subject
+            )
+              throw new ConfigurationRefusal(
+                'invalid-request',
+                'Choose an action for this setting.',
+              );
+            const { value } = draft;
+            if ('name' in value && configurationText(value.name) !== value.name)
+              throw new ConfigurationRefusal(
+                'invalid-request',
+                'Choose a name without credential-like text.',
+              );
+            const ownerEffect =
+              value.kind === 'claude-allow-rule'
+                ? {
+                    kind: value.kind,
+                    ...operation.approval!,
+                    scope: value.scope,
+                  }
+                : value.kind === 'phone-access'
+                  ? { kind: value.kind, action: value.action }
+                  : { kind: value.kind };
+            return {
+              classification: 'authority',
+              after: {
+                ...before,
+                value: draft,
+                ownerEffect,
+                version: { type: 'revision', revision: 2 },
+              },
+            };
+          },
+          write() {
+            throw new ConfigurationRefusal(
+              'review-required',
+              'Complete the action in its desktop confirmation.',
+            );
+          },
+        };
+      }
       const session = sessions.snapshot(target.id);
       const row = revisions.get(target.id);
       if (!session || !row || !supportsModeProposal(session, dataDirectory))
@@ -71,7 +135,7 @@ export function authorityConfiguration(
       return {
         read: () => snapshot,
         prepare({ draft }, before) {
-          if (draft?.kind !== 'authority')
+          if (draft?.kind !== 'authority' || typeof draft.value !== 'string')
             throw new ConfigurationRefusal(
               'invalid-request',
               'Choose a permission mode.',
@@ -81,6 +145,26 @@ export function authorityConfiguration(
               'busy',
               'Finish queued work and return the session to Nesvo before changing its mode.',
             );
+          if (draft.value === 'full-access') {
+            if (
+              !fullAccessEnabled() ||
+              session.runId ||
+              session.status === 'running'
+            )
+              throw new ConfigurationRefusal(
+                'unsupported',
+                'Enable Full access in Settings and finish the current turn first.',
+              );
+            return {
+              classification: 'authority',
+              after: {
+                ...before,
+                value: draft,
+                version: { type: 'revision', revision: revision + 1 },
+                ownerEffect: { kind: 'full-access', sessionId: target.id },
+              },
+            };
+          }
           if (
             session.provider === 'Claude Code' &&
             draft.value !== 'read-only' &&
@@ -116,7 +200,10 @@ export function authorityConfiguration(
           };
         },
         write({ to }) {
-          if (to.value?.kind !== 'authority')
+          if (
+            to.value?.kind !== 'authority' ||
+            typeof to.value.value !== 'string'
+          )
             throw new ConfigurationRefusal(
               'invalid-request',
               'Choose a permission mode.',
@@ -133,5 +220,67 @@ export function authorityConfiguration(
         },
       };
     },
+  };
+}
+
+type AuthorityTarget = Extract<ConfigurationTarget, { area: 'authority' }>;
+
+function authorityOperation(
+  target: AuthorityTarget,
+  sessions: SessionService,
+  directory: string,
+  computerId: string,
+  desktopProfile: boolean,
+) {
+  if (target.subject === 'claude-allow-rule') {
+    const matches = sessions.list().flatMap(session => {
+      if (
+        session.provider !== 'Claude Code' ||
+        !session.runId ||
+        !supportsModeProposal(session, directory)
+      )
+        return [];
+      const approval = session.pendingApprovals.find(
+        item => item.id === target.id,
+      );
+      return approval?.allowPattern && approval.fingerprint
+        ? [
+            {
+              sessionId: session.id,
+              runId: session.runId,
+              requestId: approval.id,
+              fingerprint: approval.fingerprint,
+            },
+          ]
+        : [];
+    });
+    if (matches.length !== 1)
+      throw new ConfigurationRefusal(
+        'unavailable',
+        'Choose a pending Claude operation with a supported allow rule.',
+      );
+    const approval = matches[0]!;
+    return {
+      label: 'Claude allow rule',
+      dependencies: approval.fingerprint,
+      approval,
+    };
+  }
+  if (
+    target.id !== computerId ||
+    (!desktopProfile && target.subject !== 'devices')
+  )
+    throw new ConfigurationRefusal(
+      'unavailable',
+      'This action belongs to a different computer.',
+    );
+  return {
+    label:
+      target.subject === 'devices'
+        ? 'Devices'
+        : target.subject === 'phone-access'
+          ? 'Phone access'
+          : 'Computers',
+    dependencies: computerId,
   };
 }

@@ -97,6 +97,7 @@ export async function runConfigurationCli(args: string[]) {
     else if (operation === 'get' || mutation) {
       const file = configurationFileAreaSchema.safeParse(area).success;
       if (!file && values.project) throw invalid();
+      const separator = name?.indexOf('/') ?? -1;
       const target = configurationTargetSchema.parse(
         file
           ? {
@@ -107,7 +108,12 @@ export async function runConfigurationCli(args: string[]) {
                 : { kind: 'global' },
             }
           : area === 'authority'
-            ? { area, subject: 'session-mode', id: name }
+            ? {
+                area,
+                subject:
+                  separator < 0 ? 'session-mode' : name?.slice(0, separator),
+                id: separator < 0 ? name : name?.slice(separator + 1),
+              }
             : configurationRecordAreaSchema.safeParse(area).success
               ? { area, id: name }
               : { area, key: name },
