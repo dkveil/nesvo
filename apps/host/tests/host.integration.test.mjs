@@ -31,7 +31,7 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
-const currentDatabaseVersion = 35;
+const currentDatabaseVersion = 37;
 const newerDatabaseVersion = currentDatabaseVersion + 1;
 
 test(
@@ -11319,13 +11319,17 @@ test(
       }
     });
 
-    await t.test('a newer database is refused', async () => {
+    await t.test('a newer database is refused', async t => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
       newer.exec(`PRAGMA user_version = ${newerDatabaseVersion}`);
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
+      t.after(async () => {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited;
+      });
       assert.equal(
         (await bounded(host.exited, 'Host startup timed out')).code,
         1,
