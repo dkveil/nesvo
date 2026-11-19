@@ -201,16 +201,27 @@ export async function smokePortableCheck({
   if ((await lastRun.getAttribute('aria-pressed')) === 'true')
     await lastRun.click();
   await node.click();
-  assert.equal(
-    await editor.getByLabel('TypeScript script').inputValue(),
-    'test',
-  );
-  assert.equal(
-    await editor.getByLabel('Kotlin Gradle task').inputValue(),
-    'test',
-  );
+  await editor.getByLabel('Intent').waitFor();
   await editor.getByLabel('Acceptance criteria').waitFor();
   const inspector = editor.getByRole('complementary', { name: 'Inspector' });
+  const savedIn = inspector.getByRole('combobox', { name: 'Saved in' });
+  assert.equal(await savedIn.innerText(), 'Global');
+  assert.ok(await savedIn.isDisabled());
+  const preferencesSection = inspector.getByRole('region', {
+    name: 'Preferred commands',
+    exact: true,
+  });
+  const preferences = preferencesSection.getByRole('button', {
+    name: 'Preferred commands',
+    exact: true,
+  });
+  assert.equal(await preferences.getAttribute('aria-expanded'), 'false');
+  await inspector
+    .getByText(
+      'Optional. Without preferences the agent picks from what the project offers.',
+      { exact: true },
+    )
+    .waitFor();
   assert.equal(await inspector.getAttribute('data-slot'), 'side-panel');
   await inspector
     .getByRole('button', { name: 'Close inspector', exact: true })
@@ -223,6 +234,49 @@ export async function smokePortableCheck({
   );
   await editor.getByRole('button', { name: 'Fit graph', exact: true }).click();
   await screenshots('check-step-inspector');
+  await preferences.click();
+  const stack = index =>
+    inspector.getByRole('combobox', { name: 'Stack ' + index, exact: true });
+  const candidate = index =>
+    inspector.getByRole('textbox', { name: 'Candidate ' + index, exact: true });
+  assert.equal(await stack(1).innerText(), 'TypeScript');
+  assert.equal(await candidate(1).inputValue(), 'test');
+  assert.equal(await stack(2).innerText(), 'Kotlin');
+  assert.equal(await candidate(2).inputValue(), 'test');
+  await inspector
+    .getByRole('button', { name: 'Remove Kotlin preference' })
+    .click();
+  await candidate(2).waitFor({ state: 'hidden' });
+  await inspector
+    .getByRole('button', { name: 'Remove TypeScript preference' })
+    .click();
+  await candidate(1).waitFor({ state: 'hidden' });
+  await preferencesSection
+    .getByRole('button', { name: 'Add', exact: true })
+    .click();
+  await inspector
+    .getByRole('combobox', { name: 'Stack for new preference' })
+    .click();
+  await page.getByRole('option', { name: 'TypeScript', exact: true }).click();
+  assert.equal(await candidate(1).inputValue(), '');
+  await candidate(1).fill('test');
+  await preferencesSection
+    .getByRole('button', { name: 'Add', exact: true })
+    .click();
+  await inspector
+    .getByRole('combobox', { name: 'Stack for new preference' })
+    .click();
+  await page.getByRole('option', { name: 'Kotlin', exact: true }).click();
+  assert.equal(await candidate(2).inputValue(), '');
+  await candidate(2).fill('test');
+  await preferences.click();
+  await inspector
+    .getByRole('button', { name: 'Save step', exact: true })
+    .click();
+  await editor.getByText('Saved', { exact: true }).waitFor();
+  await editor
+    .getByText(`Saved ${workflow}.`, { exact: true })
+    .waitFor({ state: 'hidden' });
   await lastRun.click();
   await editor.getByRole('region', { name: 'Check evidence' }).waitFor();
   const evidence = editor.getByRole('region', { name: 'Check evidence' });
@@ -232,7 +286,18 @@ export async function smokePortableCheck({
     .first()
     .waitFor();
   await evidence.getByText(/Node test runner reported/).waitFor();
+  const evidenceDetails = evidence.getByRole('button', {
+    name: 'Details',
+    exact: true,
+  });
+  assert.equal(await evidenceDetails.getAttribute('aria-expanded'), 'false');
+  await evidence
+    .getByText('Source SHA-256', { exact: true })
+    .first()
+    .waitFor({ state: 'hidden' });
   await screenshots('check-last-run');
+  await evidenceDetails.click();
+  await evidence.getByText('Source SHA-256', { exact: true }).first().waitFor();
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
@@ -249,7 +314,11 @@ export async function smokePortableCheck({
         await lastRun.click();
       await node.and(editor.locator('[data-run-state="failed"]')).click();
       await evidence.getByText('npm run test', { exact: true }).waitFor();
-      await evidence.getByText(/Exit code 1/).waitFor();
+      await evidence
+        .getByText('Exit code', { exact: true })
+        .locator('..')
+        .getByText('1', { exact: true })
+        .waitFor();
       await editor
         .getByRole('button', { name: 'Fit graph', exact: true })
         .click();

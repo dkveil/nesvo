@@ -1,23 +1,18 @@
 import { useState } from 'react';
-import type {
-  CheckCandidate,
-  CheckEvidence,
-  CheckProjectProfile,
+import {
+  checkStackDetectors,
+  checkStackSchema,
+  type CheckCandidate,
+  type CheckEvidence,
+  type CheckProjectProfile,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
+import { Disclosure } from '@/shared/ui/disclosure';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
-import { Hint } from '@/shared/ui/tooltip';
-
-const stackLabels: Record<CheckProjectProfile['stack'], string> = {
-  typescript: 'TypeScript',
-  kotlin: 'Kotlin',
-  ambiguous: 'Ambiguous',
-  unknown: 'Unknown',
-};
 
 const outcomes: Record<
   CheckEvidence['invocations'][number]['outcome'],
@@ -104,25 +99,55 @@ export function CheckObservation({
   hostId: string;
 }) {
   const selected = check.proposed;
+  const stack = checkStackSchema.safeParse(profile?.stack);
   const entries = [
     ...(profile
-      ? [{ key: 'stack', label: 'Stack', value: stackLabels[profile.stack] }]
+      ? [
+          {
+            key: 'stack',
+            label: 'Stack',
+            value: stack.success
+              ? checkStackDetectors[stack.data].label
+              : profile.stack === 'ambiguous'
+                ? 'Ambiguous'
+                : 'Unknown',
+          },
+        ]
       : []),
     ...(selected
-      ? [{ key: 'selected', label: 'Selected', value: targetOf(selected) }]
+      ? [{ key: 'selected', label: 'Chosen check', value: targetOf(selected) }]
+      : []),
+    ...(check.rationale
+      ? [{ key: 'rationale', label: 'Why', value: check.rationale }]
       : []),
   ];
   return (
     <section aria-label="Check evidence" className="space-y-2">
       <SectionLabel className="px-0">Check evidence</SectionLabel>
       {entries.length > 0 && <KeyValueList entries={entries} />}
-      {check.rationale && (
-        <p className="leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-          {check.rationale}
-        </p>
-      )}
       {check.invocations.map((entry, index) => {
-        const { source } = entry.candidate;
+        const reason =
+          entry.outcome !== 'passed' &&
+          entry.reason !== check.invocations[index + 1]?.substitution
+            ? entry.reason
+            : null;
+        const facts = [
+          ...(entry.substitution
+            ? [
+                {
+                  key: 'substitution',
+                  label: 'Substitution',
+                  value: entry.substitution,
+                },
+              ]
+            : []),
+          ...(entry.exitCode === null
+            ? []
+            : [{ key: 'exit', label: 'Exit code', value: entry.exitCode }]),
+          ...(entry.proof
+            ? [{ key: 'proof', label: 'Suite', value: entry.proof }]
+            : []),
+        ];
         return (
           <div
             key={entry.candidate.id}
@@ -139,56 +164,51 @@ export function CheckObservation({
                 wrap
               />
             )}
-            <KeyValueList
-              entries={[
-                {
-                  key: 'source',
-                  label: 'Source',
-                  value: source.file + ' · ' + source.location,
-                },
-                {
-                  key: 'hash',
-                  label: 'SHA-256',
-                  value: (
-                    <Hint label={source.hash}>
-                      <span className="font-mono" title={source.hash}>
-                        {source.hash.slice(0, 12)}
-                        {'\u2026'}
-                      </span>
-                    </Hint>
-                  ),
-                },
-                ...(entry.candidate.directory === '.'
-                  ? []
-                  : [
-                      {
-                        key: 'folder',
-                        label: 'Module',
-                        value: entry.candidate.directory,
-                      },
-                    ]),
-                ...(entry.exitCode === null
-                  ? []
-                  : [
-                      {
-                        key: 'exit',
-                        label: 'Exit code',
-                        value: entry.exitCode,
-                      },
-                    ]),
-                ...(entry.proof
-                  ? [{ key: 'proof', label: 'Suite', value: entry.proof }]
-                  : []),
-              ]}
-            />
-            {entry.outcome !== 'passed' && (
+            {facts.length > 0 && <KeyValueList entries={facts} />}
+            {reason && (
               <p className="leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
-                {entry.reason}
+                {reason}
               </p>
             )}
           </div>
         );
       })}
+      <Disclosure title="Details" contentClassName="space-y-2 px-2">
+        <KeyValueList
+          entries={[
+            {
+              key: 'profile',
+              label: 'Profile SHA-256',
+              value: <span className="font-mono">{check.profileHash}</span>,
+            },
+          ]}
+        />
+        {check.invocations.map(({ candidate, substitution }) => (
+          <div key={candidate.id} className="space-y-1">
+            <p className="font-medium text-foreground">
+              {substitution ? 'Alternate' : 'Selected check'}
+            </p>
+            <KeyValueList
+              entries={[
+                {
+                  key: 'source',
+                  label: 'Source',
+                  value:
+                    candidate.source.file + ' · ' + candidate.source.location,
+                },
+                {
+                  key: 'hash',
+                  label: 'Source SHA-256',
+                  value: (
+                    <span className="font-mono">{candidate.source.hash}</span>
+                  ),
+                },
+                { key: 'module', label: 'Module', value: candidate.directory },
+              ]}
+            />
+          </div>
+        ))}
+      </Disclosure>
       {check.mapping && (
         <MappingUndo
           key={check.mapping.changeId}

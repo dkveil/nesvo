@@ -115,7 +115,7 @@ timeout: 5m
 on_fail: fix
 ```
 
-Write the acceptance criteria in the Markdown body. For example, require the suite that covers the changed code and evidence of at least one executed test. The host inventories one module per run. It reads `package.json` scripts and package manager signals, Gradle wrapper inputs and static Gradle tasks, test commands in supported CI files, Makefile, justfile and Taskfile targets, and README or CONTRIBUTING examples. The host reads these files without evaluating build or CI configuration. A read-only verifier selects a candidate ID from that inventory.
+Write the acceptance criteria in the Markdown body. For example, require the suite that covers the changed code and evidence of at least one executed test. In the step inspector, **Preferred commands** is optional and starts collapsed. Add a row to prefer a candidate from a registered stack detector. Without preferences the verifier picks from what the project offers. The host inventories one module per run. It reads `package.json` scripts and package manager signals, Gradle wrapper inputs and static Gradle tasks, test commands in supported CI files, Makefile, justfile and Taskfile targets, and README or CONTRIBUTING examples. The host reads these files without evaluating build or CI configuration. A read-only verifier selects a candidate ID from that inventory.
 
 A mixed checkout can locate its module and prefer a known target with `.agents/project.md`. A Gradle task such as `:app:test` implies module `app` unless you set `module`.
 
@@ -130,7 +130,7 @@ checks:
 
 When the host has no suitable candidate, the verifier can propose a single local test command with a source reference. The Inbox shows its command, working folder, provenance and reason. Approval saves the mapping in `.agents/project.md` in the run checkout and permits the command to run. Later runs on this computer can reuse the approved mapping hash for that project. A new or edited command mapping needs its own approval. Use **Undo Project mapping** in **Last run** to restore the previous file if its hash still matches. Inbox workflow-step and command holds apply to each actual invocation.
 
-A known setup mismatch can select one alternate of the same test scope. A failed suite follows the normal failure edge and `on_fail`. A zero exit must also produce evidence that tests ran, such as a positive runner count or fresh Gradle test reports. **Last run** shows the selected candidate, exact invocation, source and hash, substitution reason and observed outcome. Check commands use the same local process boundary and permissions as command steps. Use trusted project scripts and build files.
+A known setup mismatch can select one alternate of the same test scope. A failed suite follows the normal failure edge and `on_fail`. A zero exit must also produce evidence that tests ran, such as a positive runner count or fresh Gradle test reports. **Last run** shows the stack, chosen check, selection and substitution reasons, exact invocation, exit code and suite evidence. Expand **Details** for source references and hashes. Check commands use the same local process boundary and permissions as command steps. Use trusted project scripts and build files.
 
 ### Waiting for pull request checks
 
