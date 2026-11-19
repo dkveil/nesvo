@@ -73,9 +73,10 @@ async function main() {
     throw new Error('Set NESVO_DATA_DIR to the host data directory');
 
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const input = lines[Symbol.asyncIterator]();
   async function* incoming() {
     try {
-      for await (const line of lines) {
+      for await (const line of input) {
         try {
           yield JSON.parse(line) as unknown;
         } catch {

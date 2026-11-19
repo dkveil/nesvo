@@ -69,21 +69,48 @@ test(
     const environment = {
       NESVO_WORKFLOWS_HOME: join(directory, 'agents', 'workflows'),
     };
-    const hosts = [];
-    const openHost = () => {
-      const host = launch(directory, pidFile, environment);
-      hosts.push(host);
-      return host;
-    };
-    let host = openHost();
-    t.after(async () => {
-      for (const entry of hosts) {
-        if (entry.child.exitCode === null && entry.child.signalCode === null)
-          await entry.stop().catch(() => entry.child.kill());
-        await entry.exited;
+    const openHost = () => launch(directory, pidFile, environment);
+    let host;
+    let mcp;
+    let mcpClosed;
+    const cliAbort = new AbortController();
+    const cliClosures = new Set();
+    const closeChild = async (child, exited, label) => {
+      if (child.exitCode === null && child.signalCode === null)
+        child.stdin.destroy();
+      try {
+        await bounded(
+          exited,
+          `${label} did not close after stdin ended`,
+          2_000,
+        );
+      } catch (error) {
+        if (child.exitCode !== null || child.signalCode !== null) throw error;
+        child.kill('SIGKILL');
+        await bounded(exited, `${label} did not exit after SIGKILL`, 2_000);
       }
-      await rm(directory, { recursive: true, force: true });
+    };
+    t.after(async () => {
+      try {
+        cliAbort.abort();
+        try {
+          await bounded(
+            Promise.all(cliClosures),
+            'Inbox CLI did not close',
+            2_000,
+          );
+        } finally {
+          if (mcp) await closeChild(mcp, mcpClosed, 'Inbox MCP');
+        }
+      } finally {
+        try {
+          if (host) await closeChild(host.child, host.exited, 'Inbox host');
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      }
     });
+    host = openHost();
     const health = await host.request('health');
     const device = await host.request('enroll-external-inbox-device', {
       name: 'Release runner',
@@ -101,11 +128,23 @@ test(
       NESVO_INBOX_COMPUTER: health.health.instanceId,
     });
     const cli = async (args, token = device.enrollment.token) => {
-      const output = await promisify(execFile)(
+      const command = promisify(execFile)(
         process.execPath,
         ['apps/host/dist/cli.js', 'inbox', ...args, '--json'],
-        { env: env(token), windowsHide: true, timeout: 12000 },
-      ).then(
+        {
+          env: env(token),
+          killSignal: 'SIGKILL',
+          windowsHide: true,
+          timeout: 12000,
+          signal: cliAbort.signal,
+        },
+      );
+      const closed = new Promise(resolve =>
+        command.child.once('close', resolve),
+      );
+      cliClosures.add(closed);
+      void closed.then(() => cliClosures.delete(closed));
+      const output = await command.then(
         result => ({ ...result, code: 0 }),
         error => {
           assert.equal(typeof error.code, 'number');
@@ -129,6 +168,7 @@ test(
       'release-12',
     ];
     const waiting = cli([...post, '--wait', '--timeout', '10']);
+    void waiting.catch(() => undefined);
     const existing = await cli(post);
     assert.equal(existing.code, 0);
     const { id } = existing.result;
@@ -186,12 +226,16 @@ test(
       'cancelled',
     );
 
-    const mcp = spawn(process.execPath, ['apps/host/dist/cli.js', 'mcp'], {
+    mcp = spawn(process.execPath, ['apps/host/dist/cli.js', 'mcp'], {
       env: env(other.enrollment.token),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    t.after(() => mcp.kill());
+    mcpClosed = new Promise((resolve, reject) => {
+      mcp.once('close', resolve);
+      mcp.once('error', reject);
+    });
+    void mcpClosed.catch(() => undefined);
     const mcpReplies = createInterface({ input: mcp.stdout })[
       Symbol.asyncIterator
     ]();
@@ -310,7 +354,6 @@ test(
     assert.equal(denied.code, 3);
     assert.equal(denied.result.error.code, 'unauthorized');
     assert.ok(!host.error().includes(device.enrollment.token));
-    mcp.stdin.end();
   },
 );
 
