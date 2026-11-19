@@ -287,6 +287,7 @@ export class WorkflowTasks {
       dataDirectory: string;
       emit: (event: DesktopEvent) => void;
       worktrees?: TaskWorktrees;
+      beforeCreate?: (input: StartWorkflowTaskInput, id: string, title: string, signal: AbortSignal) => Promise<unknown>;
     },
   ) {}
 
@@ -354,6 +355,7 @@ export class WorkflowTasks {
       workflowDefinitionLimits.specTitle,
     );
     let isolation: WorkflowIsolation | null = null;
+    await this.ports.beforeCreate?.(input, runId, title, signal);
     if (input.isolation === 'worktree') {
       try {
         isolation = await this.worktrees.create({

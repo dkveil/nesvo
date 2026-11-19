@@ -1,5 +1,18 @@
 import { z } from 'zod';
 import {
+  readonlyIntegrationInputSchema,
+  readonlyIntegrationReplySchema,
+  type ReadonlyIntegrationInput,
+  type ReadonlyIntegrationReply,
+} from './readonly-integrations';
+import {
+  providerUsageGateInputSchema,
+  providerUsageGateSettingsSchema,
+  providerUsageHoldSchema,
+  type ProviderUsageGateInput,
+  type ProviderUsageGateSettings,
+} from './usage-gates';
+import {
   worktreeProviderInputSchema,
   worktreeProviderReplySchema,
   type WorktreeProviderInput,
@@ -622,6 +635,8 @@ export * from './provider-usage';
 export * from './repository-trust';
 export * from './direct-command';
 export * from './worktree-providers';
+export * from './usage-gates';
+export * from './readonly-integrations';
 export * from './provider-profiles';
 export * from './costs';
 export * from './mobile';
@@ -1224,6 +1239,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('custom-worktree-providers'),
     input: worktreeProviderInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('provider-usage-gates'),
+    input: providerUsageGateInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('readonly-integration-grants'),
+    input: readonlyIntegrationInputSchema,
   }),
   z.strictObject({
     id: z.string().min(1).max(200),
@@ -1995,6 +2020,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     reply: worktreeProviderReplySchema,
   }),
   z.strictObject({
+    type: z.literal('provider-usage-gates'),
+    id: z.uuid(),
+    settings: providerUsageGateSettingsSchema,
+  }),
+  z.strictObject({
+    type: z.literal('readonly-integration-grants'),
+    id: z.uuid(),
+    reply: readonlyIntegrationReplySchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2142,6 +2177,7 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
       'invalid-directory',
     ]),
     message: z.string().optional(),
+    usageHold: providerUsageHoldSchema.optional(),
   }),
 ]);
 
@@ -2444,6 +2480,14 @@ export type DesktopApi = {
     input: WorktreeProviderInput,
     hostId?: HostId,
   ) => Promise<WorktreeProviderReply>;
+  providerUsageGates: (
+    input: ProviderUsageGateInput,
+    hostId?: HostId,
+  ) => Promise<ProviderUsageGateSettings>;
+  readonlyIntegrationGrants: (
+    input: ReadonlyIntegrationInput,
+    hostId?: HostId,
+  ) => Promise<ReadonlyIntegrationReply>;
   listMcpServers: (
     input: ListMcpServersInput,
     hostId?: HostId,

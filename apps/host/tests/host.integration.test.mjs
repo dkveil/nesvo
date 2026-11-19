@@ -32,6 +32,177 @@ import {
 } from './manager-import-fixture.mjs';
 
 test(
+  'D88 usage holds survive restart and require explicit fresh evidence before creation',
+  { timeout: 30_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-d88-usage-')),
+    );
+    const control = join(directory, 'usage-control.json');
+    let host;
+    t.after(async () => {
+      if (host?.child.exitCode === null) await host.stop();
+      await rm(directory, { recursive: true, force: true });
+    });
+    await writeFile(control, '{}');
+    const open = () =>
+      launch(directory, join(directory, 'fixture-pid'), {
+        NESVO_FIXTURE_USAGE_CONTROL: control,
+      });
+    host = open();
+    const rule = {
+      provider: 'Claude Code',
+      policy: 'hold',
+      threshold: 50,
+      onUnavailable: 'warn',
+      windows: [],
+    };
+    const set = threshold =>
+      host.request('provider-usage-gates', {
+        action: 'save',
+        actionId: randomUUID(),
+        policy: { ...rule, threshold },
+      });
+    assert.equal((await set(50)).type, 'provider-usage-gates');
+    const input = {
+      requestId: randomUUID(),
+      title: 'Held before checkout',
+      model: 'sonnet',
+      directory,
+      isolation: { kind: 'worktree' },
+    };
+    const held = await host.request('create-session', input);
+    assert.equal(held.type, 'error', JSON.stringify(held));
+    assert.equal(held.usageHold.status, 'held');
+    assert.equal(held.usageHold.evidence.usedPercent, 61.25);
+    assert.equal((await host.request('list-sessions')).sessions.length, 0);
+    assert.equal(existsSync(join(directory, 'session-worktrees')), false);
+    await host.stop();
+    host = open();
+    await set(99);
+    const repeated = await host.request('create-session', input);
+    assert.equal(repeated.usageHold.id, held.usageHold.id);
+    const checked = await host.request('provider-usage-gates', {
+      action: 'check',
+      actionId: randomUUID(),
+      holdId: held.usageHold.id,
+    });
+    assert.equal(checked.settings.holds[0].status, 'ready');
+    assert.equal((await host.request('list-sessions')).sessions.length, 0);
+    const retried = await host.request('create-session', input);
+    assert.equal(retried.type, 'error');
+    assert.equal(retried.usageHold, undefined);
+    assert.match(retried.message, /Git|repository/i);
+  },
+);
+
+test(
+  'D88 a Codex MCP grant verifies the live tool schema before automatic approval',
+  { timeout: 45_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-d88-mcp-grant-')),
+    );
+    const codex = join(directory, 'codex-config');
+    const toolSchema = join(directory, 'tool-schema.json');
+    const pid = join(directory, 'fixture-pid');
+    await mkdir(codex);
+    await writeFile(
+      join(codex, 'config.toml'),
+      '[mcp_servers.search]\nurl = "https://search.example.test/mcp"\n',
+    );
+    await writeFile(
+      toolSchema,
+      JSON.stringify({
+        type: 'object',
+        properties: { query: { type: 'string' } },
+      }),
+    );
+    const host = launch(directory, pid, {
+      CODEX_HOME: codex,
+      NESVO_CODEX_FIXTURE_MCP_APPROVAL: '1',
+      NESVO_FIXTURE_MCP_GRANT_SCHEMA: toolSchema,
+    });
+    t.after(async () => {
+      if (host.child.exitCode === null) await host.stop();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const created = await host.request('create-session', {
+      title: 'Grant fixture',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory,
+      mode: 'read-only',
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const target = { sessionId: created.session.id, server: 'search' };
+    const inspected = await host.request('readonly-integration-grants', {
+      action: 'inspect-mcp',
+      ...target,
+    });
+    assert.equal(
+      inspected.type,
+      'readonly-integration-grants',
+      JSON.stringify(inspected),
+    );
+    const approval = await host.request('readonly-integration-grants', {
+      action: 'approve-mcp',
+      actionId: randomUUID(),
+      revision: inspected.reply.observation.revision,
+      selection: { kind: 'tool', tool: 'lookup' },
+      ...target,
+    });
+    assert.equal(
+      approval.reply.action,
+      'approve-mcp',
+      JSON.stringify(approval),
+    );
+    const send = () =>
+      host.request('send-message', {
+        sessionId: target.sessionId,
+        messageId: randomUUID(),
+        text: 'fixture:ask-mcp',
+      });
+    const granted = await send();
+    assert.equal(granted.type, 'session', JSON.stringify(granted));
+    await host.event(
+      value =>
+        value.id === target.sessionId &&
+        value.runId === granted.session.runId &&
+        value.status === 'completed',
+    );
+    const history = await host.request('readonly-integration-grants', {
+      action: 'read',
+      sessionId: target.sessionId,
+    });
+    assert.equal(history.reply.history[0].action, 'invoke');
+    await writeFile(
+      toolSchema,
+      JSON.stringify({
+        type: 'object',
+        properties: { query: { type: 'string', minLength: 1 } },
+      }),
+    );
+    const changed = await send();
+    assert.equal(changed.type, 'session', JSON.stringify(changed));
+    const pending = await host.event(
+      value =>
+        value.id === target.sessionId &&
+        value.runId === changed.session.runId &&
+        value.pendingApprovals.length,
+    );
+    assert.equal(
+      pending.pendingApprovals[0].title,
+      'Use MCP tool search / lookup',
+    );
+    await host.request('stop-run', {
+      sessionId: target.sessionId,
+      runId: changed.session.runId,
+    });
+  },
+);
+
+test(
   'D88 custom worktree commands verify Git identity and refuse a changed pinned provider',
   { timeout: 60_000 },
   async t => {
@@ -116,6 +287,8 @@ test(
     assert.equal(
       inspected.type,
       'custom-worktree-providers',
+      'provider-usage-gates',
+      'readonly-integration-grants',
       JSON.stringify(inspected),
     );
     const confirmed = await host.request('custom-worktree-providers', {
@@ -3814,6 +3987,8 @@ test(
         'configuration',
         'repository-trust-rules',
         'custom-worktree-providers',
+        'provider-usage-gates',
+        'readonly-integration-grants',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -9452,6 +9627,8 @@ test(
       'configuration',
       'repository-trust-rules',
       'custom-worktree-providers',
+      'provider-usage-gates',
+      'readonly-integration-grants',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -31431,7 +31608,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-9), [
+  assert.deepEqual(capabilities.slice(-11), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -31442,6 +31619,8 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'configuration',
     'repository-trust-rules',
     'custom-worktree-providers',
+    'provider-usage-gates',
+    'readonly-integration-grants',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

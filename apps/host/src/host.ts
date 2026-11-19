@@ -57,6 +57,9 @@ import {
   discoverSessionSkills,
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
+import { ProviderUsageGates, ProviderUsageHeld } from './providers/usage-gates';
+import { ReadonlyMcpGrants } from './mcp/readonly-grants';
+import { inspectCodexGrant } from './providers/codex';
 import { DiscoveryQueue } from './process/discovery-queue';
 import { reviewWorkingRules } from './working-rules';
 import { WorkflowRunStore } from './workflows/store';
@@ -288,6 +291,7 @@ const GOOD_CHECK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
 
 const worktreeFailure = (error: unknown, message: string) => ({
+  ...(error instanceof ProviderUsageHeld ? { usageHold: error.hold } : {}),
   code:
     error instanceof SessionError
       ? error.code
@@ -429,6 +433,34 @@ export const serveHost = ({
       const controlStore = new SessionControlStore(database);
       const mcpPolicy = new McpPolicy(database);
       const customWorktrees = new CustomWorktreeProviders(database, directory);
+      const readonlyGrants = new ReadonlyMcpGrants(
+        database,
+        id => store.get(id),
+        async (session, server, signal) =>
+          inspectCodexGrant(
+            session.directory,
+            server,
+            signal,
+            profileEnvironment(
+              session.provider,
+              await profiles.directory(
+                session.provider,
+                session.profileId,
+                signal,
+              ),
+            ),
+          ),
+      );
+      const usage = new ProviderUsageService();
+      const usageGates = new ProviderUsageGates(
+        database,
+        usage,
+        async ({ provider, profileId }, signal) =>
+          profileEnvironment(
+            provider,
+            await profiles.directory(provider, profileId, signal),
+          ),
+      );
       const inbox: { current?: InboxRules } = {};
       const emitSessionEvent = (
         message: DesktopEvent,
@@ -473,6 +505,8 @@ export const serveHost = ({
                 profiles,
                 mcp: mcpPolicy,
                 customWorktrees,
+                usageGates,
+                readonlyGrants,
                 inbox: {
                   prepareTurn: (session, turn, signal) =>
                     inbox.current
@@ -733,7 +767,6 @@ export const serveHost = ({
         ),
         release => Effect.sync(() => release()),
       );
-      const usage = new ProviderUsageService();
       const runningApps = new RunningApps();
       const evidence = new EvidenceStore(directory, id =>
         workflowRunStore.getStep(id),
@@ -875,6 +908,20 @@ export const serveHost = ({
               snapshots,
               dataDirectory: directory,
               emit,
+              beforeCreate: (input, id, title, signal) =>
+                usageGates.require(
+                  {
+                    id,
+                    kind: 'create',
+                    provider: input.provider,
+                    profileId: null,
+                    model: input.model,
+                    title: title.slice(0, 100),
+                    sessionId: null,
+                  },
+                  input,
+                  signal,
+                ),
             }),
         ),
         service => Effect.promise(() => service.close()),
@@ -3767,6 +3814,79 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (request.method === 'provider-usage-gates') {
+          const pending = usageGates
+            .settings(request.input, probes.controller.signal)
+            .then(settings =>
+              send({ type: 'provider-usage-gates', id: request.id, settings }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Provider usage settings could not be read.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
+        if (request.method === 'readonly-integration-grants') {
+          const pending = readonlyGrants
+            .settings(request.input, probes.controller.signal)
+            .then(reply =>
+              send({
+                type: 'readonly-integration-grants',
+                id: request.id,
+                reply,
+              }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : 'Read-only integration grants could not be checked.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'send-message' ||
+          request.method === 'start-queued'
+        ) {
+          const signal = probes.controller.signal;
+          const operation =
+            request.method === 'send-message'
+              ? sessions.sendWithUsage(request.input, signal)
+              : sessions.startQueuedWithUsage(request.input, signal);
+          const pending = operation
+            .then(session => send({ type: 'session', id: request.id, session }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                ...worktreeFailure(error, 'The message could not be sent.'),
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
         if (
           request.method === 'decide-delegation' ||
           request.method === 'worker-worktree'
@@ -4024,12 +4144,6 @@ export const serveHost = ({
                 id: request.id,
                 session: deletions.restore(request.input),
               };
-            if (request.method === 'send-message')
-              return {
-                type: 'session',
-                id: request.id,
-                session: sessions.send(request.input),
-              };
             if (request.method === 'queue-message')
               return {
                 type: 'session',
@@ -4041,12 +4155,6 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: sessions.cancelQueued(request.input),
-              };
-            if (request.method === 'start-queued')
-              return {
-                type: 'session',
-                id: request.id,
-                session: sessions.startQueued(request.input),
               };
             if (request.method === 'stop-run') {
               const bound = store.get(request.input.sessionId);
@@ -4262,6 +4370,9 @@ export const serveHost = ({
               type: 'error',
               id: request.id,
               code: known ? error.code : 'unavailable',
+              ...(error instanceof ProviderUsageHeld
+                ? { usageHold: error.hold }
+                : {}),
               message: known
                 ? error.message
                 : 'The host could not complete this operation. Refresh and try again.',

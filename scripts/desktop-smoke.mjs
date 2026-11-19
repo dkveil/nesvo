@@ -2042,6 +2042,53 @@ async function smokeDesktop() {
   await initialContext
     .getByRole('button', { name: 'Close repository trust history' })
     .click();
+  const gateSettings = initialContext.getByRole('region', {
+    name: 'Provider usage gates',
+    exact: true,
+  });
+  await gateSettings.getByRole('button', { name: 'Add usage rule' }).click();
+  const usageRule = page.getByRole('dialog', {
+    name: 'Add provider usage rule',
+  });
+  await usageRule.getByLabel('Threshold (%)').fill('50');
+  await usageRule.getByLabel('At threshold').click();
+  await page.getByRole('option', { name: 'Hold', exact: true }).click();
+  await usageRule.getByRole('button', { name: 'Save rule' }).click();
+  await gateSettings.getByText('Hold at 50% used').waitFor();
+  const heldReason = await page.evaluate(async () => {
+    try {
+      await window.nesvo.createSession({
+        requestId: crypto.randomUUID(),
+        title: 'Fixture usage hold',
+        model: 'sonnet',
+      });
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  });
+  assert.match(heldReason, /61\.25% used/);
+  await settingsNav
+    .getByRole('button', { name: 'General', exact: true })
+    .click();
+  await settingsNav
+    .getByRole('button', { name: 'Permissions', exact: true })
+    .click();
+  await gateSettings.getByText('Fixture usage hold', { exact: true }).waitFor();
+  await captureD88('c-usage-hold');
+  await gateSettings
+    .getByRole('button', { name: 'Remove rule', exact: true })
+    .click();
+  await gateSettings
+    .getByRole('button', { name: 'Check again', exact: true })
+    .click();
+  await gateSettings.getByText('Ready for an explicit retry.').waitFor();
+  await gateSettings
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await gateSettings
+    .getByText('Fixture usage hold', { exact: true })
+    .waitFor({ state: 'hidden' });
   await settingsNav
     .getByRole('button', { name: 'Worktrees', exact: true })
     .click();
@@ -2166,6 +2213,8 @@ async function smokeDesktop() {
     'configuration',
     'repository-trust-rules',
     'custom-worktree-providers',
+    'provider-usage-gates',
+    'readonly-integration-grants',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

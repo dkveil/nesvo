@@ -30,6 +30,7 @@ type Props = {
   disabled: boolean;
   unsupported: boolean;
   supportsTrust: boolean;
+  onReadOnlySettings?: () => void;
 };
 
 export function McpChip({
@@ -41,6 +42,7 @@ export function McpChip({
   disabled,
   unsupported,
   supportsTrust,
+  onReadOnlySettings,
 }: Props) {
   const hint = unsupported
     ? 'Update the host to view MCP configuration'
@@ -145,7 +147,9 @@ export function McpChip({
               ? `MCP is isolated in ${modeLabel(provider, 'read-only')} because a one-time tool approval channel is unavailable.`
               : provider === 'Claude Code'
                 ? 'Plan asks for MCP tool approval unless a saved allow rule matches.'
-                : 'Each MCP tool call in Read-only requires a one-time approval.'}
+                : onReadOnlySettings
+                  ? 'Read-only checks saved MCP grants before asking for one-time approval.'
+                  : 'Each MCP tool call in Read-only requires a one-time approval.'}
           </StatusMessage>
         ) : null}
         {paused && (
@@ -184,6 +188,16 @@ export function McpChip({
                 isolated || readOnly ? 'Disabled' : 'Follow provider settings'
               }
             />
+            {onReadOnlySettings && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onReadOnlySettings}
+              >
+                Read-only integrations
+              </Button>
+            )}
           </>
         )}
       </PopoverContent>

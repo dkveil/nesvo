@@ -122,6 +122,12 @@ Only reported windows become percentages. Native durations, reset timestamps, ac
 
 Electron validates and routes the request to Local or the selected connected computer. An offline request fails without reconnecting automatically. Renderer observations are keyed by host, with generation checks against late responses. The visible application refreshes the selected computer every two minutes, after a finished turn and on demand, subject to the host cache. The rail shows remaining allowance in the most-used reported window. Details show every window, last check and reset time; observations become stale after five minutes, disconnection or a passed reset. Expiry never fabricates a refreshed allowance. The account icon opens both providers and remains available in compact layouts.
 
+## Provider usage gates
+
+Rules live on the selected host and bind to the provider and account profile. An applicable rule samples the existing account usage reader at session creation, standalone send, explicit queued send, and provider dispatch. Workflow and automation task creation check before preparing a worktree. Applicable model windows, freshness and reset times appear in held request evidence. Missing data warns and allows unless the operator sets a hold for unavailable data. A provider-reported rejection can also hold future work during its reported window.
+
+The host stores a hold before dispatch and checks it again when the operator retries. Check again samples the account and updates the hold. It sends no message and starts no provider turn. Cancel closes the intent. The UI keeps its current draft available for an explicit retry. Holds, checks and provider rejections are recorded in the host database and restored after restart.
+
 ## Provider profiles
 
 Each host stores its own provider accounts in SQLite. A profile has a stable ID, provider, label and absolute configuration directory. The host checks directory ownership using the host user’s UID or Windows SID and validates the canonical path before use. The application does not open credential files or write to the provider configuration directory. The CLI still owns its normal account and transcript files.
@@ -447,6 +453,12 @@ D88 reads the owning computer's Git common directory, registered checkouts and f
 SQLite records the rule, reviewed definition digests and operator action in one transaction. Retrying an action ID with a different request is refused. Approved pattern definitions can be used in another verified checkout of the same remote only while the selected rule and each digest still match. Local overlays include the checkout identity in their digests. The review reports drift before the next launch. The existing raw review token remains bound to the provider, session, checkout and observed fingerprint.
 
 The D88 Claude path can supply reviewed HTTP and SSE definitions to strict MCP configuration without using the native project settings source. This permits an unchanged approved server to remain available while another server is withheld. Native project settings, hooks and command-based servers remain isolated until their selective loading and executable identity can be verified. Settings › Permissions lists active rules and the owning host's decision history. Revocation removes the reviewed approval set from future admissions. A process that has already consumed a snapshot keeps that snapshot.
+
+### Read-only integration grants
+
+For eligible Codex sessions, Settings › Permissions reviews the connected HTTPS MCP endpoint and the provider-reported tool inventory. The host pins the complete definition and schema digests to the session and account profile. A grant covers one named tool or the reviewed inventory. Each automatic decision checks the same thread's live inventory, the current grant and the Inbox gate before answering the native tool prompt. Drift, revocation and unavailable inventory leave the call in the existing one-time approval flow.
+
+Claude Plan auto-approval and native read-only hook grants have separate unavailable reasons. Claude Code merges hooks across sources and can retain its managed hooks despite disableAllHooks. Selective native hook loading requires separate evidence before enabling it. See the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks#hook-locations) and the [Codex app-server MCP inventory](https://learn.chatgpt.com/docs/app-server).
 
 ### Project settings, instructions and commands
 

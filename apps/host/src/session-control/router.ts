@@ -32,6 +32,7 @@ import {
   type SessionService,
 } from '../sessions/service';
 import { SessionError } from '../sessions/session-error';
+import { ProviderUsageHeld } from '../providers/usage-gates';
 import {
   actorLabel,
   coordinatorActor,
@@ -88,6 +89,16 @@ class ChildRefusal extends SessionError {
 }
 
 const refusalFor = (error: unknown): SessionControlReply => {
+  if (error instanceof ProviderUsageHeld)
+    return {
+      ok: false,
+      text: JSON.stringify({
+        ok: false,
+        code: 'usage-held',
+        message: error.message,
+        hold: error.hold,
+      }),
+    };
   if (error instanceof WorkspaceIsolationError)
     return refusal('invalid', error.message);
   if (error instanceof ChildRefusal)

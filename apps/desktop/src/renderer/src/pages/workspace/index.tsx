@@ -172,6 +172,8 @@ import {
 import { StageRecord, useStageDecisions } from '@/widgets/session-stages';
 import { PermissionSettings } from '@/widgets/settings/permission-settings';
 import { RepositoryTrustSettings } from '@/widgets/settings/repository-trust-settings';
+import { ProviderUsageGateSettings } from '@/widgets/settings/provider-usage-gate-settings';
+import { ReadonlyIntegrationsSettings } from '@/widgets/settings/readonly-integrations-settings';
 import { FullAccessDialog } from '@/features/session-mode/full-access-dialog';
 import { PermissionRules } from '@/features/session-mode/permission-rules';
 import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
@@ -5367,6 +5369,16 @@ ${text}`
                     disabled={connection !== 'ready'}
                     unsupported={!supportsMcp(selectedHostId)}
                     supportsTrust={supportsMcpTrust}
+                    onReadOnlySettings={
+                      selectedComputer?.capabilities.includes(
+                        'readonly-integration-grants',
+                      )
+                        ? () => {
+                            setAccountSettingsHostId(selected.hostId);
+                            setSettingsPage('permissions');
+                          }
+                        : undefined
+                    }
                   />
                 }
               />
@@ -6032,7 +6044,7 @@ ${text}`
                   }}
                 />
                 <RepositoryTrustSettings
-                  key={settingsHostId}
+                  key={'trust:' + settingsHostId}
                   hostId={settingsHostId}
                   ready={
                     store.hostReady(settingsHostId) &&
@@ -6040,6 +6052,30 @@ ${text}`
                       'repository-trust-rules',
                     )
                   }
+                />
+                <ProviderUsageGateSettings
+                  key={'usage:' + settingsHostId}
+                  hostId={settingsHostId}
+                  ready={
+                    store.hostReady(settingsHostId) &&
+                    !!settingsComputer?.capabilities.includes(
+                      'provider-usage-gates',
+                    )
+                  }
+                  profiles={profilesFor(settingsHostId)}
+                />
+                <ReadonlyIntegrationsSettings
+                  key={'integrations:' + settingsHostId}
+                  hostId={settingsHostId}
+                  ready={
+                    store.hostReady(settingsHostId) &&
+                    !!settingsComputer?.capabilities.includes(
+                      'readonly-integration-grants',
+                    )
+                  }
+                  sessions={store.sessions.filter(
+                    session => session.hostId === settingsHostId,
+                  )}
                 />
               </div>
             ) : page === 'notifications' ? (
@@ -6145,7 +6181,7 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <WorktreeProviderSettings
-                  key={settingsHostId}
+                  key={'worktree-provider:' + settingsHostId}
                   hostId={settingsHostId}
                   ready={
                     store.hostReady(settingsHostId) &&
@@ -6225,6 +6261,18 @@ ${text}`
                   computer={settingsComputer}
                   profiles={profileCatalog.catalogs[settingsHostId]?.profiles}
                 />
+                {settingsComputer?.capabilities.includes(
+                  'readonly-integration-grants',
+                ) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSettingsPage('permissions')}
+                  >
+                    Read-only integrations
+                  </Button>
+                )}
               </div>
             ) : page === 'components' ? (
               ComponentCatalog && (

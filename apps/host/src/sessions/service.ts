@@ -180,6 +180,11 @@ import {
 import type { CustomWorktreeProviders } from '../workspace/custom-worktree-providers';
 import type { WorktreeTaskFields } from '@nesvo/contracts';
 import {
+  ProviderUsageHeld,
+  type ProviderUsageGates,
+} from '../providers/usage-gates';
+import type { ReadonlyMcpGrants } from '../mcp/readonly-grants';
+import {
   executeWorktreeSetup,
   inspectWorktreeSetup,
 } from '../workspace/worktree-setup';
@@ -439,6 +444,8 @@ export const isCoordinatorCandidate = (session: Session): boolean =>
 
 export type SessionServiceOptions = {
   customWorktrees?: CustomWorktreeProviders;
+  usageGates?: ProviderUsageGates;
+  readonlyGrants?: ReadonlyMcpGrants;
   control?: SessionControlBridge;
   autonomy?: ClaudeAutonomyStore;
   profiles?: ProviderProfiles;
@@ -1790,6 +1797,7 @@ export class SessionService {
       this.confirmUnchangedProfile(existing, input.profileId ?? null);
       return existing;
     }
+    await this.requireCreateUsage(input, signal);
     const profileDirectory = await this.options.profiles?.directory(
       input.provider,
       input.profileId,
@@ -2039,6 +2047,7 @@ export class SessionService {
     signal: AbortSignal,
     baseCommit?: string,
   ): Promise<Session> {
+    await this.requireCreateUsage(input, signal);
     if (!isWritableSessionMode(input.mode))
       return this.create(input, { origin });
     if (!input.directory)
@@ -2067,6 +2076,22 @@ export class SessionService {
     } finally {
       this.creatingWorktrees--;
     }
+  }
+
+  private requireCreateUsage(input: CreateSessionInput, signal: AbortSignal) {
+    return this.options.usageGates?.require(
+      {
+        id: input.requestId ?? randomUUID(),
+        kind: 'create',
+        provider: input.provider,
+        profileId: input.profileId ?? null,
+        model: input.model,
+        title: input.title,
+        sessionId: null,
+      },
+      input,
+      signal,
+    );
   }
 
   private sessionWorktree(sessionId: string) {
@@ -2804,6 +2829,33 @@ export class SessionService {
           untrusted: true,
         }),
       },
+    );
+  }
+
+  async sendWithUsage(input: SendMessageInput, signal: AbortSignal) {
+    const session = this.current(input.sessionId);
+    if (!session.messages.some(message => message.id === input.messageId))
+      await this.requireSendUsage(session, input, signal);
+    return this.send(input);
+  }
+
+  private requireSendUsage(
+    session: Session,
+    input: SendMessageInput,
+    signal: AbortSignal,
+  ) {
+    return this.options.usageGates?.require(
+      {
+        id: input.messageId,
+        kind: 'turn',
+        provider: session.provider,
+        profileId: session.profileId,
+        model: input.model ?? session.model,
+        title: session.title,
+        sessionId: session.id,
+      },
+      input,
+      signal,
     );
   }
 
@@ -3740,6 +3792,17 @@ export class SessionService {
       throw error;
     }
     return structuredClone(session);
+  }
+
+  async startQueuedWithUsage(
+    input: QueuedMessageRefInput,
+    signal: AbortSignal,
+  ) {
+    const session = this.current(input.sessionId);
+    const entry = session.queue.find(item => item.id === input.messageId);
+    if (entry)
+      await this.requireSendUsage(session, queuedSend(session, entry), signal);
+    return this.startQueued(input);
   }
 
   startQueued(input: QueuedMessageRefInput): Session {
@@ -4766,6 +4829,38 @@ export class SessionService {
           ...options.environment,
           ...profileEnvironment(session.provider, profileDirectory),
         };
+        try {
+          const evidence = await this.options.usageGates?.require(
+            {
+              id: session.runId!,
+              kind: 'turn',
+              provider: session.provider,
+              profileId: session.profileId,
+              model: session.model,
+              title: session.title,
+              sessionId: session.id,
+            },
+            { launch: true },
+            controller.signal,
+          );
+          if (evidence?.state === 'warning' && evidence.reason) {
+            const reply = session.messages.at(-1);
+            if (reply) {
+              reply.usageWarning = evidence.reason;
+              this.publish(session);
+            }
+          }
+        } catch (error) {
+          if (controller.signal.aborted)
+            return { status: 'stopped', error: null };
+          return {
+            status: 'failed',
+            error:
+              error instanceof ProviderUsageHeld
+                ? error.message
+                : 'The provider usage gate could not be checked.',
+          };
+        }
         if (session.provider === 'Codex' && session.effort) {
           try {
             this.update(session, {
@@ -4958,6 +5053,34 @@ export class SessionService {
                   !privateResponse,
                 environment: turnEnvironment,
                 mcpTurn,
+                readonlyMcpGrant:
+                  mcpTurn && this.options.readonlyGrants
+                    ? {
+                        candidate: (server, tool) =>
+                          this.options.readonlyGrants!.candidate(
+                            session,
+                            server,
+                            tool,
+                          ),
+                        allow: (server, tool, input, observation) => {
+                          if (
+                            controller.signal.aborted ||
+                            inboxRules?.gate.holds({
+                              tool: `mcp__${server}__${tool}`,
+                              input,
+                            })
+                          )
+                            return false;
+                          return this.options.readonlyGrants!.allow(
+                            session,
+                            server,
+                            tool,
+                            observation,
+                            randomUUID(),
+                          );
+                        },
+                      }
+                    : undefined,
                 sessionId: session.providerSessionId,
                 mode:
                   session.mode === 'full-access' && !readOnly
@@ -5117,8 +5240,10 @@ export class SessionService {
           session.effort = previousSelection.effort;
           session.mode = previousSelection.mode;
         }
-        if (limit && session.runId && !active.persistenceError)
+        if (limit && session.runId && !active.persistenceError) {
           this.rememberLimit(session.runId, limit);
+          this.options.usageGates?.reject(session, limit.resetsAt);
+        }
         if (
           result.structured !== undefined &&
           session.runId &&

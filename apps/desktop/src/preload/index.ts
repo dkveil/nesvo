@@ -201,6 +201,10 @@ import {
   repositoryTrustSettingsSchema,
   worktreeProviderInputSchema,
   worktreeProviderReplySchema,
+  providerUsageGateInputSchema,
+  providerUsageGateSettingsSchema,
+  readonlyIntegrationInputSchema,
+  readonlyIntegrationReplySchema,
   mcpServerListSchema,
   setSessionMcpSchema,
   skillCatalogSchema,
@@ -1631,6 +1635,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:custom-worktree-providers',
         worktreeProviderInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
+      ),
+    ),
+  providerUsageGates: async (input, hostId) =>
+    providerUsageGateSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:provider-usage-gates',
+        providerUsageGateInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
+      ),
+    ),
+  readonlyIntegrationGrants: async (input, hostId) =>
+    readonlyIntegrationReplySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:readonly-integration-grants',
+        readonlyIntegrationInputSchema.parse(input),
         hostIdSchema.optional().parse(hostId),
       ),
     ),

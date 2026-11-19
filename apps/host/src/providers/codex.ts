@@ -1,6 +1,10 @@
 import type { ProviderToolSubject } from '../inbox-rules/turn-gate';
 import { isDeepStrictEqual } from 'node:util';
 import { codexProjectOverride, tomlInline } from '../mcp/codex-overrides';
+import {
+  grantEndpoint,
+  type NativeMcpObservation,
+} from '../mcp/readonly-grants';
 import type { VerifyMcpTurn } from '../mcp/service';
 import { spawn } from 'node:child_process';
 import { providerEnvironment } from './profiles';
@@ -1131,6 +1135,69 @@ async function codexServerDefinitions(
   return mcp ?? {};
 }
 
+async function codexGrantInventory(
+  peer: RpcPeer,
+  server: string,
+  threadId?: string,
+) {
+  const result = await peer.request('mcpServerStatus/list', {
+    serverName: server,
+    ...(threadId ? { threadId } : {}),
+    limit: 2,
+    detail: 'toolsAndAuthOnly',
+  });
+  if (
+    !Array.isArray(result.data) ||
+    result.data.length !== 1 ||
+    result.nextCursor
+  )
+    throw new Error('Codex did not return a scoped MCP server inventory.');
+  const row = object(result.data[0]);
+  if (
+    !row ||
+    row.name !== server ||
+    row.runtimeStatus !== 'connected' ||
+    !object(row.serverCapabilities)?.tools
+  )
+    throw new Error('Codex did not verify a connected MCP tool inventory.');
+  return row.tools;
+}
+
+export async function inspectCodexGrant(
+  directory: string,
+  server: string,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+): Promise<NativeMcpObservation> {
+  const executable = await executablePath();
+  if (!executable) throw new Error('Codex is unavailable.');
+  const peer = rpcPeer(
+    executable,
+    directory,
+    message => rejectRequest(peer, message),
+    null,
+    environment,
+    [],
+    isolatedFeatures,
+  );
+  const abort = () => void peer.close();
+  signal.addEventListener('abort', abort, { once: true });
+  try {
+    signal.throwIfAborted();
+    await initialize(peer, true);
+    if (!(await supportsMcpElicitation(peer)))
+      throw new Error('Codex does not report native approvals for MCP tools.');
+    const configured = await codexServerDefinitions(peer, directory);
+    const definition = object(configured[server]);
+    if (!definition || !grantEndpoint(definition))
+      throw new Error('Select a configured HTTPS MCP server.');
+    return { definition, tools: await codexGrantInventory(peer, server) };
+  } finally {
+    signal.removeEventListener('abort', abort);
+    await peer.closeIdle();
+  }
+}
+
 async function configuredCodexServers(
   peer: RpcPeer,
   cwd: string,
@@ -1610,6 +1677,15 @@ type CodexRunOptions = {
   controlTools?: readonly SessionControlToolDefinition[];
   outputSchema?: Record<string, unknown>;
   mcpTurn?: VerifyMcpTurn;
+  readonlyMcpGrant?: {
+    candidate: (server: string, tool: string) => boolean;
+    allow: (
+      server: string,
+      tool: string,
+      input: RecordValue,
+      observation: NativeMcpObservation,
+    ) => boolean;
+  };
   instructionsOnly?: boolean;
   isolatedContext?: boolean;
   summaryInstructions?: string;
@@ -1642,6 +1718,7 @@ export function startCodex(options: CodexRunOptions): {
     { rpcId: RpcId; threadId: string; turnId: string; mcp?: boolean }
   >();
   let approvedMcpServers: RecordValue | null = null;
+  let grantDefinitions: RecordValue | null = null;
   const seenRequests = new Set<string>();
   const seenCalls = new Set<string>();
   const delegationController = new AbortController();
@@ -2001,20 +2078,73 @@ export function startCodex(options: CodexRunOptions): {
           );
         }
         approvals.set(id, { rpcId, threadId, turnId, mcp: true });
-        emit({
-          type: 'approval',
-          approval: {
-            id,
-            kind: 'tool',
-            title: `Use MCP tool ${server} / ${name}`,
-            detail,
-            directory: options.directory,
-          },
-          subject: {
-            tool: `mcp__${server}__${name}`,
-            input: object(meta?.tool_params) ?? {},
-          },
-        });
+        const toolInput = object(meta?.tool_params) ?? {};
+        const requestApproval = () =>
+          emit({
+            type: 'approval',
+            approval: {
+              id,
+              kind: 'tool',
+              title: `Use MCP tool ${server} / ${name}`,
+              detail,
+              directory: options.directory,
+            },
+            subject: {
+              tool: `mcp__${server}__${name}`,
+              input: toolInput,
+            },
+          });
+        const definition = object(grantDefinitions?.[server]);
+        const grant = options.readonlyMcpGrant;
+        if (
+          options.mode === 'read-only' &&
+          grant &&
+          definition &&
+          grantEndpoint(definition) &&
+          grant.candidate(server, name)
+        ) {
+          const liveThread = threadId;
+          const liveTurn = turnId;
+          void codexGrantInventory(peer, server, liveThread)
+            .then(
+              tools => {
+                if (
+                  stopped ||
+                  failure ||
+                  threadId !== liveThread ||
+                  turnId !== liveTurn ||
+                  !approvals.has(id)
+                )
+                  return;
+                let accepted = false;
+                try {
+                  accepted = grant.allow(server, name, toolInput, {
+                    definition,
+                    tools,
+                  });
+                } catch {
+                  accepted = false;
+                }
+                if (!accepted) return requestApproval();
+                approvals.delete(id);
+                peer?.send({
+                  id: rpcId,
+                  result: { action: 'accept', content: {} },
+                });
+              },
+              () => {
+                if (
+                  !stopped &&
+                  !failure &&
+                  threadId === liveThread &&
+                  turnId === liveTurn &&
+                  approvals.has(id)
+                )
+                  requestApproval();
+              },
+            )
+            .catch(() => undefined);
+        } else requestApproval();
         return;
       }
       const command =
@@ -2397,6 +2527,7 @@ export function startCodex(options: CodexRunOptions): {
           ]),
         ),
       };
+      if (mcpOnlyApprovals) grantDefinitions = structuredClone(expected);
       if (mcpOnlyApprovals) {
         for (const [name, config] of Object.entries(activeServers(expected))) {
           const definition = object(config)!;

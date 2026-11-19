@@ -56,6 +56,7 @@ function sameRenderedMessage(previous: Message, next: Message) {
       previous.state === next.state &&
       previous.completedAt === next.completedAt &&
       previous.costWarning === next.costWarning &&
+      previous.usageWarning === next.usageWarning &&
       previous.skillId === next.skillId &&
       previous.skillHash === next.skillHash &&
       attachmentsKey(previous) === attachmentsKey(next) &&
@@ -236,6 +237,9 @@ export const MessageArticle = memo(function MessageArticle({
               </InlineNotice>
             )}
             {activity && <SessionActivity {...activity} />}
+            {message.usageWarning && (
+              <InlineNotice tone="warning">{message.usageWarning}</InlineNotice>
+            )}
             {message.author === 'operator' && !!stripAttachments.length && (
               <MessageAttachments attachments={stripAttachments} />
             )}

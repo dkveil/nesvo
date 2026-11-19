@@ -178,6 +178,8 @@ import {
   trustRepositoryMcpSchema,
   repositoryTrustSettingsInputSchema,
   worktreeProviderInputSchema,
+  providerUsageGateInputSchema,
+  readonlyIntegrationInputSchema,
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -1378,6 +1380,28 @@ void app.whenReady().then(async () => {
       route(hostId),
     );
   });
+  handle(
+    'nesvo:provider-usage-gates',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'provider-usage-gates',
+        providerUsageGateInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:readonly-integration-grants',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'readonly-integration-grants',
+        readonlyIntegrationInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle(
     'nesvo:custom-worktree-providers',
     (event, input: unknown, hostId: unknown) => {

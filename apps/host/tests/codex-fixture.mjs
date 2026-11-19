@@ -597,6 +597,35 @@ if (args.length === 1 && args[0] === '--version') {
       emit({ id, error: { code: -32601, message: 'Not supported' } });
     } else if (
       method === 'mcpServerStatus/list' &&
+      process.env.NESVO_FIXTURE_MCP_GRANT_SCHEMA
+    ) {
+      assert.equal(params.serverName, 'search');
+      assert.equal(params.detail, 'toolsAndAuthOnly');
+      if (params.threadId) assert.equal(params.threadId, thread?.id);
+      response(id, {
+        data: [
+          {
+            name: 'search',
+            runtimeStatus: 'connected',
+            serverCapabilities: { tools: {} },
+            tools: {
+              lookup: {
+                name: 'lookup',
+                inputSchema: JSON.parse(
+                  readFileSync(
+                    process.env.NESVO_FIXTURE_MCP_GRANT_SCHEMA,
+                    'utf8',
+                  ),
+                ),
+                annotations: { readOnlyHint: true },
+              },
+            },
+          },
+        ],
+        nextCursor: null,
+      });
+    } else if (
+      method === 'mcpServerStatus/list' &&
       process.env.NESVO_TEST_MCP_AUTH
     ) {
       assert.equal(params.detail, 'toolsAndAuthOnly');

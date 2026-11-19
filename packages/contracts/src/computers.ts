@@ -88,6 +88,8 @@ export const hostCapabilitySchema = z.enum([
   'configuration',
   'repository-trust-rules',
   'custom-worktree-providers',
+  'provider-usage-gates',
+  'readonly-integration-grants',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

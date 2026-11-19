@@ -23,6 +23,7 @@ export class ProviderUsageService {
   read(
     { provider, profileId }: ProviderUsageInput,
     environment?: Readonly<Record<string, string>>,
+    refresh = false,
   ): Promise<ProviderUsage> {
     const key = `${provider}:${profileId ?? ''}`;
     const { signal } = this.controller;
@@ -30,7 +31,7 @@ export class ProviderUsageService {
     const active = this.pending.get(key);
     if (active) return active;
     const previous = this.cached.get(key);
-    if (previous && Date.now() < previous.expiresAt)
+    if (!refresh && previous && Date.now() < previous.expiresAt)
       return Promise.resolve(previous.value);
     const operation = (
       provider === 'Codex'
