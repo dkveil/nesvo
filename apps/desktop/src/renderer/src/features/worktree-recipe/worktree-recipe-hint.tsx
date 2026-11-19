@@ -9,6 +9,7 @@ type WorktreeRecipeHintProps = {
   api: Pick<DesktopApi, 'matchWorktreeRecipe'>;
   directory: string;
   enabled: boolean;
+  boundWorktree: boolean;
 };
 
 type MatchState = { directory: string; match: WorktreeRecipeMatch | null };
@@ -24,6 +25,7 @@ export function WorktreeRecipeHint({
   api,
   directory,
   enabled,
+  boundWorktree,
 }: WorktreeRecipeHintProps) {
   const [state, setState] = useState<MatchState | null>(null);
   const folder = directory.trim();
@@ -47,6 +49,13 @@ export function WorktreeRecipeHint({
   }, [api, enabled, folder]);
   const match = enabled && state?.directory === folder ? state.match : null;
   if (!match) return null;
+  if (boundWorktree)
+    return match.recipe || match.repositoryScript ? (
+      <StatusMessage tone="info" variant="notice" aria-label="Worktree recipe">
+        This checkout skips the existing worktree recipe and repository setup
+        command.
+      </StatusMessage>
+    ) : null;
   const files = repositoryFiles(match);
   const { recipe } = match;
   if (!recipe)

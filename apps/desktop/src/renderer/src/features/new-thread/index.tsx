@@ -923,6 +923,9 @@ export function NewThread({
               <WorktreeRecipeHint
                 api={hostApi}
                 directory={setup.directory}
+                boundWorktree={
+                  !!attached || worktreePreview?.provider?.kind === 'external'
+                }
                 enabled={
                   worktreeAvailable &&
                   useWorktree &&
