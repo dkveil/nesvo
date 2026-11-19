@@ -376,7 +376,11 @@ export function SurfacesSection() {
           <SettingsSection title="Appearance">
             <SettingsRow title="Color scheme" description="System" />
           </SettingsSection>
-          <SettingsSection title="Devices">
+          <SettingsSection
+            title="Devices"
+            actionLayout="stacked"
+            action={<Button size="xs">Add device</Button>}
+          >
             <SettingsRow title="Release runner" />
             <SettingsRow title="Build server" />
           </SettingsSection>

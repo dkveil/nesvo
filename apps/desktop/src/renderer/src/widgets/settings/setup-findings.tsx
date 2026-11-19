@@ -94,6 +94,7 @@ export function SetupFindings({
       <div className="min-w-0 flex-1 space-y-3">
         <SettingsSection
           title="Detected setup"
+          actionLayout={assistant || panel ? 'stacked' : 'inline'}
           action={
             <div className="flex flex-wrap gap-1.5">
               {computer?.capabilities.includes('setup-diagnostics-v1') && (

@@ -166,6 +166,19 @@ async function setupShot(app, page, name, ready) {
       size,
     );
     await ready?.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('[data-slot="side-panel"]')].every(
+        panel => {
+          const bounds = panel.getBoundingClientRect();
+          if (!bounds.width || !panel.parentElement) return true;
+          const container = panel.parentElement.getBoundingClientRect();
+          return (
+            bounds.left >= container.left - 2 &&
+            bounds.right <= container.right + 2
+          );
+        },
+      ),
+    );
     const capture = () =>
       app.evaluate(async ({ BrowserWindow }) =>
         (await BrowserWindow.getAllWindows()[0].webContents.capturePage())

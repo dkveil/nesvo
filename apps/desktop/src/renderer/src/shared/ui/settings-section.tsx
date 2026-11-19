@@ -6,6 +6,7 @@ type SectionProps = {
   title: string;
   children: ReactNode;
   action?: ReactNode;
+  actionLayout?: 'inline' | 'stacked';
   description?: ReactNode;
   className?: string;
 };
@@ -14,12 +15,22 @@ export function SettingsSection({
   title,
   children,
   action,
+  actionLayout = 'inline',
   description,
   className,
 }: SectionProps) {
   return (
     <section aria-label={title} className="space-y-2">
-      <SectionLabel as="h2" emphasis action={action} className="px-3">
+      <SectionLabel
+        as="h2"
+        emphasis
+        action={action}
+        className={cn(
+          'px-3',
+          actionLayout === 'stacked' &&
+            'h-auto flex-col items-start gap-1.5 [&>div]:max-w-full',
+        )}
+      >
         {title}
       </SectionLabel>
       {description && (
