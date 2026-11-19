@@ -351,6 +351,12 @@ export function Conversation({
     : '';
   const waitingTitles = waitingChildren.map(child => child.title).join(', ');
   const stopLabel = groupRun ? 'Stop group' : 'Stop';
+  const stopText =
+    session.status === 'stopping'
+      ? groupRun
+        ? 'Stopping group…'
+        : 'Stopping…'
+      : stopLabel;
   const threadStarts = new Set(session.providerThreadStarts);
   const compactedAt = new Set(
     session.compactions.map(compaction => compaction.index),
@@ -688,9 +694,10 @@ export function Conversation({
                 type="button"
                 disabled={!connected || session.status === 'stopping'}
                 onClick={onStop}
+                aria-label={stopLabel}
               >
                 <Square className="fill-current" />
-                {session.status === 'stopping' ? 'Stopping…' : 'Stop'}
+                {stopText}
               </Button>
             </div>
           ) : (
@@ -933,11 +940,7 @@ export function Conversation({
                             aria-label={stopLabel}
                           >
                             <Square className="fill-current" />
-                            {session.status === 'stopping'
-                              ? groupRun
-                                ? 'Stopping group…'
-                                : 'Stopping…'
-                              : stopLabel}
+                            {stopText}
                           </Button>
                         </Hint>
                       )

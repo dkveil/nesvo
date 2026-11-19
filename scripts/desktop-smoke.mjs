@@ -3657,6 +3657,16 @@ async function smokeDesktop() {
   const orchestrator = await sessionByTitle('Prototype orchestration');
   assert.equal(orchestrator.delegationEnabled, true);
   assert.equal(orchestrator.mode, 'read-only');
+  const coordinatorWake = await page.evaluate(
+    sessionId => window.nesvo.readCoordinatorWake({ sessionId }),
+    orchestrator.id,
+  );
+  await page.evaluate(input => window.nesvo.setCoordinatorWake(input), {
+    sessionId: orchestrator.id,
+    enabled: false,
+    actionId: randomUUID(),
+    expectedRevision: coordinatorWake.revision,
+  });
   await message('Codex fixture initial reply.').waitFor();
   await waitState(orchestrator.id, 'completed');
   const proposal = title =>
@@ -3823,7 +3833,21 @@ async function smokeDesktop() {
   await screenshot('-subsessions');
   await page.keyboard.press('Escape');
   await sessionCard.waitFor({ state: 'hidden' });
-  await runningChildA.click();
+  await showAgents('2 workers running').click();
+  const agentsPanel = page.getByRole('dialog', { name: 'Agents' });
+  await agentsPanel
+    .getByRole('button', { name: /^Open Fixture worker A, Working/ })
+    .waitFor();
+  await agentsPanel
+    .getByRole('button', { name: 'Stop Fixture worker B', exact: true })
+    .waitFor();
+  await screenshot('-agents');
+  await page.keyboard.press('Escape');
+  await agentsPanel.waitFor({ state: 'detached' });
+  await showAgents('2 workers running').click();
+  await agentsPanel
+    .getByRole('button', { name: /^Open Fixture worker A, Working/ })
+    .click();
   await page
     .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
     .waitFor();

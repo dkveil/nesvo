@@ -134,6 +134,21 @@ try {
   await mkdir(cwd, { recursive: true });
   await mkdir(env.CODEX_HOME, { recursive: true });
   await mkdir(env.CLAUDE_CONFIG_DIR, { recursive: true });
+  const inboxRules = join(directory, 'inbox-rules');
+  await mkdir(inboxRules);
+  await writeFile(
+    join(inboxRules, 'child-review.md'),
+    [
+      '---',
+      'name: child-review',
+      'trigger: result-to-review',
+      'action: route',
+      'route: both',
+      'kinds: [child]',
+      '---',
+      '',
+    ].join('\n'),
+  );
   if (screenshots) await mkdir(screenshots, { recursive: true });
   await open();
   const initialPolicy = await waitFor(
@@ -167,7 +182,11 @@ try {
   );
   await capture('ordinary');
 
-  await api('saveSessionControlPolicy', { ...initialPolicy, enabled: true });
+  await api('saveSessionControlPolicy', {
+    ...initialPolicy,
+    enabled: true,
+    childModes: ['read-only', 'supervised'],
+  });
   const start = await send(
     coordinator.id,
     'fixture:nesvo ' +
@@ -178,7 +197,8 @@ try {
             title: 'Draft review',
             provider: 'Codex',
             model: 'fixture-codex',
-            prompt: 'fixture:steer-native',
+            prompt: 'fixture:steer-write',
+            mode: 'supervised',
           },
         },
       ]),
@@ -224,6 +244,11 @@ try {
         .length === 1 && value.status === 'completed',
   );
   assert.equal(woken.providerSessionId, delegated.providerSessionId);
+  assert.deepEqual(
+    woken.turnChildren.find(turn => turn.runId === start.runId).childRuns,
+    [{ sessionId: child.id, runId: child.runId }],
+  );
+  await childCard.getByText('Needs a decision', { exact: true }).waitFor();
   await capture('nesvo-wake');
   await page
     .getByRole('button', { name: 'Inspect Draft review', exact: true })
@@ -246,6 +271,74 @@ try {
       .evaluate(element => element === document.activeElement),
   );
 
+  const firstReview = (await api('listReviews')).find(
+    item => item.sessionId === child.id && item.runId === child.runId,
+  );
+  assert.equal(firstReview.diff.status, 'complete');
+  assert.ok(firstReview.diff.files.some(file => file.path === 'notes.md'));
+  assert.equal(firstReview.route, 'both');
+  await page
+    .getByRole('region', { name: 'Decisions from child sessions' })
+    .getByText('Draft review', { exact: true })
+    .waitFor();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+  const inboxResult = page.getByRole('article', {
+    name: 'Review result: Draft review, version 1',
+    exact: true,
+  });
+  await inboxResult
+    .getByRole('button', { name: 'Request changes', exact: true })
+    .click();
+  await inboxResult
+    .getByRole('textbox', { name: 'Feedback', exact: true })
+    .fill('Use the shorter wording in the summary.');
+  await inboxResult
+    .getByRole('button', { name: 'Send feedback', exact: true })
+    .click();
+  await inboxResult.waitFor({ state: 'hidden' });
+  await waitFor(
+    'child correction',
+    () => session(child.id),
+    value => value.runId !== child.runId && value.status === 'completed',
+  );
+  assert.equal(
+    (await api('listReviews')).find(item => item.id === firstReview.id).decision
+      ?.decision,
+    'request-changes',
+  );
+  await waitFor(
+    'pending correction update',
+    () => api('readCoordinatorWake', { sessionId: coordinator.id }),
+    value => value.pending > 0,
+  );
+  const hold = await send(coordinator.id, 'fixture:hold');
+  await choose(coordinator.title);
+  await page
+    .getByRole('region', { name: 'Decisions from child sessions' })
+    .getByRole('article', {
+      name: 'Review result: Draft review, version 1',
+      exact: true,
+    })
+    .waitFor({ state: 'hidden' });
+  await page
+    .getByRole('button', { name: 'Inspect Draft review', exact: true })
+    .first()
+    .click();
+  await drawer
+    .getByRole('button', { name: 'Saved result v1', exact: true })
+    .click();
+  const savedDiff = page.getByRole('region', {
+    name: 'Saved result diff',
+    exact: true,
+  });
+  await savedDiff
+    .getByRole('button', { name: 'View changes in notes.md', exact: true })
+    .waitFor();
+  await savedDiff
+    .getByRole('button', { name: 'Close diff', exact: true })
+    .click();
+  await choose(coordinator.title);
+
   await page.reload();
   await page.getByRole('article', { name: 'Nesvo', exact: true }).waitFor();
   assert.equal(
@@ -253,14 +346,6 @@ try {
       message => message.origin === 'coordinator-wake',
     ).length,
     1,
-  );
-  const hold = await send(coordinator.id, 'fixture:hold');
-  const second = await send(child.id, 'Check the final wording.');
-  await settle(child.id, second.runId);
-  await waitFor(
-    'pending updates before restart',
-    () => api('readCoordinatorWake', { sessionId: coordinator.id }),
-    value => value.pending > 0,
   );
   await application.close();
   application = null;
