@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import {
   setupGroups,
   type Computer,
   type SetupFinding,
+  type SetupChoice,
   type SetupScan,
 } from '@nesvo/contracts';
 import { Button } from '@/shared/ui/button';
@@ -16,6 +17,8 @@ import {
   SidePanelHeader,
 } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { Switch } from '@/shared/ui/switch';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { useSetupDetection } from './use-setup-detection';
 import { SetupAssistant } from './setup-assistant';
 import type { ProviderStates } from '@/entities/session';
@@ -50,6 +53,27 @@ export function SetupFindings({
   const [showAll, setShowAll] = useState(false);
   const [panel, setPanel] = useState<string | 'changed' | null>(null);
   const [assistant, setAssistant] = useState(false);
+  const [draft, setDraft] = useState<Record<string, SetupChoice>>({});
+  const canChoose =
+    onboarding && computer?.capabilities.includes('setup-choices-v1');
+  const choices =
+    scan?.findings
+      .filter(item => item.action === 'review')
+      .map(item => {
+        const local = draft[item.id];
+        const saved = scan.choices?.find(choice => choice.id === item.id);
+        return {
+          id: item.id,
+          revision: item.revision,
+          choice:
+            local?.revision === item.revision
+              ? local.choice
+              : (saved?.choice ?? 'skip'),
+        } satisfies SetupChoice;
+      }) ?? [];
+  const diagnosticTitle = useId();
+  const diagnostics =
+    panel === 'diagnostics' ? detection.diagnostics : undefined;
   const panelRows =
     scan?.findings.filter(row =>
       panel === 'changed' ? scan.changes.includes(row.id) : row.id === panel,
@@ -72,6 +96,20 @@ export function SetupFindings({
           title="Detected setup"
           action={
             <div className="flex flex-wrap gap-1.5">
+              {computer?.capabilities.includes('setup-diagnostics-v1') && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!detection.online || detection.busy}
+                  onClick={() => {
+                    setAssistant(false);
+                    setPanel('diagnostics');
+                    void detection.previewDiagnostics();
+                  }}
+                >
+                  Verify tools
+                </Button>
+              )}
               {computer?.capabilities.includes('setup-assistant-v1') && (
                 <Button
                   size="sm"
@@ -171,7 +209,42 @@ export function SetupFindings({
                         title={item.label}
                         description={`${item.source} · ${item.description}`}
                       >
-                        {item.action === 'review' ? (
+                        {item.action === 'review' && canChoose ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">
+                              {choices.find(choice => choice.id === item.id)
+                                ?.choice === 'use'
+                                ? 'Use'
+                                : 'Skip'}
+                            </span>
+                            <Switch
+                              aria-label={`Use ${item.label}`}
+                              checked={choices.some(
+                                choice =>
+                                  choice.id === item.id &&
+                                  choice.choice === 'use',
+                              )}
+                              disabled={!detection.online || detection.busy}
+                              onCheckedChange={checked =>
+                                setDraft(previous => ({
+                                  ...previous,
+                                  [item.id]: {
+                                    id: item.id,
+                                    revision: item.revision,
+                                    choice: checked ? 'use' : 'skip',
+                                  },
+                                }))
+                              }
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setPanel(item.id)}
+                            >
+                              Review
+                            </Button>
+                          </div>
+                        ) : item.action === 'review' ? (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -197,6 +270,24 @@ export function SetupFindings({
                   </Disclosure>
                 );
               })}
+              {!!choices.length && canChoose && (
+                <SettingsRow
+                  title="Setup choices"
+                  description="Selected definitions stay withheld until separately verified on this computer."
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!detection.online || detection.busy}
+                    onClick={() => {
+                      setAssistant(false);
+                      setPanel('choices');
+                    }}
+                  >
+                    Review choices
+                  </Button>
+                </SettingsRow>
+              )}
               {scan.reviewedRevision === null && (
                 <SettingsRow title="Review this scan">
                   <Button
@@ -233,11 +324,69 @@ export function SetupFindings({
         >
           <SidePanelHeader
             titleBar={false}
-            title={panel === 'changed' ? 'Setup changed' : 'Setup finding'}
+            title={
+              panel === 'diagnostics'
+                ? 'Verify tools'
+                : panel === 'changed'
+                  ? 'Setup changed'
+                  : panel === 'choices'
+                    ? 'Review setup choices'
+                    : 'Setup finding'
+            }
             closeLabel="Close setup review"
             onClose={() => setPanel(null)}
           />
           <PanelBody className="space-y-2 p-3">
+            {panel === 'choices' &&
+              choices.map(choice => (
+                <SettingsRow
+                  key={choice.id}
+                  title={
+                    scan.findings.find(item => item.id === choice.id)?.label ??
+                    choice.id
+                  }
+                  description={
+                    choice.choice === 'use'
+                      ? 'Use · Awaiting local verification'
+                      : 'Skip · Withheld'
+                  }
+                />
+              ))}
+            {panel === 'diagnostics' && (
+              <>
+                <p
+                  id={diagnosticTitle}
+                  className="text-xs text-muted-foreground"
+                >
+                  Review the installed programs and exact read-only version
+                  commands.
+                </p>
+                {detection.busy && !diagnostics && (
+                  <StatusMessage tone="loading">
+                    Checking installed tools…
+                  </StatusMessage>
+                )}
+                {diagnostics?.tools.length === 0 && (
+                  <StatusMessage>
+                    No eligible executable was found.
+                  </StatusMessage>
+                )}
+                {diagnostics?.tools.map(tool => (
+                  <SettingsRow
+                    key={tool.label}
+                    title={tool.label}
+                    description={
+                      <>
+                        <MiddleTruncatedText path value={tool.executable} />
+                        <p>
+                          {tool.argument} · {tool.digest.slice(0, 12)}
+                        </p>
+                      </>
+                    }
+                  />
+                ))}
+              </>
+            )}
             {panelRows.map(row => (
               <SettingsRow
                 key={row.id}
@@ -253,6 +402,40 @@ export function SetupFindings({
               />
             ))}
           </PanelBody>
+          {panel === 'choices' && (
+            <SidePanelFooter label="Setup choice actions">
+              <Button
+                size="sm"
+                disabled={
+                  !detection.online || detection.busy || !choices.length
+                }
+                onClick={async () => {
+                  const applied = await detection.applyChoices(choices);
+                  if (!applied) return;
+                  setDraft({});
+                  setPanel(null);
+                  onCompleteScan?.(applied);
+                }}
+              >
+                Apply choices
+              </Button>
+            </SidePanelFooter>
+          )}
+          {diagnostics && diagnostics.tools.length > 0 && (
+            <SidePanelFooter label="Tool verification actions">
+              <Button
+                size="sm"
+                aria-describedby={diagnosticTitle}
+                disabled={detection.busy || !detection.online}
+                onClick={() => {
+                  void detection.verifyDiagnostics(diagnostics.digest);
+                  setPanel(null);
+                }}
+              >
+                Run version checks
+              </Button>
+            </SidePanelFooter>
+          )}
           {panel === 'changed' && (
             <SidePanelFooter label="Setup review actions">
               <Button
@@ -292,13 +475,26 @@ export function NewSessionSetupFinding({
   const withheld = scan.findings.filter(
     item => item.readiness === 'withheld',
   ).length;
+  const templates = scan.findings.filter(item =>
+    item.id.startsWith('profile/branches/'),
+  );
   return (
     <SettingsRow
       title="Repository setup"
       description={
-        withheld
-          ? `${withheld} setup ${withheld === 1 ? 'item needs' : 'items need'} review on this computer.`
-          : 'Local checkout metadata found.'
+        <>
+          <p>
+            {withheld
+              ? `${withheld} setup ${withheld === 1 ? 'item needs' : 'items need'} review on this computer.`
+              : 'Local checkout metadata found.'}
+          </p>
+          {templates.length > 0 && (
+            <p>
+              Profile branch templates ·{' '}
+              {templates.map(item => item.description).join(', ')}
+            </p>
+          )}
+        </>
       }
     >
       <Button size="sm" variant="ghost" onClick={onReview}>

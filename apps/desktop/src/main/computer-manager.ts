@@ -354,6 +354,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to edit profile layers.',
   'setup-detection-v1':
     'Update this computer’s Nesvo host and reconnect to detect setup.',
+  'setup-diagnostics-v1':
+    'Update this computer’s Nesvo host and reconnect to verify installed tools.',
+  'setup-choices-v1':
+    'Update this computer’s Nesvo host and reconnect to record setup choices.',
   'setup-assistant-v1':
     'Update this computer’s Nesvo host and reconnect to use its setup assistant.',
 };
@@ -393,7 +397,16 @@ function requiredCapability(
       ? 'setup-profile-values-v1'
       : 'setup-profile-v1';
   }
-  if (method === 'setup-detection') return 'setup-detection-v1';
+  if (method === 'setup-detection') {
+    const action =
+      input && typeof input === 'object' && 'action' in input
+        ? input.action
+        : null;
+    if (action === 'diagnostic-preview' || action === 'verify-diagnostics')
+      return 'setup-diagnostics-v1';
+    if (action === 'apply-choices') return 'setup-choices-v1';
+    return 'setup-detection-v1';
+  }
   if (method === 'setup-assistant') return 'setup-assistant-v1';
   if (
     method === 'read-config-target' ||

@@ -56,7 +56,11 @@ export * from './setup-profile';
 export * from './setup-detection';
 export * from './setup-assistant';
 import { setupAssistantInputSchema } from './setup-assistant';
-import { setupDetectionInputSchema, setupScanSchema } from './setup-detection';
+import {
+  setupDetectionInputSchema,
+  setupDiagnosticsBatchSchema,
+  setupScanSchema,
+} from './setup-detection';
 import {
   setupProfileInputSchema,
   setupProfileFragmentSchema,
@@ -1760,7 +1764,11 @@ export type SetupProfileResult = z.output<typeof setupProfileResultSchema>;
 
 export const setupDetectionResultSchema = z.union([
   configurationErrorSchema,
-  z.strictObject({ ok: z.literal(true), scan: setupScanSchema }),
+  z.strictObject({
+    ok: z.literal(true),
+    scan: setupScanSchema,
+    diagnostics: setupDiagnosticsBatchSchema.optional(),
+  }),
 ]);
 export type SetupDetectionResult = z.output<typeof setupDetectionResultSchema>;
 export const setupAssistantResultSchema = z.union([

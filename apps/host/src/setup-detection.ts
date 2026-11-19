@@ -13,6 +13,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { parse as parseToml } from 'smol-toml';
 import {
   setupScanSchema,
+  type SetupChoice,
   type SetupDetectionInput,
   type SetupFinding,
   type SetupScan,
@@ -25,6 +26,7 @@ import {
 } from './workflows/configuration-changes';
 import type { SetupProfileService } from './setup-profile-service';
 import { setupRuntimeRequirement } from './setup-runtime-requirements';
+import { SetupToolDiagnostics } from './setup-tool-diagnostics';
 
 type Observation = Omit<SetupFinding, 'revision' | 'verifiedAt'> & {
   identity?: string;
@@ -133,6 +135,7 @@ async function binary(name: 'claude' | 'codex', signal: AbortSignal) {
 async function providers(
   directory: string,
   signal: AbortSignal,
+  diagnostics: SetupToolDiagnostics,
 ): Promise<Observation[]> {
   return (
     await Promise.all(
@@ -153,16 +156,25 @@ async function providers(
           binary(provider, signal),
           Promise.all(paths.map(path => metadata(path, signal))),
         ]);
+        const verified = executable && diagnostics.result(provider, executable);
         const findings: Observation[] = [
           {
             id: 'provider/' + provider,
             group: 'Providers',
             label,
-            description: executable
-              ? 'Executable found. Version, account and capabilities have not been verified in this scan.'
-              : 'No executable was found in the inspected paths.',
+            description: verified?.version
+              ? `CLI version ${verified.version} verified. Account and capabilities were not checked.`
+              : verified
+                ? 'Executable found. The approved version check could not verify its version.'
+                : executable
+                  ? 'Executable found. Version, account and capabilities have not been verified in this scan.'
+                  : 'No executable was found in the inspected paths.',
             source: 'Detected',
-            evidence: executable ? 'filesystem' : 'unavailable',
+            evidence: verified?.version
+              ? 'cached'
+              : executable
+                ? 'filesystem'
+                : 'unavailable',
             readiness: executable ? 'partial' : 'unavailable',
             classification: 'observation',
             identity: executable ? digest(executable) : undefined,
@@ -218,6 +230,7 @@ async function repoMetadata(
 
 const profileGroups: Record<string, SetupFinding['group']> = {
   worktrees: 'Worktrees and branches',
+  branches: 'Worktrees and branches',
   recipes: 'Recipes',
   repositoryTrust: 'Repositories and trust',
   integrations: 'Agent configuration',
@@ -230,6 +243,7 @@ const profileGroups: Record<string, SetupFinding['group']> = {
 export class SetupDetection {
   private readonly inFlight = new Map<string, Promise<SetupScan>>();
   private readonly cache = new Map<string, SetupScan>();
+  private readonly diagnostics: SetupToolDiagnostics;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -241,7 +255,31 @@ export class SetupDetection {
       usage: LimitsEvidence;
     },
     private readonly lifetime: AbortSignal,
-  ) {}
+  ) {
+    this.diagnostics = new SetupToolDiagnostics(directory, lifetime, binary);
+  }
+
+  async diagnosticRequest(
+    input: Extract<
+      SetupDetectionInput,
+      {
+        action: 'diagnostic-preview' | 'verify-diagnostics';
+      }
+    >,
+  ) {
+    if (input.instanceId !== this.instanceId)
+      throw new ConfigurationRefusal(
+        'conflict',
+        'The computer changed. Review its tools again.',
+      );
+    if (input.action === 'diagnostic-preview')
+      return {
+        scan: this.cache.get('') ?? (await this.scan({ trigger: 'manual' })),
+        diagnostics: await this.diagnostics.preview(),
+      };
+    await this.diagnostics.verify(input.digest);
+    return { scan: await this.scan({ trigger: 'manual' }) };
+  }
 
   scan(input: SetupScanRequest): Promise<SetupScan> {
     const scope =
@@ -318,6 +356,66 @@ export class SetupDetection {
     return acknowledged;
   }
 
+  async applyChoices(
+    input: Extract<SetupDetectionInput, { action: 'apply-choices' }>,
+  ) {
+    const report = this.cache.get('');
+    if (
+      !report ||
+      input.instanceId !== this.instanceId ||
+      input.revision !== report.revision
+    )
+      throw new ConfigurationRefusal(
+        'conflict',
+        'Refresh Your setup before applying choices.',
+      );
+    const live = await this.collect('manual', '', report.revision);
+    const selectable = new Map(
+      live.findings
+        .filter(item => item.action === 'review')
+        .map(item => [item.id, item]),
+    );
+    const chosen = new Set(input.choices.map(item => item.id));
+    if (
+      this.cache.get('') !== report ||
+      chosen.size !== input.choices.length ||
+      input.choices.some(
+        item => selectable.get(item.id)?.revision !== item.revision,
+      )
+    )
+      throw new ConfigurationRefusal(
+        'conflict',
+        'A selected finding changed. Review the current choices.',
+      );
+    const remembered = new Map(
+      this.choices(live.findings).map(item => [item.id, item]),
+    );
+    for (const choice of input.choices) remembered.set(choice.id, choice);
+    const choices = [...remembered.values()];
+    this.database
+      .prepare(
+        "INSERT INTO metadata (key, value) VALUES ('setup_choices', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      )
+      .run(JSON.stringify(choices));
+    const selected = { ...report, choices };
+    this.cache.set('', selected);
+    return selected;
+  }
+
+  private choices(findings: SetupFinding[]): SetupChoice[] {
+    const row = this.database
+      .prepare("SELECT value FROM metadata WHERE key = 'setup_choices'")
+      .get();
+    const known: SetupChoice[] =
+      typeof row?.value === 'string' ? JSON.parse(row.value) : [];
+    const live = new Map(
+      findings
+        .filter(item => item.action === 'review')
+        .map(item => [item.id, item.revision]),
+    );
+    return known.filter(choice => live.get(choice.id) === choice.revision);
+  }
+
   private nextRevision() {
     return Number(
       this.database
@@ -377,7 +475,11 @@ export class SetupDetection {
       });
     const scopeRoot = await repoMetadata(scope, signal).catch(() => null);
     if (trigger !== 'first-open') {
-      const scanned = await providers(this.directory, signal).catch(() => []);
+      const scanned = await providers(
+        this.directory,
+        signal,
+        this.diagnostics,
+      ).catch(() => []);
       observations.push(...scanned);
       if (!scanned.length)
         observed(
@@ -491,20 +593,23 @@ export class SetupDetection {
       const group = profileGroups[declaration.key.split('/')[0] ?? ''];
       if (!group) continue;
       const masked = declaration.state === 'masked';
+      const ordinary = declaration.state === 'ordinary';
       observations.push({
         id: 'profile/' + declaration.key,
         group,
         label: declaration.label,
-        description: masked
-          ? 'Disabled by profile.'
-          : (setupRuntimeRequirement(declaration.key)?.description ??
-            'Declared in the profile. Runtime admission is withheld.'),
+        description: ordinary
+          ? (declaration.preview ?? 'Ordinary profile setting.')
+          : masked
+            ? 'Disabled by profile.'
+            : (setupRuntimeRequirement(declaration.key)?.description ??
+              'Declared in the profile. Runtime admission is withheld.'),
         source: 'Profile',
         evidence: 'projection',
-        readiness: 'withheld',
-        classification: 'execution',
+        readiness: ordinary ? 'observed' : 'withheld',
+        classification: ordinary ? 'ordinary' : 'execution',
         identity: declaration.revision,
-        action: masked ? undefined : 'review',
+        action: masked || ordinary ? undefined : 'review',
       });
     }
     if (this.lifetime.aborted)
@@ -556,6 +661,9 @@ export class SetupDetection {
       completed: baseline?.completed ?? false,
       reviewedRevision: baseline?.revision ?? null,
       findings,
+      ...(monitor || trigger === 'first-open'
+        ? {}
+        : { choices: this.choices(findings) }),
       changes: findings
         .filter(
           item => baseline && baseline.findings[item.id] !== item.revision,

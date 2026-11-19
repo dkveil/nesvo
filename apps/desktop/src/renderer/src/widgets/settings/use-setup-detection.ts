@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type {
   Computer,
   SetupDetectionInput,
+  SetupChoice,
+  SetupDiagnosticsBatch,
   SetupScan,
   SetupScanRequest,
 } from '@nesvo/contracts';
@@ -21,6 +23,7 @@ export function useSetupDetection(
   const [reported, setReported] = useState<{
     scope: string;
     scan: SetupScan;
+    diagnostics?: SetupDiagnosticsBatch;
   }>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -87,7 +90,12 @@ export function useSetupDetection(
       if (id !== sequence.value) return;
       if (!result.ok) throw new Error(result.message);
       if (!instanceId || result.scan.instanceId === instanceId)
-        setReported({ scope, scan: result.scan });
+        setReported({
+          scope,
+          scan: result.scan,
+          diagnostics: result.diagnostics,
+        });
+      return result.scan;
     } catch (issue) {
       if (id === sequence.value) setError(errorDetail(issue));
     } finally {
@@ -101,11 +109,25 @@ export function useSetupDetection(
       : undefined;
   return {
     scan,
+    diagnostics:
+      reported?.scope === scope && online ? reported.diagnostics : undefined,
     busy,
     error,
     supported,
     online,
     refresh: () => send({ action: 'scan', trigger: 'manual', directory }),
+    previewDiagnostics: () =>
+      instanceId && send({ action: 'diagnostic-preview', instanceId }),
+    verifyDiagnostics: (digest: string) =>
+      instanceId && send({ action: 'verify-diagnostics', instanceId, digest }),
+    applyChoices: (choices: SetupChoice[]) =>
+      scan &&
+      send({
+        action: 'apply-choices',
+        instanceId: scan.instanceId,
+        revision: scan.revision,
+        choices,
+      }),
     acknowledge: () =>
       scan &&
       send({

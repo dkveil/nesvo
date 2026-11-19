@@ -2198,13 +2198,24 @@ export const serveHost = ({
         }
         if (request.method === 'setup-detection') {
           const { id, input } = request;
-          const operation = async (): Promise<SetupDetectionResult> => ({
-            ok: true,
-            scan:
-              input.action === 'scan'
-                ? await setupDetection.scan(input)
-                : await setupDetection.acknowledge(input),
-          });
+          const operation = async (): Promise<SetupDetectionResult> => {
+            if (input.action === 'scan')
+              return { ok: true, scan: await setupDetection.scan(input) };
+            if (input.action === 'acknowledge')
+              return {
+                ok: true,
+                scan: await setupDetection.acknowledge(input),
+              };
+            if (input.action === 'apply-choices')
+              return {
+                ok: true,
+                scan: await setupDetection.applyChoices(input),
+              };
+            return {
+              ok: true,
+              ...(await setupDetection.diagnosticRequest(input)),
+            };
+          };
           const pending = operation()
             .catch(configurationFailure)
             .then(result => send({ type: 'setup-detection', id, result }))

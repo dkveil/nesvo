@@ -496,7 +496,12 @@ export function SetupProfileSettings({
             </Field>
             {error && <StatusMessage tone="error">{error}</StatusMessage>}
             <DialogFooter>
-              <DialogCancel disabled={busy}>Cancel</DialogCancel>
+              <DialogCancel
+                disabled={busy}
+                onClick={() => setFragment(undefined)}
+              >
+                Cancel
+              </DialogCancel>
               <Button
                 disabled={
                   busy || !fragmentText.trim() || fragmentText === fragment.text
@@ -582,7 +587,9 @@ export function SetupProfileSettings({
             )}
             {error && <StatusMessage tone="error">{error}</StatusMessage>}
             <DialogFooter>
-              <DialogCancel disabled={busy}>Cancel</DialogCancel>
+              <DialogCancel disabled={busy} onClick={() => setEditing(false)}>
+                Cancel
+              </DialogCancel>
               <Button
                 disabled={
                   busy || route === review.routing.effective || !destination
@@ -642,7 +649,9 @@ export function SetupProfileSettings({
             </Field>
             {error && <StatusMessage tone="error">{error}</StatusMessage>}
             <DialogFooter>
-              <DialogCancel disabled={busy}>Cancel</DialogCancel>
+              <DialogCancel disabled={busy} onClick={() => setSaving(false)}>
+                Cancel
+              </DialogCancel>
               <Button
                 disabled={busy || !review.instanceId || !destinationFile.trim()}
                 onClick={() => {

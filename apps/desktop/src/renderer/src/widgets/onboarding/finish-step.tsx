@@ -82,8 +82,16 @@ export function FinishStep({
             icon: Bot,
             label: 'Setup awaiting local review',
             value: String(
-              setup.findings.filter(item => item.readiness === 'withheld')
-                .length,
+              setup.choices?.filter(item => item.choice === 'use').length ??
+                setup.findings.filter(item => item.readiness === 'withheld')
+                  .length,
+            ),
+          },
+          {
+            icon: Workflow,
+            label: 'Setup skipped',
+            value: String(
+              setup.choices?.filter(item => item.choice === 'skip').length ?? 0,
             ),
           },
         ]
@@ -96,7 +104,7 @@ export function FinishStep({
           id="onboarding-title"
           className="text-display font-semibold tracking-tight"
         >
-          You’re ready to start
+          This is how Nesvo will work
         </h1>
       </header>
       <dl className="mx-auto max-w-lg divide-y text-left">
