@@ -24,10 +24,13 @@ import { chromium, _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
 import { smokeGateRuleFlow } from './gate-rule-flow-smoke.mjs';
 import { smokeManagerImport } from './manager-import-smoke.mjs';
+import { smokePortableCheck } from './portable-check-smoke.mjs';
 import { EXPIRED_SHARE_ID, startShareServer } from './share-server-fixture.mjs';
 
-await smokeManagerImport();
-await import('./d87-desktop-smoke.mjs');
+if (process.env.NESVO_D83_DEMO_ONLY !== '1') {
+  await smokeManagerImport();
+  await import('./d87-desktop-smoke.mjs');
+}
 
 const directory = await realpath(
   await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
@@ -116,6 +119,7 @@ const launchArgs = [resolve('apps/desktop')];
 const configurationScreenshots = process.env.NESVO_D85_SCREENSHOTS;
 const inboxOutcomeScreenshots = process.env.NESVO_INBOX_OUTCOME_SCREENSHOT_DIR;
 const d88Screenshots = process.env.NESVO_D88_SCREENSHOTS;
+const d83CdpPort = process.env.NESVO_D83_CDP_PORT;
 if (configurationScreenshots)
   launchArgs.push(
     '--remote-debugging-port=9250',
@@ -124,6 +128,11 @@ if (configurationScreenshots)
 else if (d88Screenshots)
   launchArgs.push(
     '--remote-debugging-port=9249',
+    '--force-device-scale-factor=1',
+  );
+else if (d83CdpPort)
+  launchArgs.push(
+    '--remote-debugging-port=' + d83CdpPort,
     '--force-device-scale-factor=1',
   );
 else if (inboxOutcomeScreenshots)
@@ -1044,6 +1053,24 @@ async function smokeDesktop() {
     await smokeGateRuleFlow({ application, page, directory });
     await smokeConfigurationInbox(application, page);
     await smokeConfigurationProfile(application, page);
+    return;
+  }
+  if (process.env.NESVO_D83_DEMO_ONLY === '1') {
+    application = await launchApplication();
+    const page = await application.firstWindow();
+    page.setDefaultTimeout(20000);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await smokePortableCheck({
+      application,
+      page,
+      directory,
+      home: env.NESVO_WORKFLOWS_HOME,
+      shots: process.env.NESVO_D83_SCREENSHOTS,
+      kotlin: process.env.NESVO_D83_KOTLIN_PROJECT,
+      demo: true,
+      shotSize:
+        process.env.NESVO_D83_REVIEW_HIRES === '1' ? [1920, 1080] : undefined,
+    });
     return;
   }
   const policyDirectory = join(directory, 'policy-data');
@@ -2235,6 +2262,7 @@ async function smokeDesktop() {
     'scheduled-jobs',
     'reasoning-effort',
     'workflows',
+    'portable-checks',
     'git-branch',
     'session-worktrees',
     'session-worktree-tools',
@@ -6728,6 +6756,15 @@ async function smokeDesktop() {
     page: changePage,
     directory,
     shots: process.env.NESVO_GATE_RULE_SCREENSHOT_DIR,
+  });
+  await changePage
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await smokePortableCheck({
+    application,
+    page: changePage,
+    directory,
+    home: env.NESVO_WORKFLOWS_HOME,
   });
   await smokeConfigurationInbox(application, changePage);
   await smokeConfigurationProfile(application, changePage);
