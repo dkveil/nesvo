@@ -247,33 +247,20 @@ export function ManageComputers({
             <section
               key={computer.id}
               aria-label={`Computer: ${computer.name}`}
-              className="space-y-1.5 px-3 py-3"
+              className="space-y-2 px-3 py-3"
             >
-              <div className="flex items-start gap-2">
+              <div className="flex min-h-7 items-center gap-2">
                 {computer.kind === 'local' ? (
-                  <Monitor className="mt-0.5 size-4 text-muted-foreground" />
+                  <Monitor className="size-4 shrink-0 text-muted-foreground" />
                 ) : (
-                  <Server className="mt-0.5 size-4 text-muted-foreground" />
+                  <Server className="size-4 shrink-0 text-muted-foreground" />
                 )}
-                <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-ui font-medium">
                     {computer.name}
                   </p>
-                  <StatusMessage
-                    className="text-xs"
-                    tone={statusTones[computer.status]}
-                  >
-                    {statusLabels[computer.status]}
-                    {computer.kind === 'local' ? ' · This computer' : ''}
-                  </StatusMessage>
-                  {computer.ssh && (
-                    <p className="truncate text-xs text-muted-foreground">
-                      {computer.ssh.username ? `${computer.ssh.username}@` : ''}
-                      {computer.ssh.hostname}:{computer.ssh.port}
-                    </p>
-                  )}
                 </div>
-                <div className="flex shrink-0 gap-1">
+                <div className="flex shrink-0 items-center gap-2">
                   {computer.status === 'connected' &&
                   computer.kind === 'ssh' ? (
                     <Button
@@ -329,6 +316,22 @@ export function ManageComputers({
                     </Button>
                   )}
                 </div>
+              </div>
+              <div className="space-y-1 pl-6">
+                {' '}
+                <StatusMessage
+                  className="text-xs"
+                  tone={statusTones[computer.status]}
+                >
+                  {statusLabels[computer.status]}
+                  {computer.kind === 'local' ? ' · This computer' : ''}
+                </StatusMessage>
+                {computer.ssh && (
+                  <p className="truncate text-xs text-muted-foreground">
+                    {computer.ssh.username ? `${computer.ssh.username}@` : ''}
+                    {computer.ssh.hostname}:{computer.ssh.port}
+                  </p>
+                )}
               </div>
               {computer.status === 'connected' && (
                 <Disclosure
