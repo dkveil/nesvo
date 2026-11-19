@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { PermissionRules } from '@/features/session-mode/permission-rules';
 import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
+import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { Switch } from '@/shared/ui/switch';
 import { StatusMessage } from '@/shared/ui/status-message';
 
@@ -35,7 +36,7 @@ export function PermissionSettings({
   if (!ready)
     return (
       <StatusMessage tone="info">
-        Permissions are unavailable on this computer.
+        Connect a computer that supports Claude permissions.
       </StatusMessage>
     );
   if (!data)
@@ -45,22 +46,25 @@ export function PermissionSettings({
       </StatusMessage>
     );
   return (
-    <div className="space-y-5">
-      <div className="space-y-1">
-        <label className="flex items-center justify-between gap-2 text-sm font-medium">
-          Allow Full access mode
+    <>
+      <SettingsSection title="Full access">
+        <SettingsRow
+          title="Allow Full access mode"
+          description="Confirm each session. Turning this off stops active Full access turns and revokes confirmations."
+        >
           <Switch
+            aria-label="Allow Full access mode"
             checked={data.fullAccessEnabled}
             disabled={saving}
             onCheckedChange={enabled => void enable(enabled)}
           />
-        </label>
-        <p className="text-xs text-muted-foreground">
-          Each session still requires confirmation. Turning this off stops
-          active Full access turns and revokes their confirmations.
-        </p>
-        {failure && <StatusMessage tone="error">{failure}</StatusMessage>}
-      </div>
+        </SettingsRow>
+        {failure && (
+          <div className="px-3 py-2">
+            <StatusMessage tone="error">{failure}</StatusMessage>
+          </div>
+        )}
+      </SettingsSection>
       <PermissionRules
         rules={data.rules}
         onRemove={async id => {
@@ -68,6 +72,6 @@ export function PermissionSettings({
           onChange();
         }}
       />
-    </div>
+    </>
   );
 }
