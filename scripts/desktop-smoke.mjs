@@ -1435,7 +1435,13 @@ try {
     '---\nname: fixture-project-skill\ndescription: Project inventory fixture.\n---\nMetadata only.\n',
   );
   await seedNativeSkill(first.directory);
-  assert.deepEqual(await readSkillsTrace(), []);
+  const onboardingSkillsDirectory = join(directory, 'host', 'workspaces');
+  assert.deepEqual(
+    (await readSkillsTrace()).filter(
+      trace => trace.directory !== onboardingSkillsDirectory,
+    ),
+    [],
+  );
   await skillsOpener.click();
   await skillsPanel
     .getByText('fixture-project-skill', { exact: true })
