@@ -374,7 +374,7 @@ Repeated successful test substitutions can propose a Project command mapping. A 
 
 ### Decision memory
 
-Decision memory starts off. Enable **Remember workflow decisions** in Settings ? Workflows to propose precedents on this computer. A workflow can independently set `decision_memory: review` to propose its own precedents or `decision_memory: automatic` to save them after each operator decision. Review proposals use Accept, Edit and Dismiss in the Inbox. Undo keeps its hash check.
+Decision memory starts off. Enable **Remember workflow decisions** under **Workflows** in Settings to propose precedents on this computer. A workflow can independently set `decision_memory: review` to propose its own precedents or `decision_memory: automatic` to save them after each operator decision. Review proposals use Accept, Edit and Dismiss in the Inbox. Undo keeps its hash check.
 
 An accepted precedent lives in `decisions/` under the workflow's Project or Global root. It records the chosen outcome, bounded owner comment, gate context, source run and evidence identities. Open **Lessons & decisions** in the workflow editor to filter applicable entries by step and see usage and source links. The host delivers accepted precedents to verifiers and to policy recommendations as quoted historical data.
 
