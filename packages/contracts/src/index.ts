@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  repositoryTrustSettingsInputSchema,
+  repositoryTrustSettingsSchema,
+  type RepositoryTrustSettingsInput,
+  type RepositoryTrustSettings,
+} from './repository-trust';
+import {
   chooseDirectoryResultSchema,
   onboardingOpenSchema,
   reviewWorkingRulesSchema,
@@ -607,6 +613,7 @@ export * from './mcp';
 export * from './mcp-selection';
 export * from './computers';
 export * from './provider-usage';
+export * from './repository-trust';
 export * from './provider-profiles';
 export * from './costs';
 export * from './mobile';
@@ -1199,6 +1206,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('claude-autonomy'),
     input: claudeAutonomyInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('repository-trust-settings'),
+    input: repositoryTrustSettingsInputSchema,
   }),
   z.strictObject({
     id: z.string().min(1).max(200),
@@ -1960,6 +1972,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     autonomy: claudeAutonomySchema,
   }),
   z.strictObject({
+    type: z.literal('repository-trust-settings'),
+    id: z.uuid(),
+    settings: repositoryTrustSettingsSchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2401,6 +2418,10 @@ export type DesktopApi = {
     input: TrustRepositoryMcpInput,
     hostId?: HostId,
   ) => Promise<McpServerList>;
+  repositoryTrustSettings: (
+    input: RepositoryTrustSettingsInput,
+    hostId?: HostId,
+  ) => Promise<RepositoryTrustSettings>;
   listMcpServers: (
     input: ListMcpServersInput,
     hostId?: HostId,

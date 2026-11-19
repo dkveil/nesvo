@@ -86,6 +86,7 @@ export const hostCapabilitySchema = z.enum([
   'group-cost-budgets',
   'manager-import',
   'configuration',
+  'repository-trust-rules',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

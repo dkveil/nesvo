@@ -22,6 +22,8 @@
 !apps/host/src/*.ts
 !apps/host/src/mcp/
 !apps/host/src/mcp/**
+!apps/host/src/repositories/
+!apps/host/src/repositories/**
 !apps/host/src/providers/
 !apps/host/src/providers/**
 !apps/host/src/session-control/

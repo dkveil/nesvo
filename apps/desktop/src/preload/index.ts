@@ -197,6 +197,8 @@ import {
   mcpProfileTargetSchema,
   mcpConnectionListSchema,
   trustRepositoryMcpSchema,
+  repositoryTrustSettingsInputSchema,
+  repositoryTrustSettingsSchema,
   mcpServerListSchema,
   setSessionMcpSchema,
   skillCatalogSchema,
@@ -1604,6 +1606,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:claude-autonomy',
         claudeAutonomyInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
+      ),
+    ),
+  repositoryTrustSettings: async (input, hostId) =>
+    repositoryTrustSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:repository-trust-settings',
+        repositoryTrustSettingsInputSchema.parse(input),
         hostIdSchema.optional().parse(hostId),
       ),
     ),

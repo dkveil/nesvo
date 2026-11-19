@@ -31,6 +31,236 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
+test('D88 repository identity verifies worktree registration and unambiguous remotes', async t => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d88-identity-')),
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  const worktree = join(root, 'linked worktree');
+  const git = (...args) =>
+    promisify(execFile)('git', args, {
+      cwd: project,
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: join(root, 'gitconfig'),
+      },
+    });
+  await mkdir(project);
+  await git('init', '-q', '-b', 'main');
+  await git(
+    '-c',
+    'user.email=fixture@example.test',
+    '-c',
+    'user.name=Fixture',
+    'commit',
+    '--allow-empty',
+    '-qm',
+    'Base',
+  );
+  await git('worktree', 'add', '-qb', 'linked', worktree);
+  const output = join(root, 'repository-identity.mjs');
+  await promisify(execFile)('bun', [
+    'build',
+    'apps/host/src/repositories/identity.ts',
+    '--target=node',
+    '--outfile=' + output,
+  ]);
+  const { inspectRepositoryIdentity, matchesRepositoryPattern } = await import(
+    pathToFileURL(output).href
+  );
+  const signal = new AbortController().signal;
+  const local = await inspectRepositoryIdentity(project, signal);
+  assert.equal(local.status, 'local');
+  await git('remote', 'add', 'origin', 'git@Example.TEST:team/repository.git');
+  await git(
+    'remote',
+    'add',
+    'mirror',
+    'https://fixture-user:secret@example.test/team/repository',
+  );
+  const initial = await inspectRepositoryIdentity(project, signal);
+  const linked = await inspectRepositoryIdentity(worktree, signal);
+  assert.equal(initial.status, 'remote');
+  assert.equal(initial.remote, 'example.test/team/repository');
+  assert.equal(initial.gitDirectory, linked.gitDirectory);
+  assert.equal(initial.remote, linked.remote);
+  assert.ok(linked.checkouts.includes(worktree));
+  assert.equal(
+    matchesRepositoryPattern('example.test/team/*', initial.remote),
+    true,
+  );
+  assert.equal(
+    matchesRepositoryPattern('notexample.test/team/*', initial.remote),
+    false,
+  );
+  assert.equal(
+    matchesRepositoryPattern('example.test/tea/*', initial.remote),
+    false,
+  );
+  assert.equal(
+    matchesRepositoryPattern('example.test/*', initial.remote),
+    false,
+  );
+  await git(
+    'remote',
+    'set-url',
+    'mirror',
+    'ssh://git@example.test:2222/team/repository.git',
+  );
+  assert.equal(
+    (await inspectRepositoryIdentity(worktree, signal)).status,
+    'ambiguous',
+  );
+});
+
+test(
+  'D88 repository approvals retain unchanged entries and revoke inherited worktree access',
+  { timeout: 45_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-d88-trust-')),
+    );
+    const project = join(root, 'project');
+    const worktree = join(root, 'worktree');
+    const providerConfig = join(root, 'config');
+    let host;
+    t.after(async () => {
+      if (host?.child.exitCode === null) await host.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(project);
+    await mkdir(providerConfig);
+    const git = (...args) =>
+      promisify(execFile)('git', args, {
+        cwd: project,
+        env: {
+          ...process.env,
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: join(root, 'gitconfig'),
+        },
+      });
+    const endpoint = 'https://endpoint.example.test/mcp';
+    const configurations = {
+      stable: { type: 'http', url: endpoint },
+      changed: { type: 'http', url: endpoint },
+    };
+    await writeFile(
+      join(project, '.mcp.json'),
+      JSON.stringify({ mcpServers: configurations }),
+    );
+    await git('init', '-q', '-b', 'main');
+    await git(
+      'remote',
+      'add',
+      'origin',
+      'git@example.test:team/repository.git',
+    );
+    await git('add', '.mcp.json');
+    await git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '-qm',
+      'Base',
+    );
+    await git('worktree', 'add', '-qb', 'linked', worktree);
+    const start = () =>
+      launch(root, join(root, 'fixture-pid'), {
+        CLAUDE_CONFIG_DIR: providerConfig,
+      });
+    host = start();
+    const review = async sessionId => {
+      const { list } = await host.request('list-mcp-servers', { sessionId });
+      return list.repository;
+    };
+    const create = async directory => {
+      const reply = await host.request('create-session', {
+        title: 'Trust fixture',
+        directory,
+        model: 'sonnet',
+        mode: 'read-only',
+      });
+      assert.equal(reply.type, 'session', JSON.stringify(reply));
+      return reply.session.id;
+    };
+    const sessionId = await create(project);
+    const otherId = await create(worktree);
+    const first = await review(sessionId);
+    assert.equal(first.status, 'needs-trust');
+    const approval = {
+      sessionId,
+      fingerprint: first.fingerprint,
+      decision: {
+        action: 'approve',
+        actionId: randomUUID(),
+        pattern: 'example.test/team/*',
+      },
+    };
+    const trusted = await host.request('trust-repository-mcp', approval);
+    assert.equal(trusted.type, 'mcp-servers', JSON.stringify(trusted));
+    assert.equal(trusted.list.repository.status, 'trusted');
+    assert.equal((await review(otherId)).status, 'trusted');
+    await writeFile(
+      join(worktree, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          ...configurations,
+          changed: { type: 'http', url: endpoint + '/changed' },
+        },
+      }),
+    );
+    const changed = await review(otherId);
+    assert.equal(changed.status, 'needs-trust');
+    assert.equal(
+      changed.definitions.find(entry => entry.name === 'stable').approval,
+      'approved',
+    );
+    assert.equal(
+      changed.definitions.find(entry => entry.name === 'changed').approval,
+      'withheld',
+    );
+    const { settings } = await host.request('repository-trust-settings', {
+      action: 'read',
+    });
+    const revoke = {
+      action: 'revoke',
+      actionId: randomUUID(),
+      ruleId: settings.rules[0].id,
+    };
+    assert.equal(
+      (await host.request('repository-trust-settings', revoke)).settings.history
+        .length,
+      2,
+    );
+    assert.equal(
+      (await host.request('repository-trust-settings', revoke)).settings.history
+        .length,
+      2,
+    );
+    assert.equal(
+      (
+        await host.request('repository-trust-settings', {
+          ...revoke,
+          ruleId: randomUUID(),
+        })
+      ).type,
+      'error',
+    );
+    await host.stop();
+    host = start();
+    assert.equal((await review(sessionId)).status, 'needs-trust');
+    assert.equal(
+      (await host.request('repository-trust-settings', { action: 'read' }))
+        .settings.history.length,
+      2,
+    );
+  },
+);
+
 test(
   'manager import reads WAL-only rows and adopts a verified native thread once',
   { timeout: 60000 },
@@ -3411,6 +3641,7 @@ test(
         'group-cost-budgets',
         'manager-import',
         'configuration',
+        'repository-trust-rules',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -4432,7 +4663,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      35,
+      36,
     );
     migrated.close();
     const reopened = open();
@@ -6826,7 +7057,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 36');
+    database.exec('PRAGMA user_version = 37');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -6843,7 +7074,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 36);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 37);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -9043,6 +9274,7 @@ test(
       'group-cost-budgets',
       'manager-import',
       'configuration',
+      'repository-trust-rules',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -9916,7 +10148,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            35,
+            36,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -10003,7 +10235,7 @@ test(
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 36');
+      newer.exec('PRAGMA user_version = 37');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -10015,7 +10247,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          36,
+          37,
         );
       } finally {
         check.close();
@@ -13056,7 +13288,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        35,
+        36,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -13107,7 +13339,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        35,
+        36,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -22672,7 +22904,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      35,
+      36,
     );
     database
       .prepare(
@@ -23035,7 +23267,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 35);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 36);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -23050,7 +23282,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        35,
+        36,
       );
       assert.deepEqual(
         migrated
@@ -23230,7 +23462,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 35);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 36);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -31014,7 +31246,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-8), [
+  assert.deepEqual(capabilities.slice(-9), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -31023,6 +31255,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'group-cost-budgets',
     'manager-import',
     'configuration',
+    'repository-trust-rules',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

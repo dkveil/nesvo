@@ -6,6 +6,10 @@ import {
   mcpServerKeySchema,
 } from './mcp-selection';
 import { providerSchema } from './sessions';
+import {
+  repositoryIdentitySchema,
+  repositoryTrustReviewInputSchema,
+} from './repository-trust';
 
 export const mcpTransportSchema = z.enum(['stdio', 'http', 'sse']);
 export const mcpReviewBytes = 512 * 1024;
@@ -48,6 +52,7 @@ const mcpRepositoryDefinitionSchema = z.strictObject({
   detail: z.string().max(mcpLimits.summary),
   launches: z.array(mcpRepositoryLaunchSchema).max(8192).optional(),
   change: z.enum(['added', 'changed', 'removed']).nullable(),
+  approval: z.enum(['approved', 'withheld', 'advisory']).optional(),
 });
 
 const mcpRepositorySchema = z.strictObject({
@@ -56,6 +61,11 @@ const mcpRepositorySchema = z.strictObject({
   fingerprint: mcpFingerprintSchema,
   definitions: z.array(mcpRepositoryDefinitionSchema).max(2 * mcpLimits.listed),
   changed: z.boolean(),
+  identity: repositoryIdentitySchema.optional(),
+  identityRule: z
+    .enum(['eligible', 'ambiguous', 'withheld', 'none', 'unverified'])
+    .optional(),
+  safeLoading: z.enum(['isolated', 'mcp-snapshot']).optional(),
   rawReview: z
     .strictObject({
       token: mcpFingerprintSchema,
@@ -72,11 +82,31 @@ const mcpRepositorySchema = z.strictObject({
     .optional(),
 });
 
-export const trustRepositoryMcpSchema = z.strictObject({
+const sessionMcpTarget = z.strictObject({
   sessionId: z.uuid(),
+});
+
+const draftMcpTarget = z.strictObject({
+  provider: providerSchema,
+  profileId: z.uuid().nullable().optional(),
+  directory: z.string().trim().max(4096),
+});
+
+const trustReview = {
   fingerprint: mcpFingerprintSchema,
   rawReviewToken: mcpFingerprintSchema.optional(),
-});
+};
+
+export const trustRepositoryMcpSchema = z.union([
+  sessionMcpTarget.extend({
+    ...trustReview,
+    decision: repositoryTrustReviewInputSchema.optional(),
+  }),
+  draftMcpTarget.extend({
+    ...trustReview,
+    decision: repositoryTrustReviewInputSchema,
+  }),
+]);
 
 export type McpRepositoryDefinition = z.infer<
   typeof mcpRepositoryDefinitionSchema
@@ -94,15 +124,8 @@ export const mcpServerListSchema = z.strictObject({
 });
 
 export const listMcpServersSchema = z.union([
-  z.strictObject({
-    sessionId: z.uuid(),
-    rawFor: mcpFingerprintSchema.optional(),
-  }),
-  z.strictObject({
-    provider: providerSchema,
-    profileId: z.uuid().nullable().optional(),
-    directory: z.string().trim().max(4096),
-  }),
+  sessionMcpTarget.extend({ rawFor: mcpFingerprintSchema.optional() }),
+  draftMcpTarget.extend({ rawFor: mcpFingerprintSchema.optional() }),
 ]);
 
 export type McpTransport = z.infer<typeof mcpTransportSchema>;

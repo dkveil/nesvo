@@ -171,6 +171,7 @@ import {
 } from '@/features/inbox-rules';
 import { StageRecord, useStageDecisions } from '@/widgets/session-stages';
 import { PermissionSettings } from '@/widgets/settings/permission-settings';
+import { RepositoryTrustSettings } from '@/widgets/settings/repository-trust-settings';
 import { FullAccessDialog } from '@/features/session-mode/full-access-dialog';
 import { PermissionRules } from '@/features/session-mode/permission-rules';
 import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
@@ -270,7 +271,12 @@ import {
 import { McpChip } from '@/features/session-mcp/mcp-chip';
 import { useMcpConnections } from '@/features/session-mcp/use-mcp-connections';
 import { McpSettings } from '@/widgets/settings/mcp-settings';
-import { McpRepositoryNotice } from '@/features/session-mcp/mcp-repository-notice';
+import {
+  McpRepositoryNotice,
+  RepositoryDecision,
+} from '@/features/session-mcp/mcp-repository-notice';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { PanelBody } from '@/shared/ui/panel';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
 import {
   AuthoritySettingsContext,
@@ -1280,6 +1286,10 @@ export function Workspace({
       : null,
     connection === 'ready' && supportsMcp(selectedHostId),
   );
+  const [repositoryReviewKey, setRepositoryReviewKey] = useState<string | null>(
+    null,
+  );
+  const reviewRepository = mcpConfiguration.list?.repository;
   const mcpConnections = useMcpConnections(
     selectedHostId,
     selected ? { sessionId: selected.id } : undefined,
@@ -5338,7 +5348,10 @@ ${text}`
                 mcpNotice={
                   supportsMcpTrust &&
                   !isolatedMcp && (
-                    <McpRepositoryNotice configuration={mcpConfiguration} />
+                    <McpRepositoryNotice
+                      configuration={mcpConfiguration}
+                      onReview={() => setRepositoryReviewKey(selectedKey)}
+                    />
                   )
                 }
                 mcpChip={
@@ -5375,6 +5388,32 @@ ${text}`
               />
             </section>
           )}
+          {selectedKey &&
+            selectedKey === repositoryReviewKey &&
+            !creating &&
+            reviewRepository &&
+            mcpConfiguration.showDecision && (
+              <SidePanel
+                kind="details"
+                resizeLabel="Resize repository review"
+                focusOnOpen
+                onEscape={() => setRepositoryReviewKey(null)}
+              >
+                <SidePanelHeader
+                  title="Review repository"
+                  closeLabel="Close repository review"
+                  onClose={() => setRepositoryReviewKey(null)}
+                />
+                <PanelBody className="overflow-y-auto p-3">
+                  <RepositoryDecision
+                    key={mcpConfiguration.decisionKey}
+                    configuration={mcpConfiguration}
+                    repository={reviewRepository}
+                    onClose={() => setRepositoryReviewKey(null)}
+                  />
+                </PanelBody>
+              </SidePanel>
+            )}
         </main>
       </div>
       {automationView === 'detail' && automationJob && !editor && (
@@ -5990,6 +6029,16 @@ ${text}`
                         .execute({ action: 'read' })
                         .catch(() => undefined);
                   }}
+                />
+                <RepositoryTrustSettings
+                  key={settingsHostId}
+                  hostId={settingsHostId}
+                  ready={
+                    store.hostReady(settingsHostId) &&
+                    !!settingsComputer?.capabilities.includes(
+                      'repository-trust-rules',
+                    )
+                  }
                 />
               </div>
             ) : page === 'notifications' ? (

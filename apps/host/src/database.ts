@@ -17,7 +17,7 @@ import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 import { installConfigurationTables } from './workflows/assistant-change-store';
 
-const DATABASE_VERSION = 35;
+const DATABASE_VERSION = 36;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -435,6 +435,25 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         'CREATE TABLE IF NOT EXISTS mcp_repository_trust (provider TEXT NOT NULL, repository TEXT NOT NULL, fingerprint TEXT NOT NULL, definitions TEXT NOT NULL CHECK (json_valid(definitions)), trusted INTEGER NOT NULL CHECK (trusted IN (0, 1)), PRIMARY KEY (provider, repository))',
       );
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS repository_trust_rules (
+          id TEXT PRIMARY KEY,
+          scope_key TEXT NOT NULL UNIQUE,
+          document TEXT NOT NULL CHECK (json_valid(document))
+        );
+        CREATE TABLE IF NOT EXISTS repository_trust_approvals (
+          rule_id TEXT NOT NULL REFERENCES repository_trust_rules(id),
+          provider TEXT NOT NULL,
+          repository_key TEXT NOT NULL,
+          definitions TEXT NOT NULL CHECK (json_valid(definitions)),
+          PRIMARY KEY (rule_id, provider, repository_key)
+        );
+        CREATE TABLE IF NOT EXISTS repository_trust_actions (
+          id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          document TEXT NOT NULL CHECK (json_valid(document))
+        );
+      `);
       database.exec(`
         CREATE TABLE IF NOT EXISTS manager_import_provenance (
           source_key TEXT PRIMARY KEY,

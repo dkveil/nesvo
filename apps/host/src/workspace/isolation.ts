@@ -458,7 +458,7 @@ function parseWorktreeList(output: string): TaskWorktree[] {
     });
 }
 
-async function registeredWorktrees(
+export async function registeredWorktrees(
   projectDirectory: string,
   signal: AbortSignal,
   gitDirectory?: string,

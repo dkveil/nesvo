@@ -213,6 +213,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'restore-session',
   'set-session-mcp',
   'trust-repository-mcp',
+  'repository-trust-settings',
   'cancel-queued',
   'start-queued',
   'stop-run',
@@ -2447,9 +2448,12 @@ export const serveHost = ({
                 target.profileId,
                 request.method === 'trust-repository-mcp'
                   ? request.input
-                  : 'sessionId' in request.input && request.input.rawFor
+                  : request.input.rawFor
                     ? {
-                        sessionId: request.input.sessionId,
+                        sessionId:
+                          'sessionId' in request.input
+                            ? request.input.sessionId
+                            : null,
                         rawFor: request.input.rawFor,
                       }
                     : undefined,
@@ -3699,6 +3703,30 @@ export const serveHost = ({
               probes.pending.delete(pending);
             });
           probes.pending.add(pending);
+          continue;
+        }
+        if (request.method === 'repository-trust-settings') {
+          const response = yield* Effect.sync((): HostReply => {
+            try {
+              return {
+                type: 'repository-trust-settings',
+                id: request.id,
+                settings: mcpPolicy.repositoryTrust.settings(request.input),
+              };
+            } catch (error) {
+              return {
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Repository trust could not be updated.',
+              };
+            }
+          });
+          yield* Effect.tryPromise(() => send(response));
           continue;
         }
         if (

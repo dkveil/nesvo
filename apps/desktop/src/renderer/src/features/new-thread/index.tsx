@@ -7,6 +7,8 @@ import type {
   DefinitionIssue,
   DesktopApi,
   DesktopSession,
+  ListMcpServersInput,
+  McpServerList,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
@@ -54,6 +56,7 @@ import {
 import { WorkflowPicker } from './workflow-picker';
 import { resolveProviderEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
+import { RepositoryReviewDialog } from './repository-review-dialog';
 import {
   defaultProfileKey,
   readNewSessionDefaults,
@@ -133,6 +136,12 @@ export function NewThread({
   const [worktreeBranch, setWorktreeBranch] = useState('');
   const [planFirst, setPlanFirst] = useState(false);
   const [browser, setBrowser] = useState(false);
+  const [repositoryReview, setRepositoryReview] = useState<{
+    hostId: string;
+    target: Extract<ListMcpServersInput, { directory: string }>;
+    list: McpServerList;
+    start: () => Promise<void>;
+  }>();
   const piped = !!workflow?.workflowName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
@@ -329,24 +338,49 @@ export function NewThread({
       }
       const message = typed?.status === 'skill' ? typed.text : text.trim();
       const chosen = typed?.status === 'skill' ? typed.skill : skill;
-      await onStart(
-        {
-          title: deriveThreadTitle(message),
+      const start = () =>
+        onStart(
+          {
+            title: deriveThreadTitle(message),
+            provider: setup.provider,
+            ...(setup.profileId ? { profileId: setup.profileId } : {}),
+            model,
+            ...(effort ? { effort } : {}),
+            mode: setup.mode,
+            directory: setup.directory.trim(),
+            ...(useWorktree && isolation.success
+              ? { isolation: isolation.data }
+              : {}),
+            ...(usePlanFirst ? { planFirst: true } : {}),
+            ...(useBrowser ? { browser: true } : {}),
+          },
+          message,
+          chosen,
+        );
+      if (
+        gitRepository &&
+        computer?.capabilities.includes('repository-trust-rules')
+      ) {
+        const target = {
           provider: setup.provider,
-          ...(setup.profileId ? { profileId: setup.profileId } : {}),
-          model,
-          ...(effort ? { effort } : {}),
-          mode: setup.mode,
+          profileId: setup.profileId,
           directory: setup.directory.trim(),
-          ...(useWorktree && isolation.success
-            ? { isolation: isolation.data }
-            : {}),
-          ...(usePlanFirst ? { planFirst: true } : {}),
-          ...(useBrowser ? { browser: true } : {}),
-        },
-        message,
-        chosen,
-      );
+        };
+        const list = await window.nesvo.listMcpServers(target, setup.hostId);
+        if (!mounted.current || latestSetup.current !== submittedSetup) return;
+        const repository = list.repository;
+        if (
+          repository &&
+          repository.identity?.status !== 'unverified' &&
+          (repository.status === 'needs-trust' ||
+            repository.status === 'unavailable' ||
+            repository.changed)
+        ) {
+          setRepositoryReview({ hostId: setup.hostId, target, list, start });
+          return;
+        }
+      }
+      await start();
     } catch (failure) {
       setError(`Could not start the thread. ${errorDetail(failure)}`);
     } finally {
@@ -360,6 +394,20 @@ export function NewThread({
       data-host-id={setup.hostId}
       className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-5 pb-16 lg:px-6"
     >
+      {repositoryReview && (
+        <RepositoryReviewDialog
+          hostId={repositoryReview.hostId}
+          target={repositoryReview.target}
+          list={repositoryReview.list}
+          onOpenChange={open => {
+            if (!open) setRepositoryReview(undefined);
+          }}
+          onContinue={async () => {
+            await repositoryReview.start();
+            if (mounted.current) setRepositoryReview(undefined);
+          }}
+        />
+      )}
       <div className="w-full max-w-(--composer-max-width) space-y-5">
         {showSetup ? (
           <ProviderSetup

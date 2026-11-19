@@ -432,6 +432,14 @@ The notice preserves shell expansion and control syntax and labels affected entr
 
 Legacy selections remain readable in history. The legacy session MCP mutation returns an explicit error and session creation ignores its selection.
 
+### Repository trust rules
+
+D88 reads the owning computer's Git common directory, registered checkouts and fetch remote entries. Git configuration includes and competing remote identities make the checkout ineligible for pattern trust. SSH and HTTPS forms of the same hostname and path share a canonical address. Pattern wildcards match exactly one path segment. An exact decision applies to the verified common directory and the canonical remote observed when approving. A changed remote or revoked exact rule withholds authorization ahead of every pattern. Multiple matching pattern rules require an operator decision.
+
+SQLite records the rule, reviewed definition digests and operator action in one transaction. Retrying an action ID with a different request is refused. Approved pattern definitions can be used in another verified checkout of the same remote only while the selected rule and each digest still match. Local overlays include the checkout identity in their digests. The review reports drift before the next launch. The existing raw review token remains bound to the provider, session, checkout and observed fingerprint.
+
+The D88 Claude path can supply reviewed HTTP and SSE definitions to strict MCP configuration without using the native project settings source. This permits an unchanged approved server to remain available while another server is withheld. Native project settings, hooks and command-based servers remain isolated until their selective loading and executable identity can be verified. Settings › Permissions lists active rules and the owning host's decision history. Revocation removes the reviewed approval set from future admissions. A process that has already consumed a snapshot keeps that snapshot.
+
 ### Project settings, instructions and commands
 
 Claude Code uses the `project` and `local` setting sources for repository instructions, commands and settings. The host fingerprints the bytes of `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, the files under `.claude/rules/` and nested instruction files. It follows `@path` references relative to the file containing them and fingerprints each imported file. Import discovery also checks import-like text in examples. Imports outside the checkout or through symbolic links are refused. The review lists the repository-relative path and byte size of every reviewed instruction and marks additions, changes and removals. Instruction contents stay on the host.

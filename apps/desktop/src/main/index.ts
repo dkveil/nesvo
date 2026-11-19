@@ -176,6 +176,7 @@ import {
   mcpConnectionRequestSchema,
   mcpProfileTargetSchema,
   trustRepositoryMcpSchema,
+  repositoryTrustSettingsInputSchema,
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -1357,6 +1358,17 @@ void app.whenReady().then(async () => {
       route(hostId),
     );
   });
+  handle(
+    'nesvo:repository-trust-settings',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'repository-trust-settings',
+        repositoryTrustSettingsInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle('nesvo:read-default-session-folder', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute(

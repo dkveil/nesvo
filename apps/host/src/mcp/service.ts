@@ -4,6 +4,11 @@ import { SessionError } from '../sessions/session-error';
 import { basename } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  hasRepositoryMarker,
+  inspectRepositoryIdentity,
+} from '../repositories/identity';
+import { RepositoryTrustStore } from '../repositories/trust-store';
+import {
   MCP_SERVER_NAME_PATTERN,
   mcpLimits,
   mcpReviewBytes,
@@ -33,7 +38,7 @@ type TurnPolicy = {
   projectSettings: boolean;
 };
 export type VerifyMcpTurn = () => Promise<TurnPolicy>;
-export type RawMcpReviewInput = { sessionId: string; rawFor: string };
+export type RawMcpReviewInput = { sessionId: string | null; rawFor: string };
 
 export const interactiveMcpSession = (session: Session) =>
   !session.parentId &&
@@ -109,8 +114,10 @@ type StoredTrust = {
 
 export class McpPolicy {
   private readonly key: string;
+  readonly repositoryTrust: RepositoryTrustStore;
 
   constructor(private readonly database: DatabaseSync) {
+    this.repositoryTrust = new RepositoryTrustStore(database);
     database
       .prepare('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)')
       .run('mcp_trust_key', randomUUID());
@@ -153,6 +160,7 @@ export class McpPolicy {
     );
     const projectEntries = new Map<string, ReturnType<typeof describe>>();
     const definitions: Definition[] = [];
+    const effectiveServerIds = new Map<string, string>();
     let reviewBytes = 0;
     const addDefinition = (
       id: string,
@@ -182,7 +190,11 @@ export class McpPolicy {
           name: reviewText(name).slice(0, 300),
           detail: detail.slice(0, mcpLimits.summary),
           ...(launches ? { launches } : {}),
-          hash: this.fingerprint(config),
+          hash: this.fingerprint(
+            /(?:^|:)local(?:$|:|-)/.test(id) || id.endsWith('hooks-disabled')
+              ? [repository, config]
+              : config,
+          ),
         });
       } catch {
         projectIssues.push(
@@ -231,8 +243,10 @@ export class McpPolicy {
               'A repository MCP server definition is unsupported.',
             );
           projectServers[name] = config;
+          const definitionId = `${index}:${scope}:server:${name}`;
+          effectiveServerIds.set(name, definitionId);
           addDefinition(
-            `${index}:${scope}:server:${name}`,
+            definitionId,
             name || '?',
             `${scope === 'project' ? 'Project' : 'Local'} MCP server · ${entry.transport ?? 'Unknown transport'}`,
             config,
@@ -278,7 +292,7 @@ export class McpPolicy {
       projectIssues.push('The repository hook definitions are invalid.');
     }
     definitions.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const fingerprint = this.fingerprint([
+    const legacyFingerprint = this.fingerprint([
       repository,
       definitions.map(({ id, hash }) => [id, hash]),
     ]);
@@ -287,19 +301,85 @@ export class McpPolicy {
         'SELECT fingerprint, definitions, trusted FROM mcp_repository_trust WHERE provider = ? AND repository = ?',
       )
       .get(provider, repository) as StoredTrust | undefined;
-    const trusted =
+    const legacyTrusted =
       !projectIssues.length &&
       stored?.trusted === 1 &&
-      stored.fingerprint === fingerprint;
-    if (stored?.trusted === 1 && !trusted)
+      stored.fingerprint === legacyFingerprint;
+    if (stored?.trusted === 1 && !legacyTrusted)
       this.database
         .prepare(
           'UPDATE mcp_repository_trust SET trusted = 0 WHERE provider = ? AND repository = ?',
         )
         .run(provider, repository);
-    const previous = stored
-      ? (JSON.parse(stored.definitions) as Definition[])
-      : [];
+    const marker = await hasRepositoryMarker(folders.at(-1)!);
+    const identity = marker
+      ? await inspectRepositoryIdentity(
+          folders.at(-1)!,
+          signal ?? new AbortController().signal,
+        )
+      : { status: 'unverified' as const, root: folders.at(-1)! };
+    const identityPolicy = this.repositoryTrust.resolve(identity, provider);
+    const approved =
+      identityPolicy.state === 'eligible'
+        ? identityPolicy.definitions
+        : new Map<string, string>();
+    const managed = marker && identityPolicy.state !== 'none';
+    const trustedLegacySource = legacyTrusted && !managed;
+    const hasApproval = (definition: Definition) =>
+      approved.get(definition.id) === definition.hash;
+    const isAdvisory = (definition: Definition) =>
+      /:(?:skills|commands)$/.test(definition.id);
+    const trusted =
+      trustedLegacySource ||
+      (identityPolicy.state === 'eligible' &&
+        !projectIssues.length &&
+        definitions.every(
+          definition => isAdvisory(definition) || hasApproval(definition),
+        ));
+    const previous = managed
+      ? [...approved].map(([id, hash]) => ({
+          id,
+          hash,
+          name:
+            definitions.find(definition => definition.id === id)?.name ??
+            reviewText(id),
+          detail: 'Previously reviewed repository definition',
+        }))
+      : stored
+        ? (JSON.parse(stored.definitions) as Definition[])
+        : [];
+    const fingerprint = this.fingerprint([
+      legacyFingerprint,
+      identity.status,
+      'gitDirectory' in identity ? directoryKey(identity.gitDirectory) : null,
+      'remote' in identity ? identity.remote : null,
+    ]);
+    const eligibleServers: ConfigTable = Object.fromEntries(
+      claude && managed && !projectIssues.length
+        ? Object.entries(projectServers).filter(([name, definition]) => {
+            const digest = definitions.find(
+              item => item.id === effectiveServerIds.get(name),
+            );
+            if (
+              !digest ||
+              !hasApproval(digest) ||
+              !definition ||
+              typeof definition !== 'object'
+            )
+              return false;
+            const transport = (definition as ConfigTable).type;
+            return transport === 'http' || transport === 'sse';
+          })
+        : [],
+    );
+    if (identity.status === 'ambiguous' || identityPolicy.state === 'ambiguous')
+      issues.push(
+        'Resolve the competing repository remotes or trust patterns before approving definitions.',
+      );
+    if (managed)
+      issues.push(
+        'Native repository settings, hooks and command-based servers are held. This provider needs a verified isolated loading path for those definitions.',
+      );
     const list: McpServerList = {
       provider,
       configuration: 'native',
@@ -319,16 +399,49 @@ export class McpPolicy {
           0,
           4096,
         ),
-        status: projectIssues.length
-          ? 'unavailable'
-          : trusted
-            ? 'trusted'
-            : definitions.length
-              ? 'needs-trust'
-              : 'empty',
+        status:
+          projectIssues.length ||
+          identity.status === 'ambiguous' ||
+          (managed && identity.status === 'unverified')
+            ? 'unavailable'
+            : trusted
+              ? 'trusted'
+              : definitions.length
+                ? 'needs-trust'
+                : 'empty',
         fingerprint,
-        changed: !!stored && (!trusted || stored.fingerprint !== fingerprint),
-        definitions: definitionChanges(definitions, previous),
+        changed:
+          previous.length > 0 &&
+          (definitions.length !== previous.length ||
+            definitions.some(
+              definition =>
+                !previous.some(
+                  entry =>
+                    entry.id === definition.id &&
+                    entry.hash === definition.hash,
+                ),
+            )),
+        identity,
+        identityRule: identityPolicy.state,
+        safeLoading: Object.keys(eligibleServers).length
+          ? 'mcp-snapshot'
+          : 'isolated',
+        definitions: definitionChanges(definitions, previous).map(
+          definition => {
+            if (!managed || definition.change === 'removed') return definition;
+            const source = definitions.find(
+              entry => entry.id === definition.id,
+            )!;
+            return {
+              ...definition,
+              approval: isAdvisory(source)
+                ? 'advisory'
+                : hasApproval(source)
+                  ? 'approved'
+                  : 'withheld',
+            };
+          },
+        ),
       },
     };
     const servers = Object.fromEntries(
@@ -338,10 +451,10 @@ export class McpPolicy {
     );
     const policy: TurnPolicy = {
       servers,
-      projectServers: trusted ? projectServers : {},
-      projectHooks: trusted ? projectHooks : {},
-      projectDisablesHooks: trusted && projectDisablesHooks,
-      projectSettings: claude && trusted,
+      projectServers: trustedLegacySource ? projectServers : eligibleServers,
+      projectHooks: trustedLegacySource ? projectHooks : {},
+      projectDisablesHooks: trustedLegacySource && projectDisablesHooks,
+      projectSettings: claude && trustedLegacySource,
     };
     const userFingerprint = this.fingerprint([userServers, userHooks, issues]);
     return {
@@ -349,6 +462,9 @@ export class McpPolicy {
       repository,
       definitions,
       fingerprint,
+      legacyFingerprint,
+      managed,
+      identity,
       userFingerprint,
       policy,
       sources,
@@ -360,10 +476,10 @@ export class McpPolicy {
     directory: string,
     signal?: AbortSignal,
   ) {
-    return (
-      (await this.inspect(provider, directory, signal)).list.repository
-        ?.status ?? 'empty'
-    );
+    const snapshot = await this.inspect(provider, directory, signal);
+    return snapshot.managed
+      ? 'needs-trust'
+      : (snapshot.list.repository?.status ?? 'empty');
   }
 
   async connectionInventory(
@@ -379,7 +495,6 @@ export class McpPolicy {
       signal,
       profileDirectory,
     );
-    const trusted = includeRepository && list.repository?.status === 'trusted';
     const candidates = list.servers.filter(
       server => server.scope === 'user' || includeRepository,
     );
@@ -389,7 +504,9 @@ export class McpPolicy {
         /^[A-Za-z0-9_][A-Za-z0-9_-]{0,99}$/.test(server.name) &&
         candidates.filter(candidate => candidate.name === server.name)
           .length === 1 &&
-        (server.scope === 'user' || trusted),
+        (server.scope === 'user' ||
+          (includeRepository &&
+            Object.hasOwn(policy.projectServers, server.name))),
     );
     return {
       candidates,
@@ -449,7 +566,7 @@ export class McpPolicy {
   private rawReviewToken(
     provider: Provider,
     repository: string,
-    sessionId: string,
+    sessionId: string | null,
     fingerprint: string,
   ) {
     return this.fingerprint([
@@ -464,10 +581,12 @@ export class McpPolicy {
   async trust(
     provider: Provider,
     directory: string,
-    { sessionId, fingerprint, rawReviewToken }: TrustRepositoryMcpInput,
+    request: TrustRepositoryMcpInput,
     signal?: AbortSignal,
     profileDirectory?: string,
   ) {
+    const { fingerprint, rawReviewToken, decision } = request;
+    const sessionId = 'sessionId' in request ? request.sessionId : null;
     const snapshot = await this.inspect(
       provider,
       directory,
@@ -477,13 +596,17 @@ export class McpPolicy {
     const status = snapshot.list.repository?.status;
     if (
       snapshot.fingerprint !== fingerprint ||
-      (status !== 'needs-trust' && status !== 'trusted')
+      (decision?.action !== 'defer' &&
+        status !== 'needs-trust' &&
+        status !== 'trusted' &&
+        status !== 'empty')
     )
       throw new SessionError(
         'invalid-request',
         'Repository MCP servers or hooks changed. Review the current definitions.',
       );
     if (
+      decision?.action !== 'defer' &&
       snapshot.definitions.some(definition =>
         definition.launches?.some(launch => launch.requiresRawReview),
       ) &&
@@ -499,15 +622,32 @@ export class McpPolicy {
         'invalid-request',
         'Open the raw definitions before trusting this repository.',
       );
-    this.database
-      .prepare(
-        'INSERT INTO mcp_repository_trust (provider, repository, fingerprint, definitions, trusted) VALUES (?, ?, ?, ?, 1) ON CONFLICT(provider, repository) DO UPDATE SET fingerprint = excluded.fingerprint, definitions = excluded.definitions, trusted = 1',
-      )
-      .run(
-        provider,
-        snapshot.repository,
-        fingerprint,
-        JSON.stringify(snapshot.definitions),
+    if (decision) {
+      this.repositoryTrust.decision(
+        {
+          identity: snapshot.identity,
+          sessionId,
+          provider,
+          fingerprint,
+          definitions: snapshot.definitions.map(({ id, hash }) => [id, hash]),
+        },
+        decision,
+      );
+    } else if (!snapshot.managed)
+      this.database
+        .prepare(
+          'INSERT INTO mcp_repository_trust (provider, repository, fingerprint, definitions, trusted) VALUES (?, ?, ?, ?, 1) ON CONFLICT(provider, repository) DO UPDATE SET fingerprint = excluded.fingerprint, definitions = excluded.definitions, trusted = 1',
+        )
+        .run(
+          provider,
+          snapshot.repository,
+          snapshot.legacyFingerprint,
+          JSON.stringify(snapshot.definitions),
+        );
+    else
+      throw new SessionError(
+        'invalid-request',
+        'Review this repository using the current repository trust rules.',
       );
     return (await this.inspect(provider, directory, signal, profileDirectory))
       .list;
@@ -536,11 +676,24 @@ export class McpPolicy {
         throw new Error(
           'User MCP servers or hooks changed while preparing the turn. Send the message again.',
         );
-      const sameProject =
-        current.fingerprint === before.fingerprint &&
-        before.list.repository?.status === 'trusted';
+      const sameProject = current.fingerprint === before.fingerprint;
       return sameProject
-        ? current.policy
+        ? {
+            ...current.policy,
+            projectSettings:
+              before.policy.projectSettings && current.policy.projectSettings,
+            projectDisablesHooks:
+              before.policy.projectDisablesHooks ||
+              current.policy.projectDisablesHooks,
+            projectHooks: Object.keys(before.policy.projectHooks).length
+              ? current.policy.projectHooks
+              : {},
+            projectServers: Object.fromEntries(
+              Object.entries(current.policy.projectServers).filter(([name]) =>
+                Object.hasOwn(before.policy.projectServers, name),
+              ),
+            ),
+          }
         : {
             ...current.policy,
             projectServers: {},

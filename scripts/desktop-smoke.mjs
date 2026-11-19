@@ -114,9 +114,15 @@ const byId = values =>
 const launchArgs = [resolve('apps/desktop')];
 const configurationScreenshots = process.env.NESVO_D85_SCREENSHOTS;
 const inboxOutcomeScreenshots = process.env.NESVO_INBOX_OUTCOME_SCREENSHOT_DIR;
+const d88Screenshots = process.env.NESVO_D88_SCREENSHOTS;
 if (configurationScreenshots)
   launchArgs.push(
     '--remote-debugging-port=9250',
+    '--force-device-scale-factor=1',
+  );
+else if (d88Screenshots)
+  launchArgs.push(
+    '--remote-debugging-port=9249',
     '--force-device-scale-factor=1',
   );
 else if (inboxOutcomeScreenshots)
@@ -1950,6 +1956,95 @@ async function smokeDesktop() {
     })
     .waitFor();
   await screenshot('-provider-rail');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsNav
+    .getByRole('button', { name: 'Permissions', exact: true })
+    .click();
+  const trustSettings = initialContext.getByRole('region', {
+    name: 'Repository trust',
+    exact: true,
+  });
+  await trustSettings.getByRole('button', { name: 'Add pattern' }).click();
+  const addPattern = page.getByRole('dialog', {
+    name: 'Add repository pattern',
+  });
+  await addPattern
+    .getByLabel('Repository pattern')
+    .fill('git.example.test/team/*');
+  await addPattern.getByRole('button', { name: 'Add pattern' }).click();
+  await trustSettings
+    .getByText('git.example.test/team/*', { exact: true })
+    .waitFor();
+  if (d88Screenshots) {
+    await mkdir(d88Screenshots, { recursive: true });
+    const previous = await page.evaluate(() => ({
+      width: innerWidth,
+      height: innerHeight,
+    }));
+    for (const size of [
+      { width: 1280, height: 800 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await application.evaluate(({ BrowserWindow }, { width, height }) => {
+        BrowserWindow.getAllWindows()[0].setContentSize(width, height);
+      }, size);
+      await page.waitForFunction(
+        ({ width, height }) => innerWidth === width && innerHeight === height,
+        size,
+      );
+      await page.waitForFunction(() =>
+        document.getAnimations().every(animation => {
+          const end = animation.effect?.getComputedTiming().endTime;
+          return end === Infinity || animation.playState !== 'running';
+        }),
+      );
+      await delay(200);
+      const screenshot = await application.evaluate(
+        async ({ BrowserWindow }) => {
+          const image =
+            await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+              undefined,
+              { stayHidden: true, stayAwake: true },
+            );
+          return {
+            size: image.getSize(),
+            png: image.toPNG().toString('base64'),
+          };
+        },
+      );
+      assert.deepEqual(screenshot.size, size);
+      await writeFile(
+        join(
+          d88Screenshots,
+          `d88-a-repository-trust-${size.width}x${size.height}.png`,
+        ),
+        Buffer.from(screenshot.png, 'base64'),
+      );
+    }
+    await application.evaluate(({ BrowserWindow }, size) => {
+      BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height);
+    }, previous);
+  }
+  await trustSettings
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await page
+    .getByRole('alertdialog', { name: 'Revoke repository trust?' })
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await trustSettings.getByText('No active rules', { exact: true }).waitFor();
+  await trustSettings
+    .getByRole('button', { name: 'History', exact: true })
+    .click();
+  await initialContext
+    .getByRole('heading', { name: 'Repository trust history', exact: true })
+    .waitFor();
+  await initialContext.getByText(/Revoked ·/).waitFor();
+  await initialContext
+    .getByRole('button', { name: 'Close repository trust history' })
+    .click();
+  await page.keyboard.press('Escape');
+  await initialContext.waitFor({ state: 'hidden' });
   const scheduledJobCall = (method, ...args) =>
     page.evaluate(
       ([name, params]) => window.nesvo.scheduledJobs[name](...params),
@@ -2028,6 +2123,7 @@ async function smokeDesktop() {
     'group-cost-budgets',
     'manager-import',
     'configuration',
+    'repository-trust-rules',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

@@ -8,9 +8,17 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
+  DialogCancel,
 } from '@/shared/ui/dialog';
+import { Field } from '@/shared/ui/field';
+import { Input } from '@/shared/ui/input';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import type { McpRepositoryLaunch, McpServerList } from '@nesvo/contracts';
+import {
+  repositoryPatternSchema,
+  type McpRepositoryLaunch,
+  type McpServerList,
+} from '@nesvo/contracts';
 import { useRef, useState } from 'react';
 import type { McpConfiguration } from './use-mcp-configuration';
 
@@ -59,11 +67,28 @@ function ReviewField({
 
 export function McpRepositoryNotice({
   configuration,
+  onReview,
 }: {
   configuration: McpConfiguration;
+  onReview: () => void;
 }) {
   const repository = configuration.list?.repository;
   if (!repository || !configuration.showDecision) return null;
+  if (repository.identity && repository.identity.status !== 'unverified')
+    return (
+      <InlineNotice tone="warning">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>
+            {repository.changed
+              ? 'Repository definitions changed.'
+              : 'Review the repository definitions before enabling them.'}
+          </span>
+          <Button type="button" variant="outline" size="sm" onClick={onReview}>
+            Review repository
+          </Button>
+        </div>
+      </InlineNotice>
+    );
   return (
     <RepositoryDecision
       key={configuration.decisionKey}
@@ -73,17 +98,32 @@ export function McpRepositoryNotice({
   );
 }
 
-function RepositoryDecision({
+export function RepositoryDecision({
   configuration,
   repository,
+  onClose,
+  draft = false,
 }: {
-  configuration: McpConfiguration;
+  configuration: Pick<
+    McpConfiguration,
+    'pending' | 'loading' | 'list' | 'error' | 'readRaw' | 'trust' | 'dismiss'
+  >;
   repository: NonNullable<McpServerList['repository']>;
+  onClose?: () => void;
+  draft?: boolean;
 }) {
   const [raw, setRaw] = useState<typeof repository.rawReview>();
   const [rawError, setRawError] = useState<string>();
   const rawRequest = useRef(0);
-  const unavailable = repository.status === 'unavailable';
+  const identity = repository.identity;
+  const managedReview =
+    draft || (!!onClose && identity && identity.status !== 'unverified');
+  const remote = identity?.status === 'remote' ? identity.remote : undefined;
+  const [pattern, setPattern] = useState(remote?.replace(/[^/]+$/, '*') ?? '');
+  const [editingPattern, setEditingPattern] = useState(false);
+  const parsedPattern = repositoryPatternSchema.safeParse(pattern.trim());
+  const unavailable =
+    repository.status === 'unavailable' || identity?.status === 'ambiguous';
   const requiresRawReview = repository.definitions.some(
     definition =>
       definition.change !== 'removed' &&
@@ -126,7 +166,10 @@ function RepositoryDecision({
         role="region"
         tabIndex={0}
       >
-        {unavailable &&
+        {remote && managedReview && (
+          <p className="text-muted-foreground">{remote}</p>
+        )}
+        {(unavailable || managedReview) &&
           configuration.list?.issues.map(issue => (
             <p
               key={issue}
@@ -152,6 +195,13 @@ function RepositoryDecision({
                     definition.change
                   ]
                 : ''}
+              {definition.approval &&
+                ' · ' +
+                  {
+                    approved: 'Approved',
+                    withheld: 'Withheld',
+                    advisory: 'Advisory',
+                  }[definition.approval]}
             </div>
             {definition.launches?.map((launch, index) => (
               <div key={index} className="mt-1">
@@ -241,7 +291,16 @@ function RepositoryDecision({
           type="button"
           variant="ghost"
           size="sm"
-          onClick={configuration.dismiss}
+          disabled={configuration.pending}
+          onClick={() => {
+            if (managedReview)
+              void configuration.trust(undefined, {
+                action: 'defer',
+                actionId: crypto.randomUUID(),
+              });
+            else configuration.dismiss();
+            onClose?.();
+          }}
         >
           Not now
         </Button>
@@ -254,10 +313,67 @@ function RepositoryDecision({
               configuration.loading ||
               (requiresRawReview && !raw)
             }
-            onClick={() => void configuration.trust(raw?.token)}
+            onClick={() =>
+              void configuration.trust(
+                raw?.token,
+                managedReview
+                  ? {
+                      action: 'approve',
+                      actionId: crypto.randomUUID(),
+                    }
+                  : undefined,
+              )
+            }
           >
-            Trust
+            {managedReview ? 'Trust this repository' : 'Trust'}
           </Button>
+        )}
+        {!unavailable && managedReview && remote && (
+          <Dialog open={editingPattern} onOpenChange={setEditingPattern}>
+            <DialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={configuration.pending || (requiresRawReview && !raw)}
+              >
+                Trust pattern
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Trust repository pattern</DialogTitle>
+                <DialogDescription>
+                  Approve this repository’s reviewed definitions and allow
+                  matching repository identities.
+                </DialogDescription>
+              </DialogHeader>
+              <Field id="review-repository-pattern" label="Repository pattern">
+                <Input
+                  id="review-repository-pattern"
+                  value={pattern}
+                  onChange={event => setPattern(event.target.value)}
+                />
+              </Field>
+              <DialogFooter>
+                <DialogCancel />
+                <Button
+                  size="lg"
+                  disabled={!parsedPattern.success || configuration.pending}
+                  onClick={() => {
+                    if (!parsedPattern.success) return;
+                    setEditingPattern(false);
+                    void configuration.trust(raw?.token, {
+                      action: 'approve',
+                      actionId: crypto.randomUUID(),
+                      pattern: parsedPattern.data,
+                    });
+                  }}
+                >
+                  Trust pattern
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         )}
       </div>
       {configuration.error && (

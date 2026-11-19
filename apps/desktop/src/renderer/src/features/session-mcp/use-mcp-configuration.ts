@@ -1,5 +1,8 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
-import type { McpServerList } from '@nesvo/contracts';
+import type {
+  McpServerList,
+  RepositoryTrustReviewInput,
+} from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 
 type ListState = {
@@ -72,16 +75,34 @@ export function useMcpConfiguration(
       throw new Error('Could not read the raw repository definitions.');
     return list.repository.rawReview;
   };
-  const trust = async (rawReviewToken?: string) => {
+  const trust = async (
+    rawReviewToken?: string,
+    decision?: RepositoryTrustReviewInput,
+  ) => {
     if (!repository || !enabled || !sessionId || !decisionKey) return;
     const current = ++generation.current;
     setPending(decisionKey);
     try {
       const list = await window.nesvo.trustRepositoryMcp(
-        { sessionId, fingerprint: repository.fingerprint, rawReviewToken },
+        {
+          sessionId,
+          fingerprint: repository.fingerprint,
+          rawReviewToken,
+          decision,
+        },
         hostId,
       );
-      if (current === generation.current) setState({ key, list });
+      if (current === generation.current) {
+        setState({ key, list });
+        if (decision?.action === 'defer')
+          setDismissed(
+            key +
+              ':' +
+              list.repository?.status +
+              ':' +
+              list.repository?.fingerprint,
+          );
+      }
     } catch (error) {
       if (current !== generation.current) return;
       await refresh();
@@ -103,9 +124,12 @@ export function useMcpConfiguration(
     pending: !!decisionKey && pending === decisionKey,
     showDecision:
       (repository?.status === 'needs-trust' ||
-        repository?.status === 'unavailable') &&
+        repository?.status === 'unavailable' ||
+        (repository?.status === 'trusted' && repository.changed)) &&
       dismissed !== decisionKey,
-    dismiss: () => setDismissed(decisionKey),
+    dismiss: () => {
+      setDismissed(decisionKey);
+    },
     reopen: () => {
       setDismissed(null);
       void refresh();

@@ -328,6 +328,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to import from other apps.',
   configuration:
     'Update this computer’s Nesvo host and reconnect to use configuration changes.',
+  'repository-trust-rules':
+    'Update this computer’s Nesvo host and reconnect to manage repository trust.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -394,6 +396,7 @@ function requiredCapability(
   if (method === 'list-running-apps') return 'running-apps';
   if (method === 'list-claude-commands') return 'claude-commands';
   if (method === 'claude-autonomy') return 'claude-autonomy';
+  if (method === 'repository-trust-settings') return 'repository-trust-rules';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -1349,6 +1352,7 @@ export class ComputerManager {
       'revoke-external-inbox-device': 'external-inbox-devices',
       'external-inbox': 'external-inbox-result',
       'claude-autonomy': 'claude-autonomy',
+      'repository-trust-settings': 'repository-trust-settings',
       'read-default-session-folder': 'default-session-folder',
       'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
@@ -1458,6 +1462,8 @@ export class ComputerManager {
         return response.settings;
       case 'claude-autonomy':
         return response.autonomy;
+      case 'repository-trust-settings':
+        return response.settings;
       case 'default-session-folder':
         return response.directory;
       case 'worktree-recipes':
