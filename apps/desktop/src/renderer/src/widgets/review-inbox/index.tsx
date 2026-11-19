@@ -5,16 +5,12 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  pendingStageQuestion,
-  pendingTurnQuestion,
-  routesToInbox,
   type DecisionRoute,
   type PullRequestReference,
   type GateRuleProposal,
   type DecideDelegationInput,
   type DecideSessionParentInput,
   type RespondApprovalInput,
-  type StageQuestionRecord,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Ellipsis, Inbox, MessageSquareText } from 'lucide-react';
 import type { ConfigurationInboxSubject, HostId } from '@nesvo/contracts';
@@ -43,10 +39,7 @@ import {
   modelLabel,
   type Session,
 } from '@/entities/session';
-import {
-  SteeringDecisionActions,
-  type SteeringRequest,
-} from '@/features/session-mode/steering-decision-actions';
+import { SteeringDecisionActions } from '@/features/session-mode/steering-decision-actions';
 import { ApprovalActions } from '@/features/session-mode/approval-actions';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
@@ -68,6 +61,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { undoGateRule } from '@/features/gate-rules/undo-gate-rule';
 import { errorDetail } from '@/entities/session';
+import {
+  sessionDecisionRows,
+  type ActionRow,
+  type Filter,
+} from './decision-rows';
 import { GateRuleRow } from './gate-rule-row';
 import type { useInboxGateRules } from './use-inbox-gate-rules';
 import {
@@ -137,76 +135,6 @@ type Props = ReviewDecisionProps & {
   routeOf: (session: Session) => DecisionRoute;
 };
 
-type Filter = 'pending' | 'history' | 'all';
-
-type ActionRow =
-  | {
-      type: 'gate-rule-proposal';
-      row: GateRuleProposal;
-      hostId: string;
-      at: string;
-      id: string;
-    }
-  | { type: 'coordinator-wait'; session: Session; at: string; id: string }
-  | {
-      type: 'steering';
-      session: Session;
-      request: SteeringRequest;
-      at: string;
-      id: string;
-    }
-  | { type: 'review'; review: Review; at: string; id: string }
-  | {
-      type: 'turn-question';
-      session: Session;
-      question: NonNullable<ReturnType<typeof pendingTurnQuestion>>;
-      at: string;
-      id: string;
-    }
-  | {
-      type: 'workflow-gate';
-      run: WorkflowRun;
-      step: WorkflowStepRecord;
-      at: string;
-      id: string;
-    }
-  | { type: 'rule'; item: HostedInboxItem; at: string; id: string }
-  | { type: 'automation'; job: ScheduledJob; at: string; id: string }
-  | {
-      type: 'approval';
-      session: Session;
-      approval: Session['pendingApprovals'][number];
-      at: string;
-      id: string;
-    }
-  | {
-      type: 'delegation';
-      session: Session;
-      delegation: Session['delegations'][number];
-      at: string;
-      id: string;
-    }
-  | {
-      type: 'parent';
-      session: Session;
-      request: NonNullable<Session['parentRequest']>;
-      at: string;
-      id: string;
-    }
-  | {
-      type: 'plan';
-      session: Session;
-      plan: NonNullable<Session['plan']>;
-      at: string;
-      id: string;
-    }
-  | {
-      type: 'question';
-      session: Session;
-      record: StageQuestionRecord;
-      at: string;
-      id: string;
-    };
 
 type AssistantSelection = {
   hostId: HostId;
@@ -519,12 +447,6 @@ export function ReviewInbox({
     row?.scrollIntoView({ block: 'nearest' });
   }, [linkedItem, ruleItems]);
   const [filter, setFilter] = useState<Filter>('pending');
-  const heldSessions = new Set(
-    ruleItems
-      .filter(item => item.status === 'pending' && item.binding === 'provider')
-      .map(item => `${item.hostId}/${item.sessionId}`),
-  );
-  const inInbox = (session: Session) => routesToInbox(routeOf(session));
   const [gateFeedback, setGateFeedback] = useState<{
     row: GateRuleProposal;
     hostId: string;
@@ -548,22 +470,17 @@ export function ReviewInbox({
       setUndoPending(false);
     }
   };
-  const rows: ActionRow[] = reviews
-    .filter(
-      review =>
-        review.status !== 'done' &&
-        routesToInbox(review.route ?? 'inbox') &&
-        (filter === 'all' ||
-          (filter === 'pending'
-            ? review.status === 'pending'
-            : review.status !== 'pending')),
-    )
-    .map(review => ({
-      type: 'review',
-      review,
-      at: review.createdAt,
-      id: entityKey(review),
-    }));
+  const rowAnchor = (hostId: string, id: string) => ({
+    id: `inbox-${hostId}-${id}`,
+    tabIndex: -1,
+  });
+  const rows: ActionRow[] = sessionDecisionRows(
+    sessions,
+    reviews,
+    ruleItems,
+    routeOf,
+    filter,
+  );
   if (filter !== 'history')
     for (const run of workflowRuns) {
       if (run.status !== 'awaiting-human') continue;
@@ -582,118 +499,6 @@ export function ReviewInbox({
           id: hostKey(step.id, run.hostId),
         });
       }
-    }
-  if (filter !== 'history')
-    for (const session of sessions)
-      if (session.coordinatorWait)
-        rows.push({
-          type: 'coordinator-wait',
-          session,
-          at: session.coordinatorWait.startedAt,
-          id: entityKey(session),
-        });
-  if (filter !== 'history')
-    for (const session of sessions)
-      if (session.parentRequest)
-        rows.push({
-          type: 'parent',
-          session,
-          request: session.parentRequest,
-          at: session.parentRequest.requestedAt,
-          id: `${entityKey(session)}/${session.parentRequest.id}`,
-        });
-  for (const item of ruleItems)
-    if (
-      (routesToInbox(item.route) ||
-        (item.binding === 'external' &&
-          !sessions.some(
-            session =>
-              session.id === item.parentId &&
-              session.hostId === item.hostId &&
-              !session.archivedAt,
-          ))) &&
-      (filter === 'all' ||
-        (filter === 'pending'
-          ? item.status === 'pending'
-          : item.status !== 'pending'))
-    )
-      rows.push({
-        type: 'rule',
-        item,
-        at: item.decidedAt ?? item.createdAt,
-        id: inboxItemKey(item),
-      });
-  if (filter !== 'history')
-    for (const session of sessions) {
-      if (session.status !== 'running' || !session.runId) continue;
-      if (!inInbox(session)) continue;
-      if (heldSessions.has(`${session.hostId}/${session.id}`)) continue;
-      for (const approval of session.pendingApprovals)
-        rows.push({
-          type: 'approval',
-          session,
-          approval,
-          at: session.updatedAt,
-          id: `${entityKey(session)}/${session.runId}/${approval.id}`,
-        });
-      for (const delegation of session.delegations)
-        if (
-          delegation.status === 'pending' &&
-          delegation.runId === session.runId
-        )
-          rows.push({
-            type: 'delegation',
-            session,
-            delegation,
-            at: session.updatedAt,
-            id: `${entityKey(session)}/${session.runId}/${delegation.id}`,
-          });
-    }
-  if (filter !== 'history')
-    for (const session of sessions) {
-      const key = entityKey(session);
-      for (const request of session.steeringRequests ?? [])
-        if (
-          session.status === 'running' &&
-          session.runId === request.runId &&
-          routesToInbox(request.route)
-        )
-          rows.push({
-            type: 'steering',
-            session,
-            request,
-            at: request.createdAt,
-            id: `${key}/${request.id}`,
-          });
-      if (inInbox(session) && session.plan?.status === 'plan-ready')
-        rows.push({
-          type: 'plan',
-          session,
-          plan: session.plan,
-          at: session.plan.readyAt ?? session.updatedAt,
-          id: `${key}/${session.plan.id}`,
-        });
-      const question = pendingStageQuestion(session);
-      if (
-        question &&
-        routesToInbox(session.questionRouteOverride ?? routeOf(session))
-      )
-        rows.push({
-          type: 'question',
-          session,
-          record: question,
-          at: question.at,
-          id: `${key}/${question.id}`,
-        });
-      const turnQuestion = pendingTurnQuestion(session);
-      if (turnQuestion && routesToInbox(turnQuestion.route))
-        rows.push({
-          type: 'turn-question',
-          session,
-          question: turnQuestion,
-          at: session.updatedAt,
-          id: `${key}/${turnQuestion.runId}`,
-        });
     }
   if (filter !== 'history')
     for (const job of automations)
@@ -975,6 +780,7 @@ export function ReviewInbox({
                     key={row.id}
                     title={session.title}
                     location={location(session.hostId)}
+                    {...rowAnchor(session.hostId, row.id)}
                     aria-label={`Approve feedback: ${session.title}`}
                     data-inbox-kind="decision-needed"
                     onOpen={() => onSession(entityKey(session))}
@@ -1001,6 +807,7 @@ export function ReviewInbox({
                 return wrap(
                   <ActionItem
                     key={row.id}
+                    {...rowAnchor(session.hostId, row.id)}
                     aria-label={`Question for you: ${session.title}`}
                     data-inbox-kind="question-for-you"
                     title={session.title}
@@ -1096,6 +903,7 @@ export function ReviewInbox({
                 return wrap(
                   <ActionItem
                     key={`review/${row.id}`}
+                    {...rowAnchor(review.hostId, row.id)}
                     aria-label={`Review result: ${review.title}, version ${review.version}`}
                     data-host-id={review.hostId}
                     title={
@@ -1339,6 +1147,7 @@ export function ReviewInbox({
                     key={`plan/${row.id}`}
                     data-inbox-kind="decision-needed"
                     why="Plan needs your approval"
+                    {...rowAnchor(session.hostId, row.id)}
                     aria-label={`Plan: ${session.title}`}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -1392,6 +1201,7 @@ export function ReviewInbox({
                         ? 'Asks you to choose an option'
                         : 'Asks for your reply'
                     }
+                    {...rowAnchor(session.hostId, row.id)}
                     aria-label={`Question: ${session.title}`}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -1446,6 +1256,7 @@ export function ReviewInbox({
                   <ActionItem
                     key={`parent/${row.id}`}
                     why="Asks to join a coordinator"
+                    {...rowAnchor(session.hostId, row.id)}
                     aria-label={`Join coordinator: ${session.title}`}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -1505,6 +1316,7 @@ export function ReviewInbox({
                         ? `Wants to run ${compactPreview(approval.detail, 100).split(/\s+/, 2).join(' ')}`
                         : `Requests approval: ${approval.title}`
                     }
+                    {...rowAnchor(session.hostId, row.id)}
                     aria-label={`Operation approval: ${session.title}`}
                     typeLabel="Operation approval"
                     data-approval-id={approval.id}
@@ -1569,6 +1381,7 @@ export function ReviewInbox({
                 <ActionItem
                   key={`delegation/${row.id}`}
                   why={`Wants to start a worker: ${delegation.title}`}
+                  {...rowAnchor(session.hostId, row.id)}
                   aria-label={`Start worker: ${delegation.title}`}
                   data-host-id={session.hostId}
                   typeLabel="Worker approval"
