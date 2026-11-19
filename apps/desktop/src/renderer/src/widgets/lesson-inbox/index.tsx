@@ -15,6 +15,7 @@ import {
 import type { Session } from '@/entities/session';
 import { LessonRow } from '@/features/lessons/lesson-row';
 import { Button } from '@/shared/ui/button';
+import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type LessonInboxProps = {
@@ -24,7 +25,7 @@ type LessonInboxProps = {
   onSession: (sessionKey: string) => void;
 };
 
-type LessonTableProps = {
+type LessonGroupProps = {
   computer: Computer;
   sessions: Session[];
   api: LessonApi;
@@ -32,13 +33,13 @@ type LessonTableProps = {
   onSession: (sessionKey: string) => void;
 };
 
-function LessonTable({
+function LessonGroup({
   computer,
   sessions,
   api,
   showLocation,
   onSession,
-}: LessonTableProps) {
+}: LessonGroupProps) {
   const lessons = useLessonOverview({
     api,
     hostId: computer.id,
@@ -71,14 +72,19 @@ function LessonTable({
   return (
     <section
       aria-label={`Lessons on ${computer.name}`}
-      className="divide-y divide-border/55 border-b"
+      className="border-b border-border/55"
     >
+      {rows.length > 0 && (
+        <SectionLabel as="h2" count={rows.length}>
+          Lessons
+        </SectionLabel>
+      )}
       {lessons.error && (
         <StatusMessage tone="error" className="px-2">
           {lessons.error}
         </StatusMessage>
       )}
-      <div className="divide-y">
+      <div className="divide-y divide-border/55">
         {rows.map(lesson => {
           const due = lessonIsDue(lesson, today);
           const source = lesson.evidence.find(item => item.sessionId);
@@ -152,7 +158,7 @@ export function LessonInbox({
   return (
     <>
       {ready.map(computer => (
-        <LessonTable
+        <LessonGroup
           key={`${computer.id}:${computer.instanceId ?? ''}`}
           computer={computer}
           sessions={sessions}

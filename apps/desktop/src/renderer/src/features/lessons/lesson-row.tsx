@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { lessonIsDue, type Lesson } from '@nesvo/contracts';
 import { ArrowUpRight } from 'lucide-react';
 import { DecisionRow } from '@/entities/review/decision-row';
+import { cn } from '@/shared/lib/cn';
 import { hostKey } from '@/shared/lib/host-key';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -12,6 +13,51 @@ import {
   lessonScopeText,
   lessonStatusText,
 } from './labels';
+
+function LessonTitle({ text }: { text: string }) {
+  const id = useId();
+  const title = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+
+  useEffect(() => {
+    const element = title.current;
+    if (!element || expanded) return;
+    const measure = () =>
+      setClipped(element.scrollHeight > element.clientHeight);
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    measure();
+    return () => observer.disconnect();
+  }, [expanded, text]);
+
+  return (
+    <>
+      <p
+        id={id}
+        ref={title}
+        className={cn(
+          'font-normal [overflow-wrap:anywhere]',
+          !expanded && 'line-clamp-2',
+        )}
+      >
+        {text}
+      </p>
+      {(clipped || expanded) && (
+        <Button
+          size="inline"
+          variant="link"
+          className="text-xs"
+          aria-controls={id}
+          aria-expanded={expanded}
+          onClick={() => setExpanded(value => !value)}
+        >
+          {expanded ? 'Less' : 'More'}
+        </Button>
+      )}
+    </>
+  );
+}
 
 export function LessonRow({
   lesson,
@@ -34,6 +80,11 @@ export function LessonRow({
 }) {
   const due = lessonIsDue(lesson, today);
   const evidence = lesson.evidence.slice(0, 3);
+  const checkBadge = lesson.kind === 'check' && (
+    <Badge size="xs" tone="info">
+      Check
+    </Badge>
+  );
   const heading = (
     <div className="flex min-w-0 items-center gap-2">
       <p
@@ -42,11 +93,7 @@ export function LessonRow({
       >
         {lesson.description}
       </p>
-      {lesson.kind === 'check' && (
-        <Badge size="xs" tone="info">
-          Check
-        </Badge>
-      )}
+      {checkBadge}
       {(due || lesson.state !== 'active') && (
         <Badge
           size="xs"
@@ -68,6 +115,7 @@ export function LessonRow({
         {lesson.body.rule}
       </p>
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+        {inboxContext !== undefined && checkBadge}
         <span title={lesson.project ?? undefined}>
           {lessonScopeText(lesson)}
           {computerName && <> · {computerName}</>}
@@ -84,6 +132,7 @@ export function LessonRow({
                 size="inline"
                 className="text-muted-foreground"
                 title={item.summary}
+                aria-label={`Open session: ${item.summary}`}
                 onClick={() => onSession(hostKey(item.sessionId!, hostId))}
               >
                 from {incidentKindLabels[item.kind]}
@@ -99,7 +148,14 @@ export function LessonRow({
         {lesson.evidence.length > evidence.length && (
           <span>· +{lesson.evidence.length - evidence.length} more</span>
         )}
-        {lesson.review && <span>· review by {lessonDate(lesson.review)}</span>}
+        {lesson.review && (
+          <span>
+            <span aria-hidden="true">·</span>{' '}
+            <time dateTime={lesson.review}>
+              Review by {lessonDate(lesson.review)}
+            </time>
+          </span>
+        )}
         {lesson.enforcedBy !== 'none' && (
           <span>· enforced by {lesson.enforcedBy}</span>
         )}
@@ -115,19 +171,21 @@ export function LessonRow({
         aria-label={due ? 'Lesson review' : 'Lesson proposal'}
       >
         <DecisionRow
+          alignActions="summary"
           heading={
             <>
               {inboxContext && (
                 <Button
                   variant="link"
                   size="inline"
+                  className="min-w-0 max-w-full"
                   onClick={() => onSession(hostKey(inboxContext.id, hostId))}
                 >
-                  {inboxContext.title}
+                  <span className="truncate">{inboxContext.title}</span>
                   <ArrowUpRight />
                 </Button>
               )}
-              {heading}
+              <LessonTitle text={lesson.description} />
             </>
           }
           details={details}
