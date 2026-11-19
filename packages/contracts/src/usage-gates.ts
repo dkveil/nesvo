@@ -42,12 +42,28 @@ export const providerUsageGateInputSchema = z.discriminatedUnion('action', [
     actionId,
     target: providerUsageInputSchema,
   }),
+  z.strictObject({
+    action: z.literal('release-profile'),
+    actionId,
+    id: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
   z.strictObject({ action: z.literal('check'), actionId, holdId: z.uuid() }),
   z.strictObject({ action: z.literal('cancel'), actionId, holdId: z.uuid() }),
 ]);
 
 export const providerUsageGateSettingsSchema = z.strictObject({
   policies: z.array(providerUsagePolicySchema).max(100),
+  profilePolicies: z
+    .array(
+      providerUsagePolicySchema.extend({
+        id: z.string().regex(/^[a-f0-9]{64}$/),
+        revision: z.string().regex(/^[a-f0-9]{64}$/),
+        canRelease: z.boolean(),
+      }),
+    )
+    .max(100)
+    .optional(),
   holds: z.array(providerUsageHoldSchema).max(100),
   history: z
     .array(
@@ -62,6 +78,7 @@ export const providerUsageGateSettingsSchema = z.strictObject({
           'dispatch',
           'warn',
           'provider-rejected',
+          'release-profile',
         ]),
         hostId: z.uuid(),
         actor: z.enum(['operator', 'host', 'provider']),

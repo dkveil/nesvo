@@ -7,6 +7,11 @@ import { inspectClaudeUsage } from './claude';
 import { inspectCodexUsage } from './codex';
 
 export class ProviderUsageService {
+  observation({ provider, profileId }: ProviderUsageInput) {
+    const cached = this.cached.get(`${provider}:${profileId ?? ''}`);
+    return cached && cached.expiresAt > Date.now() ? cached.value : undefined;
+  }
+
   cachedWindows() {
     const now = Date.now();
     const ready = [...this.cached.values()].filter(

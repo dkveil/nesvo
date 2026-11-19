@@ -404,6 +404,8 @@ export class McpPolicy {
       issues.push(
         'Resolve the competing repository remotes or trust patterns before approving definitions.',
       );
+    if ('reason' in identityPolicy && identityPolicy.reason)
+      issues.push(identityPolicy.reason);
     if (managed)
       issues.push(
         'Native repository settings, hooks and command-based servers are held. This provider needs a verified isolated loading path for those definitions.',

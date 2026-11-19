@@ -9,9 +9,14 @@ import {
   type ProviderUsageGateSettings,
   type ProviderUsageHold,
   type ProviderUsageInput,
+  type ProviderUsagePolicy,
 } from '@nesvo/contracts';
 import { SessionError } from '../sessions/session-error';
 import type { ProviderUsageService } from './usage-service';
+import { SetupNativeBindings } from '../setup-native-bindings';
+import type { SetupReviewInspection } from '../setup-profile-review-queue';
+import { activeSetupProfile } from '../setup-profile-service';
+import { readSetupProfile } from '../setup-profile-file';
 
 type Entry = ProviderUsageGateSettings['history'][number];
 export type UsageIntent = Omit<
@@ -54,6 +59,8 @@ const relevantWindow = (id: string, model: string) => {
 };
 
 export class ProviderUsageGates {
+  private readonly profile: SetupNativeBindings;
+
   constructor(
     private readonly database: DatabaseSync,
     private readonly usage: ProviderUsageService,
@@ -61,7 +68,108 @@ export class ProviderUsageGates {
       target: ProviderUsageInput,
       signal: AbortSignal,
     ) => Promise<Readonly<Record<string, string>> | undefined>,
-  ) {}
+    private readonly accountAlias?: (
+      provider: ProviderUsageInput['provider'],
+      alias?: string,
+    ) => string | null | undefined,
+  ) {
+    this.profile = new SetupNativeBindings(database, 'usage');
+  }
+
+  inspectProfile: SetupReviewInspection = async (
+    profile,
+    entry,
+    instanceId,
+  ) => {
+    if (!entry.key.startsWith('limits/')) return undefined;
+    const limit = profile.usageLimits?.find(
+      item => entry.key === 'limits/' + item.id,
+    );
+    if (!limit || 'disabled' in limit) return undefined;
+    const profileId = this.accountAlias?.(limit.provider, limit.account);
+    if (profileId === undefined)
+      return 'Bind the named provider account on this computer.';
+    const target = { provider: limit.provider, profileId };
+    const usage = this.usage.observation(target);
+    if (
+      usage?.status !== 'ready' ||
+      !usage.windows.some(window => window.id === limit.window)
+    )
+      return 'Refresh the selected account’s usage and verify this exact quota window.';
+    const policy = providerUsagePolicySchema.parse({
+      ...target,
+      policy: limit.effect,
+      threshold: limit.threshold,
+      windows: [limit.window],
+      onUnavailable: 'warn',
+    });
+    const id = digest([instanceId, entry.key]);
+    const fingerprint = digest([
+      target,
+      policy,
+      this.profile.get(id)?.generation ?? 0,
+    ]);
+    return {
+      fingerprint,
+      description: `${limit.provider} · ${limit.account ?? 'Default account'}\n${limit.effect === 'hold' ? 'Hold' : 'Warn'} at ${limit.threshold}% for ${limit.window}. Unavailable usage warns.`,
+      accept: () => {
+        this.database
+          .prepare(
+            `
+          INSERT INTO setup_usage_policies (id, target, document) VALUES (?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET target = excluded.target, document = excluded.document
+        `,
+          )
+          .run(id, targetKey(target), JSON.stringify(policy));
+        this.profile.bind(id, profile, entry.key, entry.revision, fingerprint);
+      },
+      applied: () =>
+        this.profile.get(id)?.fingerprint === fingerprint &&
+        this.profile.passes(id),
+      revoke: () => {
+        this.profile.revoke(id);
+        this.database
+          .prepare('DELETE FROM setup_usage_policies WHERE id = ?')
+          .run(id);
+      },
+    };
+  };
+
+  private profilePolicies(target?: ProviderUsageInput) {
+    const rows = target
+      ? this.database
+          .prepare(
+            'SELECT document FROM setup_usage_policies WHERE target = ? LIMIT 100',
+          )
+          .all(targetKey(target))
+      : this.database
+          .prepare('SELECT document FROM setup_usage_policies LIMIT 100')
+          .all();
+    return rows.map(row =>
+      providerUsagePolicySchema.parse(JSON.parse(String(row.document))),
+    );
+  }
+
+  private canReleaseProfilePolicy(id: string) {
+    const binding = this.profile.get(id);
+    if (!binding) return false;
+    const selected = activeSetupProfile(this.database);
+    if (!selected) return true;
+    try {
+      if (readSetupProfile(selected.path).revision !== selected.revision)
+        return false;
+    } catch {
+      return false;
+    }
+    return (
+      selected.path !== binding.profile ||
+      !selected.declarations.some(
+        entry =>
+          entry.key === binding.declaration &&
+          entry.revision === binding.revision,
+      )
+    );
+  }
 
   private read() {
     return {
@@ -73,6 +181,25 @@ export class ProviderUsageGates {
         .map(row =>
           providerUsagePolicySchema.parse(JSON.parse(String(row.document))),
         ),
+      profilePolicies: this.database
+        .prepare('SELECT id, document FROM setup_usage_policies LIMIT 100')
+        .all()
+        .flatMap(row => {
+          const id = String(row.id);
+          const binding = this.profile.get(id);
+          return binding
+            ? [
+                {
+                  ...providerUsagePolicySchema.parse(
+                    JSON.parse(String(row.document)),
+                  ),
+                  id,
+                  revision: binding.fingerprint,
+                  canRelease: this.canReleaseProfilePolicy(id),
+                },
+              ]
+            : [];
+        }),
       holds: this.database
         .prepare(
           'SELECT document FROM provider_usage_holds ORDER BY rowid DESC LIMIT 100',
@@ -190,13 +317,28 @@ export class ProviderUsageGates {
     const row = this.database
       .prepare('SELECT document FROM provider_usage_policies WHERE target = ?')
       .get(key);
-    if (!row) return allowed;
-    const policy = providerUsagePolicySchema.parse(
-      JSON.parse(String(row.document)),
-    );
+    const policies = [
+      ...(row
+        ? [providerUsagePolicySchema.parse(JSON.parse(String(row.document)))]
+        : []),
+      ...this.profilePolicies(target),
+    ];
+    if (!policies.length) return allowed;
     const environment = await this.environment(target, signal);
     const usage = await this.usage.read(target, environment, refresh);
     signal.throwIfAborted();
+    const severity = { allowed: 0, warning: 1, held: 2 } as const;
+    return policies
+      .map(policy => this.evaluate(target, model, usage, policy))
+      .sort((left, right) => severity[right.state] - severity[left.state])[0]!;
+  }
+
+  private evaluate(
+    target: ProviderUsageInput,
+    model: string,
+    usage: ProviderUsage,
+    policy: ProviderUsagePolicy,
+  ): ProviderUsageEvidence {
     const fresh =
       Date.now() - Date.parse(usage.checkedAt) <=
       (target.provider === 'Codex' ? 60_000 : 300_000);
@@ -309,7 +451,8 @@ export class ProviderUsageGates {
     if (
       !this.database
         .prepare('SELECT target FROM provider_usage_policies WHERE target = ?')
-        .get(targetKey(target))
+        .get(targetKey(target)) &&
+      !this.profilePolicies(target).length
     )
       return;
     this.transaction(() => {
@@ -331,6 +474,31 @@ export class ProviderUsageGates {
   ): Promise<ProviderUsageGateSettings> {
     if (input.action === 'read' || this.previous(input.actionId, input))
       return this.read();
+    if (input.action === 'release-profile') {
+      const row = this.database
+        .prepare('SELECT document FROM setup_usage_policies WHERE id = ?')
+        .get(input.id);
+      if (
+        !row ||
+        this.profile.get(input.id)?.fingerprint !== input.revision ||
+        !this.canReleaseProfilePolicy(input.id)
+      )
+        throw new SessionError(
+          'invalid-request',
+          'Review the current profile before releasing this restriction.',
+        );
+      const policy = providerUsagePolicySchema.parse(
+        JSON.parse(String(row.document)),
+      );
+      this.transaction(() => {
+        this.profile.revoke(input.id);
+        this.database
+          .prepare('DELETE FROM setup_usage_policies WHERE id = ?')
+          .run(input.id);
+        this.history(input.actionId, input.action, 'operator', policy, input);
+      });
+      return this.read();
+    }
     if (input.action === 'save' || input.action === 'remove') {
       const target = input.action === 'save' ? input.policy : input.target;
       if (input.action === 'save') await this.environment(target, signal);

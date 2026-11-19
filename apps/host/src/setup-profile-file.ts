@@ -252,6 +252,7 @@ export type LoadedSetupProfile = {
   inboxRules?: SetupInboxRule[];
   usageLimits?: SetupProfileDocument['limits'];
   portable?: SetupProfileDocument;
+  desired?: SetupProfileDocument;
 };
 
 function profileLayers(file: string, replacement?: Replacement) {
@@ -551,7 +552,11 @@ function mergeProfile(
       revision: sha(JSON.stringify(entry.value)),
       state: value.disabled
         ? 'masked'
-        : ordinary || key.startsWith('rituals/')
+        : ordinary ||
+            key.startsWith('rituals/') ||
+            (key.startsWith('repositoryTrust/') &&
+              'effect' in value &&
+              value.effect === 'deny')
           ? 'ordinary'
           : 'pending',
       preview: configurationText(preview ?? '').slice(0, 300) || undefined,
@@ -570,7 +575,11 @@ function mergeProfile(
     version: 1,
     branches: collection('branches'),
     recipes: collection('recipes').filter(entry => !('provider' in entry)),
-    automations: collection('automations'),
+    automations: collection('automations').map(entry =>
+      Object.fromEntries(
+        Object.entries(entry).filter(([field]) => field !== 'adoptJob'),
+      ),
+    ),
     rituals: collection('rituals'),
     limits: [...usageLimits.values()],
     sessionControl,
@@ -578,6 +587,16 @@ function mergeProfile(
       defaultRoute: route ?? undefined,
       rules: [...inboxRules.values()].map(entry => entry.value),
     },
+  });
+  const desired: SetupProfileDocument = setupProfileDocumentSchema.parse({
+    ...settings,
+    worktrees: collection('worktrees'),
+    recipes: collection('recipes'),
+    repositoryTrust: collection('repositoryTrust'),
+    integrations: collection('integrations'),
+    externalMessages: collection('externalMessages'),
+    github: collection('github'),
+    automations: collection('automations'),
   });
   return {
     path,
@@ -587,6 +606,7 @@ function mergeProfile(
     inboxRules: [...inboxRules.values()],
     usageLimits: [...usageLimits.values()],
     portable: settings,
+    desired,
     route,
     routeSource,
     routeWritePath:

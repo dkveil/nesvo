@@ -31,6 +31,13 @@ import {
 import { worktreeAttachmentClaimed } from '../sessions/folder-locks';
 import { SessionError } from '../sessions/session-error';
 import {
+  nativeProfileCommand,
+  SetupNativeBindings,
+} from '../setup-native-bindings';
+import { activeSetupProfile } from '../setup-profile-service';
+import type { SetupReviewInspection } from '../setup-profile-review-queue';
+import type { LoadedSetupProfile } from '../setup-profile-file';
+import {
   readHeadCommit,
   readSessionWorktreeStatus,
   registeredWorktrees,
@@ -73,6 +80,7 @@ type Candidate = {
   fingerprint: string;
   definition: WorktreeProviderDefinition;
 };
+type BranchPolicy = NonNullable<WorktreeProviderDefinition['branchPolicy']>;
 type WorktreeRequest = {
   directory: string;
   title: string;
@@ -94,6 +102,10 @@ const commonPlaceholders = new Set([
   'sessionId',
 ]);
 const branchPolicyPattern = /^(?!.*\\[1-9])(?!.*\(\?[^:])(?!.*\)[+*?{]).+$/u;
+const profileBranchPolicy = (template: string): BranchPolicy => ({
+  template,
+  validation: '^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$',
+});
 const contains = (root: string, path: string) => {
   const tail = relative(root, path);
   return (
@@ -157,6 +169,7 @@ function branchRule(pattern: string) {
 
 export class CustomWorktreeProviders {
   private readonly key: string;
+  readonly profile: SetupNativeBindings;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -166,6 +179,7 @@ export class CustomWorktreeProviders {
       'directory' | 'worktree'
     >[],
   ) {
+    this.profile = new SetupNativeBindings(database, 'worktree-providers');
     database
       .prepare(
         "INSERT OR IGNORE INTO metadata (key, value) VALUES ('custom_worktrees_key', ?)",
@@ -194,6 +208,105 @@ export class CustomWorktreeProviders {
     }
   }
 
+  inspectProfile(signal: AbortSignal): SetupReviewInspection {
+    return async (profile, entry) => {
+      if (!entry.key.startsWith('worktrees/')) return undefined;
+      const item = profile.desired?.worktrees?.find(
+        item => entry.key === 'worktrees/' + item.id,
+      );
+      if (!item || 'disabled' in item) return undefined;
+      try {
+        const definition = worktreeProviderDefinitionSchema.parse({
+          name: item.name,
+          version: 1,
+          scope: item.scope,
+          kind: item.kind,
+          ...(item.branch
+            ? {
+                branchPolicy: profileBranchPolicy(item.branch),
+              }
+            : {}),
+          ...(item.kind === 'external'
+            ? {
+                checkoutRoots: item.checkoutRoots,
+                create: nativeProfileCommand(item.create),
+                remove: nativeProfileCommand(item.remove),
+                list: nativeProfileCommand(item.list),
+                ...(item.status
+                  ? { status: nativeProfileCommand(item.status) }
+                  : {}),
+              }
+            : {}),
+        });
+        const inspected = await this.inspect(definition, signal);
+        const existing = this.atScope(inspected.scopeKey);
+        const binding = existing && this.profile.get(existing.id);
+        return {
+          fingerprint: this.sign([
+            inspected.fingerprint,
+            binding?.generation ?? 0,
+          ]),
+          description: [
+            'Review worktree provider ' + definition.name + '.',
+            'Scope: ' + inspected.scope,
+            ...inspected.roots.map(root => 'Checkout root: ' + root),
+            ...inspected.commands.map(
+              command =>
+                command.operation +
+                ': ' +
+                JSON.stringify([command.executable, ...command.argv]),
+            ),
+            ...(existing && !binding
+              ? ['Transfer the current provider at this scope to the profile.']
+              : []),
+            'Verified digest: ' + inspected.fingerprint,
+          ]
+            .map(line => redactLogMessage(line))
+            .join('\n'),
+          accept: () => {
+            const result = this.saveApproved(
+              {
+                action: 'approve',
+                actionId: randomUUID(),
+                definition,
+                fingerprint: inspected.fingerprint,
+              },
+              inspected,
+              true,
+            );
+            this.profile.bind(
+              result.provider.providerId,
+              profile,
+              entry.key,
+              entry.revision,
+              inspected.fingerprint,
+            );
+          },
+          applied: () => {
+            const row = this.atScope(inspected.scopeKey);
+            return (
+              !!row &&
+              !row.revoked &&
+              row.fingerprint === inspected.fingerprint &&
+              this.profile.get(row.id)?.revision === entry.revision &&
+              this.profile.passes(row.id)
+            );
+          },
+          revoke: () => {
+            const row = this.atScope(inspected.scopeKey);
+            if (row) this.profile.revoke(row.id);
+          },
+        };
+      } catch (error) {
+        return redactLogMessage(
+          error instanceof Error
+            ? error.message
+            : 'The worktree provider could not be verified.',
+        ).slice(0, 300);
+      }
+    };
+  }
+
   private sign(value: unknown) {
     return createHmac('sha256', this.key)
       .update(JSON.stringify(value))
@@ -213,7 +326,15 @@ export class CustomWorktreeProviders {
           'SELECT * FROM custom_worktree_providers WHERE revoked = 0 ORDER BY rowid DESC LIMIT 128',
         )
         .all() as unknown as Stored[]
-    ).map(toCandidate);
+    )
+      .filter(row => this.profile.passes(row.id))
+      .map(toCandidate);
+  }
+
+  private atScope(scopeKey: string) {
+    return this.database
+      .prepare('SELECT * FROM custom_worktree_providers WHERE scope_key = ?')
+      .get(scopeKey) as Stored | undefined;
   }
 
   private async identity(directory: string, signal: AbortSignal) {
@@ -390,10 +511,14 @@ export class CustomWorktreeProviders {
         return {
           action: 'effective',
           provider: provider ? summary(provider) : null,
-          branch: this.branch(provider, {
-            ...input,
-            sessionId: '00000000-0000-0000-0000-000000000000',
-          }),
+          branch: this.branch(
+            provider,
+            {
+              ...input,
+              sessionId: '00000000-0000-0000-0000-000000000000',
+            },
+            selected?.branchPolicy,
+          ),
           reason: null,
         };
       } catch (error) {
@@ -426,6 +551,10 @@ export class CustomWorktreeProviders {
       if (this.previous(input.actionId, input)) return { action: 'revoke' };
       const row = this.row(input.providerId);
       if (!row) return fail('The worktree provider was not found.');
+      if (this.profile.get(row.id))
+        return fail(
+          'This provider is managed by the profile. Edit it in Your setup.',
+        );
       this.transaction(() => {
         this.database
           .prepare(
@@ -450,9 +579,19 @@ export class CustomWorktreeProviders {
     if (previous?.result) return previous.result as WorktreeProviderReply;
     if (input.fingerprint !== inspected.fingerprint)
       return fail('The worktree provider changed. Review the command again.');
-    const row = this.database
-      .prepare('SELECT * FROM custom_worktree_providers WHERE scope_key = ?')
-      .get(inspected.scopeKey) as Stored | undefined;
+    return this.saveApproved(input, inspected);
+  }
+
+  private saveApproved(
+    input: Extract<WorktreeProviderInput, { action: 'approve' }>,
+    inspected: Awaited<ReturnType<CustomWorktreeProviders['inspect']>>,
+    profile = false,
+  ) {
+    const row = this.atScope(inspected.scopeKey);
+    if (!profile && row && this.profile.get(row.id))
+      return fail(
+        'This provider is managed by the profile. Edit it in Your setup.',
+      );
     if ((!row || row.revoked) && this.providers().length >= 128)
       fail('This computer has reached its worktree provider limit.');
     const provider: Candidate = {
@@ -650,20 +789,47 @@ export class CustomWorktreeProviders {
   }
 
   private transaction(apply: () => void) {
-    this.database.exec('BEGIN IMMEDIATE');
+    const ownsTransaction = !this.database.isTransaction;
+    if (ownsTransaction) this.database.exec('BEGIN IMMEDIATE');
     try {
       apply();
-      this.database.exec('COMMIT');
+      if (ownsTransaction) this.database.exec('COMMIT');
     } catch (error) {
-      this.database.exec('ROLLBACK');
+      if (ownsTransaction) this.database.exec('ROLLBACK');
       throw error;
     }
   }
 
   async select(directory: string, signal: AbortSignal) {
     const providers = this.providers();
-    if (!providers.length) return null;
+    const profile = activeSetupProfile(this.database);
+    const desired = profile?.desired?.worktrees ?? [];
+    const branches = profile?.portable?.branches ?? [];
+    if (
+      !providers.length &&
+      ![...desired, ...branches].some(item => !('disabled' in item))
+    )
+      return null;
     const identity = await this.identity(directory, signal);
+    const branchId = await this.profileSelection(branches, identity, signal);
+    const branch = branches.find(item => item.id === branchId);
+    const branchPolicy =
+      branch && 'template' in branch
+        ? profileBranchPolicy(branch.template)
+        : undefined;
+    const fromProfile = await this.profileSelection(desired, identity, signal);
+    if (fromProfile) {
+      const provider = providers.find(
+        candidate =>
+          this.profile.get(candidate.id)?.declaration ===
+          'worktrees/' + fromProfile,
+      );
+      if (!provider)
+        return fail(
+          'Review the worktree provider declared by the active profile before creating or attaching a checkout.',
+        );
+      return { identity, provider, branchPolicy };
+    }
     const exact = providers.find(
       provider => provider.scopeKey === exactKey(identity),
     );
@@ -692,11 +858,67 @@ export class CustomWorktreeProviders {
     const fallback = providers.find(
       provider => provider.definition.scope.kind === 'computer',
     );
-    return { identity, provider: exact ?? patterns[0]?.provider ?? fallback };
+    return {
+      identity,
+      provider: exact ?? patterns[0]?.provider ?? fallback,
+      branchPolicy,
+    };
   }
 
-  branch(provider: Candidate | undefined, request: WorktreeRequest) {
-    const policy = provider?.definition.branchPolicy;
+  private async profileSelection(
+    declared: ReadonlyArray<
+      | NonNullable<
+          NonNullable<LoadedSetupProfile['desired']>['worktrees']
+        >[number]
+      | NonNullable<
+          NonNullable<LoadedSetupProfile['portable']>['branches']
+        >[number]
+    >,
+    identity: VerifiedRepository,
+    signal: AbortSignal,
+  ) {
+    const remote = remoteOf(identity);
+    const matches: { id: string; rank: number }[] = [];
+    for (const item of declared) {
+      if ('disabled' in item) continue;
+      const scope = item.scope;
+      if (scope.kind === 'computer') matches.push({ id: item.id, rank: 0 });
+      else if (
+        scope.kind === 'pattern' &&
+        remote &&
+        matchesRepositoryPattern(scope.pattern, remote)
+      )
+        matches.push({
+          id: item.id,
+          rank: scope.pattern.split('/').filter(part => part !== '*').length,
+        });
+      else if (scope.kind === 'repository') {
+        const source = await inspectRepositoryIdentity(
+          scope.directory,
+          signal,
+        ).catch(() => null);
+        if (
+          source &&
+          (source.status === 'remote' || source.status === 'local') &&
+          exactKey(source) === exactKey(identity)
+        )
+          matches.push({ id: item.id, rank: 100 });
+      }
+    }
+    matches.sort((a, b) => b.rank - a.rank);
+    if (matches[0] && matches[0].rank === matches[1]?.rank)
+      return fail(
+        'Resolve the competing repository scopes in the active profile.',
+      );
+    return matches[0]?.id;
+  }
+
+  branch(
+    provider: Candidate | undefined,
+    request: WorktreeRequest,
+    profile?: BranchPolicy,
+  ) {
+    const policy = profile ?? provider?.definition.branchPolicy;
     const slug = request.fields?.slug ?? worktreeSlug(request.title, 'session');
     if (!policy)
       return (
@@ -732,6 +954,7 @@ export class CustomWorktreeProviders {
     if (
       !current ||
       current.revoked ||
+      !this.profile.passes(provider.id) ||
       current.fingerprint !== inspected.fingerprint ||
       inspected.fingerprint !== provider.fingerprint
     )
@@ -827,7 +1050,11 @@ export class CustomWorktreeProviders {
     if (this.previous(actionId, payload))
       return fail('This action is already in progress.');
     const current = this.row(provider.id);
-    if (current?.fingerprint !== provider.fingerprint || current?.revoked)
+    if (
+      current?.fingerprint !== provider.fingerprint ||
+      current?.revoked ||
+      !this.profile.passes(provider.id)
+    )
       return fail('The worktree provider was edited before dispatch.');
     const receipt = this.receipt(
       actionId,
@@ -914,9 +1141,13 @@ export class CustomWorktreeProviders {
     signal: AbortSignal,
   ) {
     const provider = selection?.provider;
-    if (!selection || !provider) return null;
+    if (!selection) return null;
     const { identity } = selection;
-    const branch = this.branch(provider, request);
+    const branch = this.branch(provider, request, selection.branchPolicy);
+    if (!provider)
+      return selection.branchPolicy
+        ? { kind: 'builtin' as const, branch }
+        : null;
     if (provider.definition.kind === 'builtin') {
       await this.verify(provider, signal);
       return { kind: 'builtin' as const, branch };

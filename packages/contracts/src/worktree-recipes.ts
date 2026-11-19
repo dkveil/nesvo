@@ -52,6 +52,7 @@ const commandSchema = z
 export const worktreeRecipeCommandSchema = z.union([
   commandSchema,
   directCommandSchema,
+  z.array(directCommandSchema).min(1).max(12),
 ]);
 export type WorktreeRecipeCommand = z.infer<typeof worktreeRecipeCommandSchema>;
 export const recipeCommandText = (command: WorktreeRecipeCommand) =>
@@ -87,6 +88,11 @@ const portSchema = z.number().int().min(1024).max(65535);
 const resourcesSchema = z
   .strictObject({
     ports: z.number().int().min(0).max(worktreeRecipeLimits.ports),
+    portNames: z
+      .array(z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/))
+      .max(worktreeRecipeLimits.ports)
+      .refine(names => new Set(names).size === names.length)
+      .optional(),
     portRange: z
       .strictObject({ from: portSchema, to: portSchema })
       .refine(range => range.to >= range.from, {

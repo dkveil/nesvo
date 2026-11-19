@@ -12,6 +12,11 @@ import {
 } from '@nesvo/contracts';
 import { directoryKey } from '../mcp/scoped-config';
 import { SessionError } from '../sessions/session-error';
+import { SetupNativeBindings } from '../setup-native-bindings';
+import { activeSetupProfile } from '../setup-profile-service';
+import type { SetupReviewInspection } from '../setup-profile-review-queue';
+import type { LoadedSetupProfile } from '../setup-profile-file';
+import { configurationHash } from '../workflows/configuration-changes';
 import { matchesRepositoryPattern } from './identity';
 
 type Digests = ReadonlyArray<readonly [string, string]>;
@@ -30,7 +35,97 @@ const parseRule = (row: Record<string, unknown>) =>
   repositoryTrustRuleSchema.parse(JSON.parse(String(row.document)));
 
 export class RepositoryTrustStore {
-  constructor(private readonly database: DatabaseSync) {}
+  readonly profile: SetupNativeBindings;
+
+  constructor(private readonly database: DatabaseSync) {
+    this.profile = new SetupNativeBindings(database, 'repository-trust');
+  }
+
+  inspectProfile: SetupReviewInspection = async (profile, entry) => {
+    if (!entry.key.startsWith('repositoryTrust/')) return undefined;
+    const declaration = profile.desired?.repositoryTrust?.find(
+      item => entry.key === 'repositoryTrust/' + item.id,
+    );
+    if (
+      !declaration ||
+      'disabled' in declaration ||
+      declaration.effect !== 'allow'
+    )
+      return undefined;
+    const { pattern } = declaration;
+    const scope = patternScope(pattern);
+    const existing = this.rule(scope);
+    const native = existing && this.profile.get(existing.id);
+    const fingerprint =
+      native?.revision === entry.revision && !native.revoked
+        ? native.fingerprint
+        : configurationHash(
+            JSON.stringify([
+              pattern,
+              entry.revision,
+              existing?.id,
+              native?.generation,
+            ]),
+          );
+    return {
+      fingerprint,
+      description: [
+        'Trust repository identities matching ' + pattern + '.',
+        'Executable definitions still need their own local review.',
+        ...(existing && !native
+          ? ['Transfer this pattern from Repository trust to the profile.']
+          : []),
+      ].join('\n'),
+      accept: () => {
+        this.record(
+          randomUUID(),
+          [profile.path, entry.key, entry.revision],
+          now => {
+            const rule = this.addPattern(pattern, now);
+            this.profile.bind(
+              rule.id,
+              profile,
+              entry.key,
+              entry.revision,
+              fingerprint,
+            );
+            return {
+              action: 'add-pattern',
+              target: pattern,
+              ruleId: rule.id,
+              provider: null,
+              sessionId: null,
+              fingerprint: null,
+            };
+          },
+        );
+      },
+      applied: () => {
+        const rule = this.rule(scope);
+        return (
+          !!rule &&
+          !rule.revokedAt &&
+          this.profile.get(rule.id)?.revision === entry.revision &&
+          this.profile.passes(rule.id)
+        );
+      },
+      revoke: () => {
+        const rule = this.rule(scope);
+        if (!rule) return;
+        this.profile.revoke(rule.id);
+        this.database
+          .prepare('DELETE FROM repository_trust_approvals WHERE rule_id = ?')
+          .run(rule.id);
+      },
+    };
+  };
+
+  reconcileProfile(profile: LoadedSetupProfile | null) {
+    for (const id of this.profile.reconcile(profile))
+      this.database
+        .prepare('DELETE FROM repository_trust_approvals WHERE rule_id = ?')
+        .run(id);
+  }
 
   private rule(scope: string) {
     const row = this.database
@@ -88,7 +183,8 @@ export class RepositoryTrustStore {
     const hostId = this.database
       .prepare("SELECT value FROM metadata WHERE key = 'instance_id'")
       .get()!.value;
-    this.database.exec('BEGIN IMMEDIATE');
+    const ownsTransaction = !this.database.isTransaction;
+    if (ownsTransaction) this.database.exec('BEGIN IMMEDIATE');
     try {
       const decision = repositoryTrustDecisionSchema.parse({
         ...execute(at),
@@ -100,9 +196,9 @@ export class RepositoryTrustStore {
       this.database
         .prepare('INSERT INTO repository_trust_actions VALUES (?, ?, ?)')
         .run(id, key, JSON.stringify(decision));
-      this.database.exec('COMMIT');
+      if (ownsTransaction) this.database.exec('COMMIT');
     } catch (error) {
-      this.database.exec('ROLLBACK');
+      if (ownsTransaction) this.database.exec('ROLLBACK');
       throw error;
     }
   }
@@ -123,10 +219,19 @@ export class RepositoryTrustStore {
   settings(input: RepositoryTrustSettingsInput) {
     if (input.action !== 'read')
       this.record(input.actionId, input, now => {
+        const existing =
+          input.action === 'add-pattern'
+            ? this.rule(patternScope(input.pattern))
+            : this.rules().find(rule => rule.id === input.ruleId);
+        if (existing && this.profile.get(existing.id))
+          throw new SessionError(
+            'invalid-request',
+            'This repository pattern is managed by the profile. Edit it in Your setup.',
+          );
         const rule =
           input.action === 'add-pattern'
             ? this.addPattern(input.pattern, now)
-            : this.rules().find(rule => rule.id === input.ruleId);
+            : existing;
         if (!rule)
           throw new SessionError(
             'not-found',
@@ -158,7 +263,7 @@ export class RepositoryTrustStore {
         };
       });
     return {
-      rules: this.rules(),
+      rules: this.rules().filter(rule => this.profile.passes(rule.id)),
       history: this.database
         .prepare(
           'SELECT document FROM repository_trust_actions ORDER BY rowid DESC LIMIT 100',
@@ -208,6 +313,11 @@ export class RepositoryTrustStore {
               'Verify a single Git repository identity before approving a rule.',
             );
           const { gitDirectory, remote } = target;
+          if (remote && this.profileDenies(remote))
+            throw new SessionError(
+              'invalid-request',
+              'This repository is denied by the active profile.',
+            );
           const scope = repositoryScope(gitDirectory);
           const earlier = this.rule(scope);
           let rule: RepositoryTrustRule;
@@ -223,6 +333,11 @@ export class RepositoryTrustStore {
                 'An exact repository decision takes precedence. Review this repository by its exact identity.',
               );
             rule = this.addPattern(input.pattern, now);
+            if (!this.profile.passes(rule.id))
+              throw new SessionError(
+                'invalid-request',
+                'Review this profile trust pattern before approving definitions.',
+              );
             const matching = this.matchingPatterns(remote);
             if (matching.length !== 1)
               throw new SessionError(
@@ -326,11 +441,32 @@ export class RepositoryTrustStore {
   }
 
   private matchingPatterns(remote: string) {
-    return this.rules().filter(
+    const matches = this.rules().filter(
       rule =>
         rule.kind === 'pattern' &&
         !rule.revokedAt &&
+        this.profile.passes(rule.id) &&
         matchesRepositoryPattern(rule.pattern, remote),
+    );
+    if (!matches.some(rule => this.profile.get(rule.id))) return matches;
+    const specificity = (rule: RepositoryTrustRule) =>
+      rule.kind === 'pattern'
+        ? rule.pattern.split('/').filter(part => part !== '*').length
+        : 0;
+    const highest = Math.max(...matches.map(specificity));
+    return matches.filter(rule => specificity(rule) === highest);
+  }
+
+  private profileDenies(remote: string) {
+    const decisions = activeSetupProfile(this.database)?.desired
+      ?.repositoryTrust;
+    return (
+      decisions?.some(
+        item =>
+          !('disabled' in item) &&
+          item.effect === 'deny' &&
+          matchesRepositoryPattern(item.pattern, remote),
+      ) ?? false
     );
   }
 
@@ -338,6 +474,11 @@ export class RepositoryTrustStore {
     const target = this.target(identity);
     if (!target) return { state: 'unverified' as const };
     const { gitDirectory, remote } = target;
+    if (remote && this.profileDenies(remote))
+      return {
+        state: 'withheld' as const,
+        reason: 'This repository is denied by the active profile.',
+      };
     const exact = this.rule(repositoryScope(gitDirectory));
     const patterns = !exact && remote ? this.matchingPatterns(remote) : [];
     if (patterns.length > 1) return { state: 'ambiguous' as const };
@@ -348,7 +489,7 @@ export class RepositoryTrustStore {
         this.rules().some(
           entry =>
             entry.kind === 'pattern' &&
-            entry.revokedAt &&
+            (entry.revokedAt || !this.profile.passes(entry.id)) &&
             matchesRepositoryPattern(entry.pattern, remote),
         );
       return { state: revoked ? ('withheld' as const) : ('none' as const) };

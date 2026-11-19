@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  claudePlanHookDefinitionSchema,
   type ClaudePlanHookDefinition,
   readonlyMcpGrantSchema,
   readonlyMcpObservationSchema,
@@ -9,6 +10,16 @@ import {
   type ReadonlyMcpObservation,
   type Session,
 } from '@nesvo/contracts';
+import type { SetupReviewInspection } from '../setup-profile-review-queue';
+import type { LoadedSetupProfile } from '../setup-profile-file';
+import {
+  SetupNativeBindings,
+  nativeProfileCommand,
+} from '../setup-native-bindings';
+import {
+  inspectRepositoryIdentity,
+  matchesRepositoryPattern,
+} from '../repositories/identity';
 import { redactLogMessage } from '../log-redaction';
 import {
   DirectCommandReviewError,
@@ -87,6 +98,11 @@ const unavailable = (message: string): never => {
 
 export class ReadonlyMcpGrants {
   private readonly key: string;
+  private readonly profile: SetupNativeBindings;
+  private readonly observations = new Map<
+    string,
+    { value: ReadonlyMcpObservation; at: number }
+  >();
 
   constructor(
     private readonly database: DatabaseSync,
@@ -96,7 +112,12 @@ export class ReadonlyMcpGrants {
       server: string,
       signal: AbortSignal,
     ) => Promise<NativeMcpObservation>,
+    private readonly accountAlias?: (
+      provider: Session['provider'],
+      alias?: string,
+    ) => string | null | undefined,
   ) {
+    this.profile = new SetupNativeBindings(database, 'readonly-integrations');
     database
       .prepare(
         "INSERT OR IGNORE INTO metadata (key, value) VALUES ('readonly_grants_key', ?)",
@@ -107,6 +128,266 @@ export class ReadonlyMcpGrants {
         .prepare("SELECT value FROM metadata WHERE key = 'readonly_grants_key'")
         .get()!.value,
     );
+  }
+
+  inspectProfile(signal: AbortSignal): SetupReviewInspection {
+    return async (profile, entry) => {
+      if (!entry.key.startsWith('integrations/')) return undefined;
+      const declaration = profile.desired?.integrations?.find(
+        item => entry.key === 'integrations/' + item.id,
+      );
+      if (!declaration || 'disabled' in declaration) return undefined;
+      const session = declaration.sessionId
+        ? this.session(declaration.sessionId)
+        : undefined;
+      const account = this.accountAlias?.(
+        declaration.provider,
+        declaration.account,
+      );
+      if (
+        account === undefined ||
+        !session ||
+        session.archivedAt ||
+        session.mode !== 'read-only' ||
+        session.provider !== declaration.provider ||
+        (session.profileId ?? null) !== account ||
+        session.parentId ||
+        session.role === 'worker' ||
+        session.workflowRunId ||
+        session.workflowStepId ||
+        session.scheduledJobId
+      )
+        return 'Choose a standalone Plan or Read-only session on the named provider account.';
+      try {
+        if (declaration.repository) {
+          const identity = await inspectRepositoryIdentity(
+            session.directory,
+            signal,
+          );
+          if (
+            identity.status !== 'remote' ||
+            !matchesRepositoryPattern(declaration.repository, identity.remote)
+          )
+            return 'The current session does not match the integration’s verified repository scope.';
+        }
+        const hooks = await Promise.all(
+          (declaration.hooks ?? []).map(async hook => {
+            if (
+              session.provider !== 'Claude Code' ||
+              hook.event !== 'SessionStart' ||
+              !hook.command
+            )
+              throw new Error(
+                'Supply a direct SessionStart command for a supported Claude Code Plan session.',
+              );
+            const definition = claudePlanHookDefinitionSchema.parse({
+              name: hook.selector,
+              matcher: hook.matcher ?? '',
+              command: nativeProfileCommand(hook.command),
+            });
+            return {
+              definition,
+              inspected: await this.verifyHook(session, definition, signal),
+            };
+          }),
+        );
+        if (hooks.length > 8)
+          return 'Choose up to eight hooks for this Plan session.';
+        const tools = (declaration.tools ?? []).map(({ server, tool }) => {
+          const observation = this.observations.get(
+            JSON.stringify([session.id, server]),
+          );
+          if (!observation || Date.now() - observation.at > 300_000)
+            throw new Error(
+              'Inspect the configured MCP server for this session in Read-only integrations first.',
+            );
+          if (observation.value.transport !== 'https')
+            throw new Error(
+              'This profile path requires an HTTPS MCP observation with an exact tool inventory.',
+            );
+          const found = observation.value.tools.find(
+            item => item.name === tool,
+          );
+          if (!found)
+            throw new Error(
+              'Choose an exact tool reported in the reviewed MCP inventory.',
+            );
+          return { tool, observation: observation.value };
+        });
+        if (!hooks.length && !tools.length)
+          return 'Declare at least one supported hook or exact MCP tool.';
+        const previous = () =>
+          [
+            ...this.hooks(session.id, false).map(item => item.grant.id),
+            ...this.grants(session.id, false).map(item => item.id),
+          ].filter(id => this.profile.get(id)?.declaration === entry.key);
+        const generations = previous().map(
+          id => this.profile.get(id)?.generation ?? 0,
+        );
+        const generation = generations.length ? Math.max(...generations) : 0;
+        const fingerprint = this.sign([
+          session.id,
+          session.directory,
+          account,
+          generation,
+          hooks.map(hook => hook.inspected.fingerprint),
+          tools.map(({ observation, tool }) => [
+            observation.server,
+            observation.revision,
+            tool,
+          ]),
+        ]);
+        return {
+          fingerprint,
+          description: [
+            session.provider + ' · ' + session.title,
+            ...hooks.map(
+              ({ definition, inspected }) =>
+                'SessionStart ' +
+                definition.name +
+                ': ' +
+                JSON.stringify([
+                  inspected.executable,
+                  ...definition.command.argv,
+                ]),
+            ),
+            ...tools.map(
+              ({ observation, tool }) =>
+                observation.endpoint + ' · ' + observation.server + '/' + tool,
+            ),
+            ...(hooks.length
+              ? [
+                  'Approved hooks start disabled. Enable each hook explicitly for this session.',
+                ]
+              : []),
+          ]
+            .map(line => redactLogMessage(line))
+            .join('\n'),
+          accept: () => {
+            const now = this.session(session.id);
+            if (
+              !now ||
+              now.archivedAt ||
+              now.mode !== 'read-only' ||
+              now.directory !== session.directory ||
+              now.profileId !== session.profileId
+            )
+              return unavailable(
+                'The selected Plan or Read-only session changed.',
+              );
+            for (const id of previous()) {
+              this.database
+                .prepare('DELETE FROM readonly_mcp_grants WHERE id = ?')
+                .run(id);
+              this.database
+                .prepare('DELETE FROM readonly_claude_hooks WHERE id = ?')
+                .run(id);
+              this.profile.revoke(id);
+            }
+            if (
+              this.hooks(session.id).length + hooks.length > 8 ||
+              this.hooks().length + hooks.length > 100 ||
+              this.grants().length + tools.length > 100
+            )
+              return unavailable(
+                'This computer reached its read-only integration grant limit.',
+              );
+            for (const { definition, inspected } of hooks) {
+              const grant = {
+                id: randomUUID(),
+                sessionId: session.id,
+                name: definition.name,
+                matcher: definition.matcher,
+                revision: inspected.fingerprint,
+                enabled: false,
+              };
+              this.database
+                .prepare('INSERT INTO readonly_claude_hooks VALUES (?, ?, ?)')
+                .run(
+                  grant.id,
+                  session.id,
+                  JSON.stringify({ grant, definition }),
+                );
+              this.profile.bind(
+                grant.id,
+                profile,
+                entry.key,
+                entry.revision,
+                fingerprint,
+                generation,
+              );
+              this.record(
+                {
+                  id: randomUUID(),
+                  action: 'approve-hook',
+                  actor: 'operator',
+                  grantId: grant.id,
+                  sessionId: session.id,
+                  revision: grant.revision,
+                  runId: null,
+                  tool: null,
+                  hook: grant.name,
+                },
+                [profile.path, entry.key, grant.id],
+                { action: 'approve-hook', hook: grant },
+              );
+            }
+            for (const { observation, tool } of tools) {
+              const grant = readonlyMcpGrantSchema.parse({
+                ...observation,
+                id: randomUUID(),
+                selection: { kind: 'tool', tool },
+                profileId: session.profileId,
+                createdAt: new Date().toISOString(),
+              });
+              this.database
+                .prepare('INSERT INTO readonly_mcp_grants VALUES (?, ?, ?)')
+                .run(grant.id, session.id, JSON.stringify(grant));
+              this.profile.bind(
+                grant.id,
+                profile,
+                entry.key,
+                entry.revision,
+                fingerprint,
+                generation,
+              );
+              this.record(
+                {
+                  id: randomUUID(),
+                  action: 'approve',
+                  actor: 'operator',
+                  grantId: grant.id,
+                  sessionId: session.id,
+                  revision: grant.revision,
+                  runId: null,
+                  tool,
+                },
+                [profile.path, entry.key, grant.id],
+                { action: 'approve-mcp', grant },
+              );
+            }
+          },
+          applied: () =>
+            previous().filter(
+              id =>
+                this.profile.get(id)?.fingerprint === fingerprint &&
+                this.profile.passes(id),
+            ).length ===
+            hooks.length + tools.length,
+          revoke: () => previous().forEach(id => this.profile.revoke(id)),
+        };
+      } catch (error) {
+        return redactLogMessage(
+          error instanceof Error
+            ? error.message
+            : 'The integration could not be verified.',
+        ).slice(0, 300);
+      }
+    };
+  }
+
+  reconcileProfile(profile: LoadedSetupProfile | null) {
+    this.profile.reconcile(profile);
   }
 
   private sign(value: unknown) {
@@ -174,7 +455,7 @@ export class ReadonlyMcpGrants {
     });
   }
 
-  private grants(sessionId?: string) {
+  private grants(sessionId?: string, effective = true) {
     const rows = sessionId
       ? this.database
           .prepare(
@@ -186,12 +467,14 @@ export class ReadonlyMcpGrants {
             'SELECT document FROM readonly_mcp_grants ORDER BY rowid DESC LIMIT 100',
           )
           .all();
-    return rows.map(row =>
-      readonlyMcpGrantSchema.parse(JSON.parse(String(row.document))),
-    );
+    return rows
+      .map(row =>
+        readonlyMcpGrantSchema.parse(JSON.parse(String(row.document))),
+      )
+      .filter(grant => !effective || this.profile.passes(grant.id));
   }
 
-  private hooks(sessionId?: string): StoredHook[] {
+  private hooks(sessionId?: string, effective = true): StoredHook[] {
     const rows = sessionId
       ? this.database
           .prepare(
@@ -203,7 +486,9 @@ export class ReadonlyMcpGrants {
             'SELECT document FROM readonly_claude_hooks ORDER BY rowid LIMIT 100',
           )
           .all();
-    return rows.map(row => JSON.parse(String(row.document)) as StoredHook);
+    return rows
+      .map(row => JSON.parse(String(row.document)) as StoredHook)
+      .filter(item => !effective || this.profile.passes(item.grant.id));
   }
 
   private async verifyHook(
@@ -393,6 +678,10 @@ export class ReadonlyMcpGrants {
           'This hook grant was already removed.',
         );
       const { id, sessionId, revision, name } = stored.grant;
+      if (input.action === 'revoke-hook' && this.profile.get(id))
+        return unavailable(
+          'This hook is managed by the profile. Edit it in Your setup.',
+        );
       const replacement =
         input.action === 'set-hook-enabled'
           ? { ...stored.grant, enabled: input.enabled }
@@ -447,6 +736,10 @@ export class ReadonlyMcpGrants {
       const grant = readonlyMcpGrantSchema.parse(
         JSON.parse(String(row.document)),
       );
+      if (this.profile.get(grant.id))
+        return unavailable(
+          'This grant is managed by the profile. Edit it in Your setup.',
+        );
       const reply = { action: 'revoke' as const };
       this.transaction(() => {
         this.database
@@ -564,8 +857,15 @@ export class ReadonlyMcpGrants {
       input.server,
       await this.observe(session, input.server, signal),
     );
-    if (input.action === 'inspect-mcp')
+    if (input.action === 'inspect-mcp') {
+      if (this.observations.size >= 100)
+        this.observations.delete(this.observations.keys().next().value!);
+      this.observations.set(JSON.stringify([session.id, input.server]), {
+        value: observation,
+        at: Date.now(),
+      });
       return { action: 'inspect-mcp', observation };
+    }
     const previous = this.previous(input.actionId, input);
     if (previous) return previous;
     if (input.revision !== observation.revision)

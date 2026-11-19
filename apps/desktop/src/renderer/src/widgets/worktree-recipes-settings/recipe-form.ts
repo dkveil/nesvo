@@ -126,11 +126,11 @@ export function parseRecipeValues(
   const errors: RecipeFormErrors = {};
   const command = (field: 'setupCommand' | 'cleanupCommand'): unknown => {
     const value = values[field].trim();
-    if (!value.startsWith('{')) return value;
+    if (!value.startsWith('{') && !value.startsWith('[')) return value;
     try {
       return JSON.parse(value) as unknown;
     } catch {
-      errors[field] = 'Enter a valid direct-argv JSON object.';
+      errors[field] = 'Enter a valid direct-argv JSON object or list.';
       return value;
     }
   };

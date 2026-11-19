@@ -16,6 +16,11 @@ import {
   runDirectCommand,
 } from './process/direct-command';
 import { SessionError } from './sessions/session-error';
+import { afterConfigurationCommit } from './workflows/assistant-change-store';
+import { SetupNativeBindings } from './setup-native-bindings';
+import type { LoadedSetupProfile } from './setup-profile-file';
+import type { SetupProfileDeclaration } from '@nesvo/contracts';
+import type { SetupNativeReview } from './setup-profile-review-queue';
 
 type Watchers = Extract<SessionMessageWatcherReply, { action: 'read' }>;
 type Entry = Watchers['history'][number];
@@ -51,12 +56,17 @@ export class SessionMessageWatchers {
   private readonly live = new Map<string, Live>();
   private readonly key: string;
   private closing = false;
+  private readonly profile: SetupNativeBindings;
 
   constructor(
     private readonly database: DatabaseSync,
     private readonly ingress: ExternalSessionIngress,
     private readonly activeSession: (id: string) => boolean,
   ) {
+    this.profile = new SetupNativeBindings(
+      database,
+      'session-message-watchers',
+    );
     database
       .prepare(
         "INSERT OR IGNORE INTO metadata (key, value) VALUES ('watcher_key', ?)",
@@ -83,10 +93,110 @@ export class SessionMessageWatchers {
       const row = this.row(id);
       return (
         !!row &&
+        this.profile.passes(id) &&
         id + ':' + row.revision === revision &&
         viewDefinition(row).allowedSessionIds.includes(sessionId)
       );
     };
+  }
+
+  async inspectFromProfile(
+    profile: LoadedSetupProfile,
+    declaration: SetupProfileDeclaration,
+    definition: SessionMessageWatcherDefinition,
+    signal: AbortSignal,
+  ): Promise<SetupNativeReview> {
+    const inspected = await this.inspect(definition, signal);
+    const find = () =>
+      this.rows().find(row => {
+        const binding = this.profile.get(row.id);
+        return (
+          binding?.declaration === declaration.key &&
+          binding.profile === profile.path
+        );
+      });
+    const previous = find();
+    const fingerprint = this.sign([
+      inspected.revision,
+      previous ? (this.profile.get(previous.id)?.generation ?? 0) : 0,
+    ]);
+    return {
+      fingerprint,
+      description: [
+        'Watcher: ' + definition.name,
+        'Working directory: ' + inspected.cwd,
+        'Command: ' +
+          JSON.stringify([inspected.executable, ...definition.command.argv]),
+        'A separate Start action is required.',
+      ]
+        .map(line => redactLogMessage(line))
+        .join('\n'),
+      accept: () => {
+        const current = find();
+        if (current && this.live.has(current.id))
+          return refuse(
+            'Stop the existing watcher before approving a changed definition.',
+          );
+        if (!current && this.rows().length >= 20)
+          return refuse(
+            'Remove a saved watcher before saving a profile watcher.',
+          );
+        if (definition.allowedSessionIds.some(id => !this.activeSession(id)))
+          return refuse('A watcher target is no longer active.');
+        const id = current?.id ?? randomUUID();
+        this.database
+          .prepare(
+            `
+          INSERT INTO session_message_watchers (id, definition, revision, state)
+          VALUES (?, ?, ?, 'idle')
+          ON CONFLICT(id) DO UPDATE SET definition = excluded.definition,
+            revision = excluded.revision, state = 'idle', detail = NULL, exit_code = NULL
+        `,
+          )
+          .run(id, JSON.stringify(definition), inspected.revision);
+        this.profile.bind(
+          id,
+          profile,
+          declaration.key,
+          declaration.revision,
+          fingerprint,
+        );
+        this.log(randomUUID(), id, inspected.revision, 'approve', null, [
+          profile.path,
+          declaration.key,
+        ]);
+      },
+      applied: () => {
+        const row = find();
+        return (
+          !!row &&
+          this.profile.get(row.id)?.fingerprint === fingerprint &&
+          this.profile.passes(row.id)
+        );
+      },
+      revoke: () => {
+        const row = find();
+        if (!row) return;
+        this.profile.revoke(row.id);
+        this.stopProfileWatchers([row.id]);
+      },
+    };
+  }
+
+  reconcileProfile(profile: LoadedSetupProfile | null) {
+    this.stopProfileWatchers(this.profile.reconcile(profile));
+  }
+
+  private stopProfileWatchers(ids: string[]) {
+    afterConfigurationCommit(this.database, () => {
+      for (const id of ids) {
+        const watcher = this.live.get(id);
+        if (!watcher) continue;
+        watcher.stopped =
+          'The profile watcher changed or its local approval was revoked.';
+        watcher.controller.abort();
+      }
+    });
   }
 
   private sign(value: unknown) {
@@ -243,6 +353,7 @@ export class SessionMessageWatchers {
       const live = this.live.get(input.watcherId);
       const valid =
         live &&
+        this.profile.passes(input.watcherId) &&
         live.leaseId === input.leaseId &&
         live.ends > Date.now() &&
         !live.controller.signal.aborted;
@@ -301,6 +412,10 @@ export class SessionMessageWatchers {
       throw new SessionError('not-found', 'The watcher no longer exists.');
     if (input.action === 'start') return this.start(input, row, signal);
     const action = input.action;
+    if (action === 'revoke' && this.profile.get(row.id))
+      return refuse(
+        'This watcher is managed by the profile. Edit it in Your setup.',
+      );
     this.transaction(() => {
       this.log(input.actionId, row.id, row.revision, action, null, input);
       if (action === 'revoke')
@@ -326,6 +441,8 @@ export class SessionMessageWatchers {
     signal: AbortSignal,
   ) {
     const definition = viewDefinition(row);
+    if (!this.profile.passes(row.id))
+      return refuse('Review the current profile watcher before starting it.');
     const verified = await this.inspect(definition, signal);
     if (this.previous(input.actionId, input))
       return {
@@ -336,6 +453,7 @@ export class SessionMessageWatchers {
       };
     if (
       verified.revision !== row.revision ||
+      !this.profile.passes(row.id) ||
       this.row(row.id)?.revision !== row.revision
     )
       return refuse(
@@ -373,6 +491,7 @@ export class SessionMessageWatchers {
     };
     const active = () =>
       this.live.get(row.id) === live &&
+      this.profile.passes(row.id) &&
       !live.controller.signal.aborted &&
       live.ends > Date.now();
     const authorized = {

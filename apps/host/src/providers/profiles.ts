@@ -87,6 +87,14 @@ export class ProviderProfiles {
     );
   }
 
+  alias(provider: Provider, alias?: string) {
+    if (!alias || alias === 'default') return null;
+    const available = this.list().filter(
+      profile => profile.provider === provider && profile.label === alias,
+    );
+    return available.length === 1 ? available[0]!.id : undefined;
+  }
+
   async create(input: CreateProviderProfileInput, signal: AbortSignal) {
     const path = await ownedDirectory(input.configDirectory, signal);
     const profiles = this.list();

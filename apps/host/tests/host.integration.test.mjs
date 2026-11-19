@@ -2855,6 +2855,372 @@ test('profile Inbox rules use verified repository scopes and retire transferred 
   }
 });
 
+test('a profile usage hold binds an observed window and requires explicit release after removal', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-usage-')),
+  );
+  const file = join(root, 'profile.yaml');
+  const control = join(root, 'usage-control.json');
+  await writeFile(control, '{}');
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_PROFILE_PATH: file,
+    NESVO_FIXTURE_USAGE_CONTROL: control,
+  });
+  const apply = async () => {
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    const { result } = await host.request('setup-profile', {
+      action: 'apply',
+      file,
+      instanceId: review.instanceId,
+      revision: review.revision,
+      effectiveRevision: review.effectiveRevision,
+      actionId: randomUUID(),
+    });
+    assert.equal(result.receipt?.status, 'applied', JSON.stringify(result));
+  };
+  const create = () =>
+    host.request('create-session', {
+      requestId: randomUUID(),
+      title: 'Quota fixture',
+      directory: root,
+      model: 'sonnet',
+    });
+  try {
+    const usage = (
+      await host.request('provider-usage', { provider: 'Claude Code' })
+    ).usage;
+    const window = usage.windows.find(
+      item => item.usedPercent >= 50 && !/haiku|opus/i.test(item.id),
+    );
+    assert.ok(window, JSON.stringify(usage));
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        limits: [
+          {
+            id: 'quota',
+            provider: 'Claude Code',
+            window: window.id,
+            threshold: 50,
+            effect: 'hold',
+          },
+        ],
+      }),
+    );
+    await apply();
+    const { changes } = (
+      await host.request('list-config-changes', { area: 'setup-review' })
+    ).result.page;
+    const proposal = changes.find(item => item.target.id === 'limits/quota');
+    assert.ok(proposal?.setupVerified);
+    const result = (
+      await host.request('decide-config-proposal', {
+        id: proposal.id,
+        revision: proposal.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+        confirmAuthority: true,
+      })
+    ).result;
+    assert.equal(result.receipt?.status, 'applied', JSON.stringify(result));
+    assert.equal((await create()).usageHold?.evidence.windowId, window.id);
+    await writeFile(file, 'version: 1\n');
+    await apply();
+    assert.equal((await create()).usageHold?.evidence.windowId, window.id);
+    const { settings } = await host.request('provider-usage-gates', {
+      action: 'read',
+    });
+    const [policy] = settings.profilePolicies;
+    assert.equal(policy.canRelease, true);
+    assert.equal(
+      (
+        await host.request('provider-usage-gates', {
+          action: 'release-profile',
+          actionId: randomUUID(),
+          id: policy.id,
+          revision: policy.revision,
+        })
+      ).type,
+      'provider-usage-gates',
+    );
+    assert.equal((await create()).type, 'session');
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a profile route and watcher use local targets and require explicit Start', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-watcher-')),
+  );
+  const file = join(root, 'profile.yaml');
+  const script = join(root, 'direct-watcher.cjs');
+  const marker = join(root, 'watcher-ran');
+  await writeFile(
+    script,
+    `
+    require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');
+    console.log(JSON.stringify({eventId:'profile-1',kind:'notify',text:'Profile watcher event'}));
+    setTimeout(() => {}, 15000);
+  `,
+  );
+  const open = () =>
+    launch(join(root, 'data'), join(root, 'pids.json'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_PROFILE_PATH: file,
+      NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+    });
+  let host = open();
+  const watchers = input => host.request('session-message-watchers', input);
+  const ingress = input => host.request('external-session-messages', input);
+  try {
+    const target = await host.request('create-session', {
+      title: 'Target',
+      directory: root,
+      model: 'haiku',
+    });
+    assert.equal(target.type, 'session', JSON.stringify(target));
+    const sessionId = target.session.id;
+    const enrollment = (
+      await host.request('enroll-external-inbox-device', {
+        name: 'profile-fixture',
+      })
+    ).enrollment;
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        externalMessages: [
+          {
+            id: 'fixture',
+            name: 'Profile watcher',
+            device: 'profile-fixture',
+            targets: [sessionId],
+            destination: 'session',
+            watcherDirectory: root,
+            watcher: {
+              executable: process.execPath,
+              argv: [script],
+              files: ['direct-watcher.cjs'],
+            },
+          },
+        ],
+      }),
+    );
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    const applied = (
+      await host.request('setup-profile', {
+        action: 'apply',
+        file,
+        instanceId: review.instanceId,
+        revision: review.revision,
+        effectiveRevision: review.effectiveRevision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(applied.receipt?.status, 'applied', JSON.stringify(applied));
+    assert.deepEqual((await watchers({ action: 'read' })).reply.watchers, []);
+    assert.deepEqual((await ingress({ action: 'read' })).settings.routes, []);
+    const { changes } = (
+      await host.request('list-config-changes', { area: 'setup-review' })
+    ).result.page;
+    const proposal = changes.find(
+      item => item.target.id === 'externalMessages/fixture',
+    );
+    assert.ok(proposal?.setupVerified, JSON.stringify(proposal));
+    const approved = (
+      await host.request('decide-config-proposal', {
+        id: proposal.id,
+        revision: proposal.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+        confirmAuthority: true,
+      })
+    ).result;
+    assert.equal(approved.receipt?.status, 'applied', JSON.stringify(approved));
+    assert.equal(
+      (await ingress({ action: 'read' })).settings.routes[0].deviceId,
+      enrollment.device.id,
+    );
+    const [watcher] = (await watchers({ action: 'read' })).reply.watchers;
+    assert.equal(watcher.state, 'idle');
+    assert.equal(existsSync(marker), false);
+    const start = {
+      action: 'start',
+      watcherId: watcher.id,
+      actionId: randomUUID(),
+    };
+    assert.ok((await watchers(start)).reply.leaseId);
+    for (let attempt = 0; attempt < 80; attempt++) {
+      if (
+        (await ingress({ action: 'history', sessionId })).settings.messages
+          .length
+      )
+        break;
+      await delay(50);
+    }
+    const history = (await ingress({ action: 'history', sessionId })).settings
+      .messages;
+    assert.deepEqual(
+      history.map(item => item.text),
+      ['Profile watcher event'],
+    );
+    await host.stop();
+    await rm(marker);
+    host = open();
+    assert.equal(
+      (await watchers({ action: 'read' })).reply.watchers[0].state,
+      'held',
+    );
+    assert.equal((await watchers(start)).reply.leaseId, null);
+    assert.equal(existsSync(marker), false);
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('profile worktrees use reviewed branch and recipe definitions without implicit setup', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-worktree-')),
+  );
+  const project = join(root, 'project');
+  const file = join(root, 'profile.yaml');
+  const script = join(root, 'direct-recipe.cjs');
+  const git = (...args) => promisify(execFile)('git', ['-C', project, ...args]);
+  await mkdir(project);
+  await git('init', '-q');
+  await git('remote', 'add', 'origin', 'https://example.test/team/app.git');
+  await git(
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.test',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'Initial',
+  );
+  await writeFile(
+    script,
+    "require('node:fs').appendFileSync('profile-setup', process.argv[2]);",
+  );
+  const command = value => ({
+    executable: process.execPath,
+    argv: [script, value],
+  });
+  await writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      worktrees: [
+        {
+          id: 'git',
+          kind: 'builtin',
+          name: 'Reviewed Git',
+          scope: { kind: 'repository', directory: project },
+        },
+      ],
+      branches: [
+        {
+          id: 'features',
+          name: 'Features',
+          scope: { kind: 'computer' },
+          template: 'feature/<slug>',
+        },
+      ],
+      recipes: [
+        {
+          id: 'app',
+          name: 'App setup',
+          repository: 'example.test/team/app',
+          provider: 'git',
+          setup: [command('1'), command('2')],
+        },
+      ],
+    }),
+  );
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_PROFILE_PATH: file,
+    NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+  });
+  const create = () =>
+    host.request('create-session', {
+      requestId: randomUUID(),
+      title: 'Launch Profile',
+      directory: project,
+      model: 'haiku',
+      isolation: { kind: 'worktree', task: { slug: 'native' } },
+    });
+  try {
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    const applied = (
+      await host.request('setup-profile', {
+        action: 'apply',
+        file,
+        instanceId: review.instanceId,
+        revision: review.revision,
+        effectiveRevision: review.effectiveRevision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(applied.receipt?.status, 'applied', JSON.stringify(applied));
+    assert.match((await create()).message, /Review the worktree provider/);
+    const reviews = (
+      await host.request('list-config-changes', { area: 'setup-review' })
+    ).result.page.changes;
+    for (const key of ['worktrees/git', 'recipes/app']) {
+      const proposal = reviews.find(change => change.target.id === key);
+      assert.ok(proposal, key);
+      const result = (
+        await host.request('decide-config-proposal', {
+          id: proposal.id,
+          revision: proposal.revision,
+          actionId: randomUUID(),
+          decision: 'accept',
+          confirmAuthority: true,
+        })
+      ).result;
+      assert.equal(result.receipt?.status, 'applied', JSON.stringify(result));
+    }
+    assert.equal(existsSync(join(project, 'profile-setup')), false);
+    const created = await create();
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    assert.equal(created.session.worktree.branch, 'feature/native');
+    const marker = join(created.session.directory, 'profile-setup');
+    for (let turn = 0; turn < 60 && !existsSync(marker); turn++)
+      await delay(50);
+    for (
+      let turn = 0;
+      turn < 60 && (await readFile(marker, 'utf8')) !== '12';
+      turn++
+    )
+      await delay(50);
+    assert.equal(await readFile(marker, 'utf8'), '12');
+    await writeFile(
+      script,
+      "require('node:fs').writeFileSync('profile-setup', 'changed');",
+    );
+    const refused = await create();
+    assert.equal(refused.type, 'error', JSON.stringify(refused));
+    assert.match(refused.message, /inputs changed/);
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('a reviewed profile command is registered paused and executes only at the approved fingerprint', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-profile-automation-')),
@@ -2862,6 +3228,7 @@ test('a reviewed profile command is registered paused and executes only at the a
   const file = join(root, 'profile.yaml');
   const script = join(root, 'write-receipt.cjs');
   const sentinel = join(root, 'automation-ran');
+  const manualId = randomUUID();
   const marker = count =>
     `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, '${count}')`;
   await writeFile(script, marker(1));
@@ -2872,6 +3239,7 @@ test('a reviewed profile command is registered paused and executes only at the a
       automations: [
         {
           id: 'record',
+          adoptJob: manualId,
           name: 'Record evidence',
           timeZone: 'UTC',
           schedule: '08:00',
@@ -2927,6 +3295,20 @@ test('a reviewed profile command is registered paused and executes only at the a
     assert.fail('The automation did not settle.');
   };
   try {
+    const manual = await host.request('save-scheduled-job', {
+      id: manualId,
+      expectedRevision: null,
+      name: 'Manual evidence',
+      prompt: 'Review the local fixture.',
+      directory: root,
+      provider: 'claude',
+      model: 'haiku',
+      effort: null,
+      schedule: { kind: 'daily', time: '10:30' },
+      timeZone: 'UTC',
+      active: false,
+    });
+    assert.equal(manual.type, 'scheduled-job', JSON.stringify(manual));
     const { review } = (
       await host.request('setup-profile', { action: 'inspect' })
     ).result;
@@ -2941,13 +3323,17 @@ test('a reviewed profile command is registered paused and executes only at the a
       })
     ).result;
     assert.equal(applied.receipt?.status, 'applied', JSON.stringify(applied));
-    assert.deepEqual(await list(), []);
+    assert.deepEqual(
+      (await list()).map(item => item.name),
+      ['Manual evidence'],
+    );
     assert.equal(existsSync(sentinel), false);
     const first = await proposal();
     assert.ok(first);
     const approved = await approve(first);
     assert.equal(approved.receipt?.status, 'applied', JSON.stringify(approved));
     const [job] = await list();
+    assert.equal(job.id, manualId);
     assert.equal(job.active, false);
     assert.equal(job.profileOwnership, 'managed');
     assert.equal(job.nextRunAt, null);
@@ -2972,6 +3358,24 @@ test('a reviewed profile command is registered paused and executes only at the a
       ).type,
       'error',
     );
+    await writeFile(script, marker(1));
+    const undone = (
+      await host.request('undo-config-change', {
+        id: approved.receipt.id,
+        revision: approved.receipt.revision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(undone.receipt?.status, 'undone', JSON.stringify(undone));
+    const [restored] = await list();
+    assert.equal(restored.id, manualId);
+    assert.equal(restored.name, 'Manual evidence');
+    assert.equal(restored.active, false);
+    assert.equal(restored.profileOwnership, undefined);
+    const { page } = await host.request('list-scheduled-job-runs', {
+      scheduledJobId: manualId,
+    });
+    assert.equal(page.runs.length, 2);
   } finally {
     await host.stop();
     await rm(root, { recursive: true, force: true });

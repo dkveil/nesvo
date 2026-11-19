@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { devNull } from 'node:os';
 import {
   delimiter,
   dirname,
@@ -124,6 +125,7 @@ export type ListTaskWorktreesParams = {
 };
 
 export type GitCall = {
+  isolatedConfiguration?: boolean;
   args: string[];
   cwd: string;
   timeoutMs: number;
@@ -218,9 +220,15 @@ export async function runGit({
   stdin,
   maxOutputBytes = MAX_GIT_OUTPUT_BYTES,
   captureStdoutBytes,
+  isolatedConfiguration,
 }: GitCall): Promise<OwnedProcessResult> {
   const executable = gitExecutable();
   const environment = gitEnvironment();
+  if (isolatedConfiguration) {
+    environment.GIT_CONFIG_NOSYSTEM = '1';
+    environment.GIT_CONFIG_GLOBAL =
+      process.platform === 'win32' ? 'NUL' : devNull;
+  }
   if (executable.prefix.length > 0) environment.ELECTRON_RUN_AS_NODE = '1';
   if (untranslated) {
     environment.LC_ALL = 'C';
@@ -587,6 +595,8 @@ type SessionOptions = {
   baseCommit?: string;
   carryChanges?: boolean;
   fork?: boolean;
+  skipIncludes?: boolean;
+  verifyCheckoutCommands?: boolean;
   sourceWorktree?: Pick<
     SessionWorktreeLocation,
     'projectDirectory' | 'worktree'
@@ -770,6 +780,8 @@ async function createWorktree(
     fork,
     carryChanges,
     sourceWorktree,
+    skipIncludes,
+    verifyCheckoutCommands,
   }: CreateTaskWorktreeParams & SessionOptions,
   rootName: string,
 ) {
@@ -821,6 +833,26 @@ async function createWorktree(
       'not-repository-root',
       'Choose the top-level directory of the Git repository.',
     );
+  if (verifyCheckoutCommands) {
+    const filters = await runGit({
+      args: [
+        'config',
+        '--includes',
+        '--name-only',
+        '--get-regexp',
+        '^filter\\..*\\.(process|smudge|clean)$',
+      ],
+      cwd: repository,
+      timeoutMs: GIT_QUERY_TIMEOUT_MS,
+      signal,
+      isolatedConfiguration: true,
+    });
+    if (filters.code !== 1 || filters.outputTruncated)
+      fail(
+        'git-failed',
+        'This profile checkout requires a Git path without executable content filters.',
+      );
+  }
   if (isInside(repository, realPathOf(dataDirectory)))
     fail(
       'data-inside-project',
@@ -897,10 +929,21 @@ async function createWorktree(
   let result: OwnedProcessResult;
   try {
     result = await runGit({
-      args: ['worktree', 'add', worktree, '-b', branch, base],
+      args: [
+        ...(verifyCheckoutCommands
+          ? ['-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false']
+          : []),
+        'worktree',
+        'add',
+        worktree,
+        '-b',
+        branch,
+        base,
+      ],
       cwd: repository,
       timeoutMs: GIT_CHANGE_TIMEOUT_MS,
       signal,
+      isolatedConfiguration: verifyCheckoutCommands,
     });
   } catch (error) {
     if (
@@ -940,14 +983,15 @@ async function createWorktree(
         'The source patch could not be applied. Find the retained checkout in Data settings.',
       );
   }
-  const includes = records
-    ? await includeWorktreeFiles(
-        repository,
-        worktree,
-        join(records, `${runId}.include`),
-        signal,
-      )
-    : undefined;
+  const includes =
+    records && !skipIncludes
+      ? await includeWorktreeFiles(
+          repository,
+          worktree,
+          join(records, `${runId}.include`),
+          signal,
+        )
+      : undefined;
   return {
     worktree: realPathOf(worktree),
     branch,

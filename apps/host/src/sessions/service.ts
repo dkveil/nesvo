@@ -475,6 +475,11 @@ export type SessionServiceOptions = {
   isKnownGroup?: (groupId: string) => boolean;
   defaultDirectory?: (groupId?: string) => string | null;
   worktreeCreated?: (session: Session) => void;
+  beforeProfileWorktree?: (
+    directory: string,
+    provider: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   worktreeFinishing?: (sessionId: string, signal: AbortSignal) => Promise<void>;
   lessons?: (session: Session) => string | null;
   inbox?: SessionInboxHooks;
@@ -2006,6 +2011,16 @@ export class SessionService {
       ? this.options.customWorktrees
       : undefined;
     const selection = await custom?.select(projectDirectory, signal);
+    const provider = selection?.provider;
+    const profileRecipe = await this.options.beforeProfileWorktree?.(
+      projectDirectory,
+      provider ? custom?.profile.get(provider.id)?.declaration : undefined,
+      signal,
+    );
+    const profileManaged =
+      profileRecipe ||
+      !!selection?.branchPolicy ||
+      !!(provider && custom?.profile.get(provider.id));
     if (
       options.providerRevision &&
       options.providerRevision !== selection?.provider?.fingerprint
@@ -2016,7 +2031,7 @@ export class SessionService {
       );
     const providerSessionId = options.sessionId ?? id;
     const configured =
-      custom && selection?.provider
+      custom && selection && (selection.provider || selection.branchPolicy)
         ? await custom.create(
             {
               directory: projectDirectory,
@@ -2033,18 +2048,21 @@ export class SessionService {
         : null;
     if (configured?.kind === 'external') {
       const { binding, branch, base } = configured;
-      const includes = await includeBoundWorktreeFiles(
-        this.directory,
-        providerSessionId,
-        projectDirectory,
-        binding.checkout,
-        signal,
-      );
+      const includes = profileManaged
+        ? undefined
+        : await includeBoundWorktreeFiles(
+            this.directory,
+            providerSessionId,
+            projectDirectory,
+            binding.checkout,
+            signal,
+          );
       const metadata: NonNullable<Session['worktree']> = {
         projectDirectory: configured.projectDirectory,
         branch,
         base,
         binding,
+        ...(profileManaged ? { profileManaged: true } : {}),
         state: 'active',
         workerTargetBranch: options.workerTargetBranch,
         includes,
@@ -2068,12 +2086,15 @@ export class SessionService {
       slug: worktreeSlug(title, 'session'),
       runId: id,
       signal,
+      skipIncludes: profileManaged,
+      verifyCheckoutCommands: profileManaged,
     });
     const metadata: NonNullable<Session['worktree']> = {
       projectDirectory: project,
       branch,
       base,
       state: 'active',
+      ...(profileManaged ? { profileManaged: true } : {}),
       ...(options.workerTargetBranch
         ? { workerTargetBranch: options.workerTargetBranch }
         : {}),

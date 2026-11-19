@@ -521,6 +521,7 @@ export const serveHost = ({
             );
           return { definition, tools: runtime.tools };
         },
+        (provider, alias) => profiles.alias(provider, alias),
       );
       const usage = new ProviderUsageService();
       const usageGates = new ProviderUsageGates(
@@ -531,6 +532,7 @@ export const serveHost = ({
             provider,
             await profiles.directory(provider, profileId, signal),
           ),
+        (provider, alias) => profiles.alias(provider, alias),
       );
       const inbox: { current?: InboxRules } = {};
       const emitSessionEvent = (
@@ -621,6 +623,12 @@ export const serveHost = ({
                   };
                 },
                 worktreeCreated: session => recipes.current?.created(session),
+                beforeProfileWorktree: (directory, provider, signal) =>
+                  recipes.current?.beforeProfileWorktree(
+                    directory,
+                    provider,
+                    signal,
+                  ) ?? Promise.resolve(false),
                 lessons: session =>
                   lessons.current?.instructions(session) ?? null,
                 worktreeFinishing: (sessionId, signal) =>
@@ -1289,8 +1297,46 @@ export const serveHost = ({
         directory,
         database,
         configuration,
-        profileAutomations.inspect,
-        profile => profileAutomations.reconcile(profile),
+        async (profile, declaration, instanceId) =>
+          (await profileAutomations.inspect(
+            profile,
+            declaration,
+            instanceId,
+          )) ??
+          (await mcpPolicy.repositoryTrust.inspectProfile(
+            profile,
+            declaration,
+            instanceId,
+          )) ??
+          (await usageGates.inspectProfile(profile, declaration, instanceId)) ??
+          (await customWorktrees.inspectProfile(probes.controller.signal)(
+            profile,
+            declaration,
+            instanceId,
+          )) ??
+          (await worktreeRecipes.inspectProfile(probes.controller.signal)(
+            profile,
+            declaration,
+            instanceId,
+          )) ??
+          (await externalMessages.inspectProfile(
+            watchers,
+            probes.controller.signal,
+          )(profile, declaration, instanceId)) ??
+          readonlyGrants.inspectProfile(probes.controller.signal)(
+            profile,
+            declaration,
+            instanceId,
+          ),
+        profile => {
+          profileAutomations.reconcile(profile);
+          mcpPolicy.repositoryTrust.reconcileProfile(profile);
+          customWorktrees.profile.reconcile(profile);
+          worktreeRecipes.reconcileProfile(profile);
+          externalMessages.profile.reconcile(profile);
+          watchers.reconcileProfile(profile);
+          readonlyGrants.reconcileProfile(profile);
+        },
       );
       const setupDetection = new SetupDetection(
         database,
@@ -1970,13 +2016,17 @@ export const serveHost = ({
                 profileEnvironment(provider, directory),
               ),
             )
-            .then(usage =>
-              send({
+            .then(async usage => {
+              if (usage.status === 'ready')
+                await setupProfile
+                  .recoverPendingReviews('limits/')
+                  .catch(() => undefined);
+              return send({
                 type: 'provider-usage',
                 id: request.id,
                 usage: withProfileUsageWarning(database, usage, profileId),
-              }),
-            )
+              });
+            })
             .catch(error =>
               send({
                 type: 'error',
@@ -4291,13 +4341,17 @@ export const serveHost = ({
         if (request.method === 'readonly-integration-grants') {
           const pending = readonlyGrants
             .settings(request.input, probes.controller.signal)
-            .then(reply =>
-              send({
+            .then(async reply => {
+              if (reply.action === 'inspect-mcp')
+                await setupProfile
+                  .recoverPendingReviews('integrations/')
+                  .catch(() => undefined);
+              return send({
                 type: 'readonly-integration-grants',
                 id: request.id,
                 reply,
-              }),
-            )
+              });
+            })
             .catch(error =>
               send({
                 type: 'error',

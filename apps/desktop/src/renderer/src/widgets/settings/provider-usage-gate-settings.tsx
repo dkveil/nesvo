@@ -9,6 +9,7 @@ import {
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import {
   Dialog,
   DialogCancel,
@@ -37,16 +38,21 @@ export function ProviderUsageGateSettings({
   hostId,
   ready,
   profiles,
+  onEditProfile,
 }: {
   hostId: string;
   ready: boolean;
   profiles: ProviderProfile[];
+  onEditProfile?: () => void;
 }) {
   const [settings, setSettings] = useState<ProviderUsageGateSettings>();
   const [history, setHistory] = useState(false);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [release, setRelease] = useState<
+    NonNullable<ProviderUsageGateSettings['profilePolicies']>[number] | null
+  >(null);
   const [provider, setProvider] = useState<Provider>('Claude Code');
   const [profileId, setProfileId] = useState('default');
   const [policy, setPolicy] = useState<ProviderUsagePolicy['policy']>('warn');
@@ -271,7 +277,7 @@ export function ProviderUsageGateSettings({
           </StatusMessage>
         ) : (
           <>
-            {!settings.policies.length && (
+            {!settings.policies.length && !settings.profilePolicies?.length && (
               <SettingsRow title="No configured usage thresholds" />
             )}
             {settings.policies.map(rule => (
@@ -296,6 +302,24 @@ export function ProviderUsageGateSettings({
                   }
                 >
                   Remove rule
+                </Button>
+              </SettingsRow>
+            ))}
+            {settings.profilePolicies?.map(rule => (
+              <SettingsRow
+                key={rule.id}
+                title={rule.provider + ' · ' + label(rule.profileId)}
+                description={`From profile · ${rule.policy === 'hold' ? 'Hold' : 'Warn'} at ${rule.threshold}% for ${rule.windows.join(', ')}`}
+              >
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={busy || (!rule.canRelease && !onEditProfile)}
+                  onClick={() =>
+                    rule.canRelease ? setRelease(rule) : onEditProfile?.()
+                  }
+                >
+                  {rule.canRelease ? 'Release rule' : 'Edit profile setting'}
                 </Button>
               </SettingsRow>
             ))}
@@ -357,6 +381,26 @@ export function ProviderUsageGateSettings({
           </>
         )}
       </SettingsSection>
+      <ConfirmDialog
+        open={!!release}
+        onOpenChange={open => {
+          if (!open) setRelease(null);
+        }}
+        title="Release profile usage rule?"
+        description="Remove this restriction for future checks of the selected account."
+        confirmLabel="Release rule"
+        pendingLabel="Releasing…"
+        onConfirm={() =>
+          release
+            ? execute({
+                action: 'release-profile',
+                actionId: crypto.randomUUID(),
+                id: release.id,
+                revision: release.revision,
+              })
+            : Promise.resolve(false)
+        }
+      />
       {history && (
         <SidePanel
           kind="details"

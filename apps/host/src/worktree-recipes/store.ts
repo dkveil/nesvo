@@ -9,6 +9,8 @@ import {
   type WorktreeRecipeRepository,
   type WorktreeRecipeRun,
 } from '@nesvo/contracts';
+import { SetupNativeBindings } from '../setup-native-bindings';
+import { activeSetupProfile } from '../setup-profile-service';
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -47,6 +49,7 @@ export const recipeHash = (
           content.resources.portRange.to,
           content.resources.tag,
           content.resources.tempDirectory,
+          ...(content.resources.portNames ? [content.resources.portNames] : []),
         ],
         ...(content.setup.fingerprint || content.cleanup.fingerprint ? [[content.setup.fingerprint ?? null, content.cleanup.fingerprint ?? null]] : []),
       ]),
@@ -57,10 +60,16 @@ export type StoredRecipe = Omit<WorktreeRecipe, 'approved'>;
 
 export class WorktreeRecipeStore {
   readonly commandKey: string;
+  readonly profile: SetupNativeBindings;
 
   constructor(private readonly database: DatabaseSync) {
+    this.profile = new SetupNativeBindings(database, 'worktree-recipes');
     database.prepare("INSERT OR IGNORE INTO metadata (key, value) VALUES ('worktree_recipe_key', ?)").run(randomUUID());
     this.commandKey = String(database.prepare("SELECT value FROM metadata WHERE key = 'worktree_recipe_key'").get()!.value);
+  }
+
+  setupProfile() {
+    return activeSetupProfile(this.database);
   }
 
   list(): WorktreeRecipe[] {

@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  externalSessionRuleInputSchema,
   externalSessionMessageEntrySchema,
   externalSessionRequestSchema,
   externalSessionRuleSchema,
@@ -13,6 +14,17 @@ import {
   type Session,
   type SessionIngressReceipt,
 } from '@nesvo/contracts';
+import { isAbsolute, resolve } from 'node:path';
+import {
+  SetupNativeBindings,
+  nativeProfileCommand,
+} from './setup-native-bindings';
+import type {
+  SetupNativeReview,
+  SetupReviewInspection,
+} from './setup-profile-review-queue';
+import type { SessionMessageWatchers } from './session-message-watchers';
+import { sessionMessageWatcherDefinitionSchema } from '@nesvo/contracts';
 import type { ExternalInbox } from './external-inbox';
 import type { InboxRules } from './inbox-rules/service';
 import { SessionError } from './sessions/session-error';
@@ -61,6 +73,7 @@ const parse = (row: Row) =>
 
 export class ExternalSessionIngress {
   private readonly key: string;
+  readonly profile: SetupNativeBindings;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -70,6 +83,7 @@ export class ExternalSessionIngress {
     private readonly sessions: () => Target[],
     private readonly groups: () => { id: string; name: string }[],
   ) {
+    this.profile = new SetupNativeBindings(database, 'external-session-routes');
     database
       .prepare(
         "INSERT OR IGNORE INTO metadata (key, value) VALUES ('session_ingress_key', ?)",
@@ -96,20 +110,153 @@ export class ExternalSessionIngress {
     }
   }
 
+  inspectProfile(
+    watchers: SessionMessageWatchers,
+    signal: AbortSignal,
+  ): SetupReviewInspection {
+    return async (profile, entry) => {
+      if (!entry.key.startsWith('externalMessages/')) return undefined;
+      const item = profile.desired?.externalMessages?.find(
+        item => entry.key === 'externalMessages/' + item.id,
+      );
+      if (!item || 'disabled' in item) return undefined;
+      const candidates = this.devices
+        .list()
+        .filter(device => device.name === item.device);
+      if (candidates.length !== 1)
+        return 'Bind this source to one enrolled Inbox device on this computer.';
+      const deviceId = candidates[0]!.id;
+      const sessions = item.targets.map(target =>
+        this.resolve(
+          typeof target === 'string'
+            ? { kind: 'id', sessionId: target }
+            : target,
+          [],
+        ),
+      );
+      if (sessions.some(session => !session))
+        return 'Resolve each target to one active session by ID or by exact title within a group.';
+      const targets = [...new Set(sessions.map(session => session!.id))];
+      const input = externalSessionRuleInputSchema.safeParse({
+        deviceId,
+        source: item.id,
+        kinds: item.kinds ?? ['notify'],
+        destination: item.destination,
+        sessions: targets,
+      });
+      if (!input.success)
+        return 'Check the source, destinations and allowed message kinds.';
+      const rule = input.data;
+      const previous = this.rule(deviceId, item.id, false);
+      const generation = previous
+        ? (this.profile.get(previous.id)?.generation ?? 0)
+        : 0;
+      try {
+        let watcher: SetupNativeReview | undefined;
+        if (item.watcher) {
+          const directory = item.watcherDirectory;
+          if (!directory || !isAbsolute(directory))
+            return 'Choose an absolute working directory for the watcher.';
+          const command = nativeProfileCommand(item.watcher);
+          const definition = sessionMessageWatcherDefinitionSchema.parse({
+            version: 1,
+            name: item.name,
+            source: item.id,
+            directory,
+            command: {
+              ...command,
+              files: command.files.map(file => resolve(directory, file)),
+            },
+            destination: item.destination,
+            kinds: rule.kinds,
+            defaultSessionId: targets[0],
+            allowedSessionIds: targets,
+          });
+          watcher = await watchers.inspectFromProfile(
+            profile,
+            entry,
+            definition,
+            signal,
+          );
+        }
+        const fingerprint = this.sign([rule, watcher?.fingerprint, generation]);
+        return {
+          fingerprint,
+          description: [
+            'Approved device: ' + candidates[0]!.name,
+            'Source: ' + rule.source,
+            'Kinds: ' + rule.kinds.join(', '),
+            'Destination: ' + rule.destination,
+            'Targets: ' + sessions.map(session => session!.title).join(', '),
+            ...(watcher ? [watcher.description] : []),
+          ].join('\n'),
+          accept: () => {
+            if (
+              !this.devices.hasDevice(deviceId) ||
+              targets.some(
+                id => !this.session(id) || this.session(id)?.archivedAt,
+              )
+            )
+              throw new SessionError(
+                'not-found',
+                'An approved device or target is unavailable.',
+              );
+            const saved = this.settings(
+              { action: 'save-route', actionId: randomUUID(), rule },
+              true,
+            ).routes.find(
+              route => route.deviceId === deviceId && route.source === item.id,
+            )!;
+            this.profile.bind(
+              saved.id,
+              profile,
+              entry.key,
+              entry.revision,
+              fingerprint,
+            );
+            watcher?.accept();
+          },
+          applied: () => {
+            const current = this.rule(deviceId, item.id);
+            return (
+              !!current &&
+              this.profile.get(current.id)?.fingerprint === fingerprint &&
+              (!watcher || watcher.applied?.() === true)
+            );
+          },
+          revoke: () => {
+            const current = this.rule(deviceId, item.id, false);
+            if (current) this.profile.revoke(current.id);
+            watcher?.revoke?.();
+          },
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'The watcher could not be verified.';
+        return message.slice(0, 300);
+      }
+    };
+  }
+
   private sign(value: unknown) {
     return createHmac('sha256', this.key)
       .update(JSON.stringify(value))
       .digest('hex');
   }
 
-  private rule(deviceId: string, source: string) {
+  private rule(deviceId: string, source: string, effective = true) {
     const row = this.database
       .prepare(
         'SELECT document FROM external_session_routes WHERE device_id = ? AND source = ?',
       )
       .get(deviceId, source);
-    return row
+    const rule = row
       ? externalSessionRuleSchema.parse(JSON.parse(String(row.document)))
+      : undefined;
+    return rule && (!effective || this.profile.passes(rule.id))
+      ? rule
       : undefined;
   }
 
@@ -171,6 +318,7 @@ export class ExternalSessionIngress {
   }
 
   private transaction<T>(execute: () => T): T {
+    if (this.database.isTransaction) return execute();
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const result = execute();
@@ -469,7 +617,10 @@ export class ExternalSessionIngress {
     });
   }
 
-  settings(input: ExternalSessionSettingsInput): ExternalSessionSettings {
+  settings(
+    input: ExternalSessionSettingsInput,
+    profile = false,
+  ): ExternalSessionSettings {
     if (input.action !== 'read' && input.action !== 'history') {
       const earlier = this.database
         .prepare('SELECT payload FROM external_session_actions WHERE id = ?')
@@ -493,7 +644,12 @@ export class ExternalSessionIngress {
                 'not-found',
                 'The device or one of the target sessions is unavailable.',
               );
-            const previous = this.rule(values.deviceId, values.source);
+            const previous = this.rule(values.deviceId, values.source, false);
+            if (previous && this.profile.get(previous.id) && !profile)
+              throw new SessionError(
+                'invalid-request',
+                'This source is managed by the profile. Edit it in Your setup.',
+              );
             const count = this.database
               .prepare('SELECT COUNT(*) AS count FROM external_session_routes')
               .get()!;
@@ -534,6 +690,11 @@ export class ExternalSessionIngress {
             const rule = externalSessionRuleSchema.parse(
               JSON.parse(String(row.document)),
             );
+            if (this.profile.get(rule.id))
+              throw new SessionError(
+                'invalid-request',
+                'This source is managed by the profile. Edit it in Your setup.',
+              );
             this.database
               .prepare('DELETE FROM external_session_routes WHERE id = ?')
               .run(rule.id);
@@ -599,7 +760,8 @@ export class ExternalSessionIngress {
         .all()
         .map(row =>
           externalSessionRuleSchema.parse(JSON.parse(String(row.document))),
-        ),
+        )
+        .filter(route => profile || this.profile.passes(route.id)),
       messages:
         input.action === 'history'
           ? this.database

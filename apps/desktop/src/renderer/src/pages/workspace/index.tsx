@@ -6464,6 +6464,7 @@ ${text}`
                 <ProviderUsageGateSettings
                   key={'usage:' + settingsHostId}
                   hostId={settingsHostId}
+                  onEditProfile={() => setSettingsPage('your-setup')}
                   ready={
                     store.hostReady(settingsHostId) &&
                     !!settingsComputer?.capabilities.includes(

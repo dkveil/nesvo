@@ -40,6 +40,7 @@ import {
   SetupProfileReviewQueue,
   type SetupReviewInspection,
 } from './setup-profile-review-queue';
+import { installSetupNativeBindings } from './setup-native-bindings';
 
 const target = {
   area: 'setup-profile',
@@ -83,6 +84,7 @@ const drift: ConfigurationPrincipal = {
 };
 
 export function installSetupProfile(database: DatabaseSync) {
+  installSetupNativeBindings(database);
   database.exec(
     'CREATE TABLE IF NOT EXISTS setup_profile (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL, document TEXT CHECK (json_valid(document)), route TEXT, managed INTEGER NOT NULL)',
   );
@@ -94,7 +96,24 @@ export function installSetupProfile(database: DatabaseSync) {
       revision TEXT NOT NULL,
       fingerprint TEXT NOT NULL,
       retired INTEGER NOT NULL DEFAULT 0,
-      generation INTEGER NOT NULL DEFAULT 0
+      generation INTEGER NOT NULL DEFAULT 0,
+      manual_definition TEXT CHECK (json_valid(manual_definition))
+    )
+  `);
+  if (
+    !database
+      .prepare('PRAGMA table_info(setup_automation_bindings)')
+      .all()
+      .some(column => column.name === 'manual_definition')
+  )
+    database.exec(
+      'ALTER TABLE setup_automation_bindings ADD COLUMN manual_definition TEXT CHECK (json_valid(manual_definition))',
+    );
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS setup_usage_policies (
+      id TEXT PRIMARY KEY,
+      target TEXT NOT NULL,
+      document TEXT NOT NULL CHECK (json_valid(document))
     )
   `);
 }
@@ -385,7 +404,13 @@ export class SetupProfileService {
           current.instanceId &&
           this.reviews?.isApplied(loaded, current.instanceId, entry)
             ? { ...entry, state: 'reviewed' }
-            : entry,
+            : {
+                ...entry,
+                preview: current.instanceId
+                  ? (this.reviews?.reason(loaded, current.instanceId, entry) ??
+                    entry.preview)
+                  : entry.preview,
+              },
         ),
         changes: profileChanges(
           current.selection?.profile.declarations ?? [],
@@ -588,9 +613,9 @@ export class SetupProfileService {
       );
   }
 
-  async recoverPendingReviews() {
+  async recoverPendingReviews(prefix?: string) {
     if (!this.reviews || this.inspect().status !== 'current') return;
-    await this.reviews?.synchronize();
+    await this.reviews.synchronize(prefix);
   }
 
   private writer(): ConfigurationWriter {

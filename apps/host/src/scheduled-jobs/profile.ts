@@ -40,6 +40,7 @@ type Binding = {
   fingerprint: string;
   retired: number;
   generation: number;
+  manual_definition: string | null;
 };
 type Command = Awaited<ReturnType<typeof inspectDirectCommand>> & {
   definition: DirectCommand;
@@ -76,7 +77,9 @@ function authorityRevision(
 }
 
 function definition(profile: LoadedSetupProfile, id: string) {
-  const entry = profile.portable?.automations?.find(item => item.id === id);
+  const entry = (profile.desired ?? profile.portable)?.automations?.find(
+    item => item.id === id,
+  );
   return entry && !('disabled' in entry) ? entry : undefined;
 }
 
@@ -235,7 +238,17 @@ export class ProfileAutomations {
       declaration.key.slice('automations/'.length),
     );
     if (!job) return undefined;
-    const id = stableJobId(this.instanceId, job.id);
+    const id = job.adoptJob ?? stableJobId(this.instanceId, job.id);
+    const original = this.service
+      ?.list()
+      .find(candidate => candidate.id === id);
+    const ownership = this.binding(id);
+    if (job.adoptJob && !original)
+      return 'Choose an existing automation on this computer to transfer.';
+    if (ownership && ownership.declaration !== job.id)
+      return 'This automation already belongs to a different profile declaration.';
+    if (original && !ownership && !job.adoptJob)
+      return 'This automation ID already belongs to a manual automation.';
     try {
       const resolved = await resolveJob(
         profile,
@@ -244,14 +257,27 @@ export class ProfileAutomations {
         this.signal,
       );
       const reviewedRevision = authorityRevision(profile, job);
-      const generation = this.binding(id)?.generation ?? 0;
+      const generation = ownership?.generation ?? 0;
+      const adoption = original && !ownership ? original.revision : null;
+      const priorRevision = ownership?.manual_definition
+        ? (JSON.parse(ownership.manual_definition) as { revision: number })
+            .revision
+        : adoption;
+      const reviewFingerprint = digest([
+        resolved.fingerprint,
+        generation,
+        priorRevision,
+      ]);
       return {
-        fingerprint: digest([resolved.fingerprint, generation]),
+        fingerprint: reviewFingerprint,
         description: [
           'Save a paused automation with this reviewed definition.',
           `${resolved.definition.name} · ${job.schedule} · ${job.timeZone}`,
           `${job.provider} · ${job.model}`,
           'Folder: ' + resolved.definition.directory,
+          ...(adoption === null
+            ? []
+            : ['Transfer this existing job and keep its run history.']),
           ...(resolved.task
             ? [
                 'Task: ' +
@@ -280,7 +306,10 @@ export class ProfileAutomations {
         accept: () => {
           const service = this.service!;
           const current = service.list().find(item => item.id === id);
-          if (current && !this.binding(id))
+          if (
+            (!this.binding(id) && current && current.revision !== adoption) ||
+            (adoption !== null && current?.revision !== adoption)
+          )
             throw new ConfigurationRefusal(
               'conflict',
               'This automation identity already belongs to a manual job.',
@@ -288,8 +317,8 @@ export class ProfileAutomations {
           this.database
             .prepare(
               `
-            INSERT INTO setup_automation_bindings (id, declaration, profile, revision, fingerprint)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO setup_automation_bindings (id, declaration, profile, revision, fingerprint, manual_definition)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET profile = excluded.profile, revision = excluded.revision,
               fingerprint = excluded.fingerprint, retired = 0
           `,
@@ -300,6 +329,9 @@ export class ProfileAutomations {
               profile.path,
               reviewedRevision,
               resolved.fingerprint,
+              adoption === null
+                ? null
+                : JSON.stringify({ revision: adoption, job: current }),
             );
           service.save(
             {
@@ -318,7 +350,7 @@ export class ProfileAutomations {
             !binding.retired
           );
         },
-        revoke: () => this.retire(id),
+        revoke: () => this.undoApproval(id),
       };
     } catch (error) {
       return configurationText(
@@ -361,6 +393,42 @@ export class ProfileAutomations {
         expectedRevision: job.revision,
         active: false,
       });
+  }
+
+  private undoApproval(id: string) {
+    const manual = this.binding(id)?.manual_definition;
+    if (!manual) return this.retire(id);
+    const prior = JSON.parse(manual) as { job: ScheduledJob };
+    const metadata = new Set([
+      'id',
+      'revision',
+      'nextRunAt',
+      'lastCheck',
+      'pendingStart',
+      'createdAt',
+      'updatedAt',
+      'profileOwnership',
+    ]);
+    const definition = scheduledJobDefinitionSchema.parse(
+      Object.fromEntries(
+        Object.entries(prior.job).filter(([key]) => !metadata.has(key)),
+      ),
+    );
+    const current = this.service!.list().find(job => job.id === id);
+    if (!current)
+      throw new ConfigurationRefusal(
+        'conflict',
+        'The automation no longer exists.',
+      );
+    this.database
+      .prepare('DELETE FROM setup_automation_bindings WHERE id = ?')
+      .run(id);
+    this.service!.save({
+      ...definition,
+      id,
+      expectedRevision: current.revision,
+      active: false,
+    });
   }
 
   assertReady(id: string) {

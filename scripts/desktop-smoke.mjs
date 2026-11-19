@@ -200,7 +200,10 @@ async function smokeSetupProfile() {
   const machineDocument = 'version: 1\n';
   await writeFile(
     shared,
-    'version: 1\ninbox:\n  defaultRoute: parent\nrecipes:\n  - id: prepare\n    name: Prepare checkout\n    repository: git.example.test/org/project\n    setup:\n      - executable: prepare\n        argv: []\n',
+    'version: 1\ninbox:\n  defaultRoute: parent\nrecipes:\n  - id: prepare\n    name: Prepare checkout\n    repository: git.example.test/org/project\n    setup:\n      - executable: prepare\n        argv: []\n' +
+      (setupStage === 'C'
+        ? 'worktrees:\n  - id: reviewed-git\n    name: Reviewed Git\n    kind: builtin\n    scope: {kind: computer}\n'
+        : ''),
   );
   await writeFile(machine, machineDocument);
   await writeFile(
@@ -214,10 +217,15 @@ async function smokeSetupProfile() {
   await page.getByRole('button', { name: 'Your setup', exact: true }).click();
   await page.getByText('Profile ready to review').waitFor();
   await page.getByText('Inbox → Parent session').waitFor();
-  await setupShot(application, page, 'stage-a-profile-review');
+  const stagePrefix = `stage-${setupStage.toLowerCase()}`;
+  await setupShot(application, page, `${stagePrefix}-profile-review`);
   await page.getByRole('button', { name: 'Review sources' }).click();
-  await page.getByText('Awaiting review on this computer').waitFor();
-  await setupShot(application, page, 'stage-a-profile-sources');
+  await page
+    .locator('[data-slot="settings-row"]')
+    .filter({ hasText: 'Prepare checkout' })
+    .getByText('Awaiting review on this computer')
+    .waitFor();
+  await setupShot(application, page, `${stagePrefix}-profile-sources`);
   await page.getByRole('button', { name: 'Close profile sources' }).click();
   await page.getByRole('button', { name: 'Load profile' }).click();
   await page
@@ -305,6 +313,31 @@ async function smokeSetupProfile() {
       0,
     );
     await setupShot(application, page, 'stage-c-local-review-withheld');
+    const approved = page.getByRole('article', {
+      name: 'Configuration change Reviewed Git',
+    });
+    await approved
+      .getByRole('button', { name: 'Review diff for Reviewed Git' })
+      .click();
+    await approved.getByRole('button', { name: 'Accept', exact: true }).click();
+    const confirmation = page.getByRole('alertdialog', {
+      name: 'Confirm configuration change',
+    });
+    await confirmation
+      .getByRole('button', { name: 'Confirm and accept' })
+      .click();
+    await confirmation.waitFor({ state: 'hidden' });
+    await page.getByRole('radio', { name: 'History', exact: true }).click();
+    await approved
+      .getByRole('button', { name: 'Review diff for Reviewed Git' })
+      .click();
+    await approved.getByRole('button', { name: 'Undo', exact: true }).waitFor();
+    await setupShot(
+      application,
+      page,
+      'stage-c-worktree-provider-reviewed',
+      approved,
+    );
     assert.equal(
       (await page.evaluate(() => window.nesvo.listSessions())).length,
       0,
@@ -312,7 +345,8 @@ async function smokeSetupProfile() {
     console.log(
       JSON.stringify({
         result: 'passed',
-        scenario: 'unavailable runtime stays withheld',
+        scenario:
+          'local worktree approval and unavailable runtime stays withheld',
         stage: setupStage,
         platform: process.platform,
       }),

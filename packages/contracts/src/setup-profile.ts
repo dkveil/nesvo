@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { inboxRuleFieldsSchema, inboxSettingsSchema } from './inbox-rules';
 import { repositoryPatternSchema } from './repository-identity';
 import { scheduledJobTimeZoneSchema } from './scheduled-jobs';
+import {
+  externalSessionKindSchema,
+  externalSessionTargetSchema,
+} from './external-session-messages';
 import { providerSchema, SESSION_BRANCH_PATTERN } from './sessions';
 
 const id = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
@@ -99,7 +103,10 @@ const withIds = <T extends z.ZodType<{ id: string }>>(item: T) =>
     });
 const gitScope = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('computer') }),
-  z.strictObject({ kind: z.literal('pattern'), pattern: repo }),
+  z.strictObject({
+    kind: z.literal('pattern'),
+    pattern: repositoryPatternSchema,
+  }),
   z.strictObject({
     kind: z.literal('repository'),
     directory: setupProfilePathSchema,
@@ -136,6 +143,7 @@ export const setupProfileRecipeSchema = z.strictObject({
   id,
   name: label,
   repository: repo,
+  directory: setupProfilePathSchema.optional(),
   provider: id.optional(),
   copy: z.array(relativePath).max(48).optional(),
   setup: z.array(command).max(12).optional(),
@@ -151,8 +159,18 @@ const integration = z.strictObject({
   provider: providerSchema,
   account: id.optional(),
   repository: repo.optional(),
+  sessionId: z.uuid().optional(),
   hooks: z
-    .array(z.strictObject({ event: label, selector: label }))
+    .array(
+      z.strictObject({
+        event: label,
+        selector: label,
+        matcher: z
+          .enum(['startup', 'resume', 'clear', 'compact', ''])
+          .optional(),
+        command: setupProfileDirectCommandSchema.optional(),
+      }),
+    )
     .max(16)
     .optional(),
   tools: z
@@ -164,8 +182,13 @@ const source = z.strictObject({
   id,
   name: label,
   device: id,
-  targets: z.array(id).min(1).max(32),
+  targets: z
+    .array(z.union([id, z.uuid(), externalSessionTargetSchema]))
+    .min(1)
+    .max(32),
   destination: z.enum(['session', 'inbox']),
+  kinds: z.array(externalSessionKindSchema).min(1).max(2).optional(),
+  watcherDirectory: setupProfilePathSchema.optional(),
   watcher: command.optional(),
 });
 const inboxRuleScope = z.discriminatedUnion('kind', [
@@ -196,6 +219,7 @@ const limit = z.strictObject({
 });
 export const setupProfileAutomationSchema = z.strictObject({
   id,
+  adoptJob: z.uuid().optional(),
   name: label,
   timeZone: scheduledJobTimeZoneSchema,
   schedule: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u),
@@ -246,7 +270,11 @@ export const setupProfileDocumentSchema = z.strictObject({
   branches: withIds(branchTemplate).optional(),
   recipes: withIds(setupProfileRecipeSchema).optional(),
   repositoryTrust: withIds(
-    z.strictObject({ id, pattern: repo, effect: z.enum(['allow', 'deny']) }),
+    z.strictObject({
+      id,
+      pattern: repositoryPatternSchema,
+      effect: z.enum(['allow', 'deny']),
+    }),
   ).optional(),
   integrations: withIds(integration).optional(),
   externalMessages: withIds(source).optional(),
