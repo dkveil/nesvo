@@ -93,7 +93,7 @@ function TimelineEntry({
     );
   const author = item.author?.login ?? 'unknown';
   return (
-    <li className="rounded-surface border bg-card">
+    <li className="border-b border-border">
       <div className="flex h-8 items-center gap-2 border-b px-3 text-xs">
         <MessageSquare
           aria-hidden="true"

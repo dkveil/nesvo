@@ -26,6 +26,7 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { ActionFeedback } from './action-feedback';
 import { DisabledHint } from '@/shared/ui/disabled-hint';
+import { mergeHint } from './merge-hint';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 const METHOD_ORDER: MergeMethod[] = ['squash', 'merge', 'rebase'];
@@ -72,6 +73,8 @@ export function MergeControl({
   const pending = state?.status === 'pending';
   const locked = isActionLocked(state);
   const disabled = !!reason || !method || locked;
+  const variant =
+    mergeHint(pullRequest)?.tone === 'success' ? 'default' : 'outline';
   const confirming =
     !!pinned &&
     (locked || (pinned.sha === pullRequest.headSha && !staleReason));
@@ -90,6 +93,7 @@ export function MergeControl({
           <Button
             type="button"
             disabled={disabled}
+            variant={variant}
             onClick={open}
             className="rounded-r-none"
           >
@@ -100,8 +104,9 @@ export function MergeControl({
               <Button
                 type="button"
                 disabled={disabled || methods.length < 2}
+                variant={variant}
                 aria-label="Choose merge method"
-                className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
+                className="rounded-l-none border-l border-border px-1.5"
               >
                 <ChevronDown />
               </Button>

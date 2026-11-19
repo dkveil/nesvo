@@ -369,7 +369,7 @@ export function CodeTab({
           <nav
             id={fileListId}
             aria-label="Changed files"
-            className="w-[32%] max-w-60 min-w-40 shrink-0 animate-in overflow-y-auto border-r p-1 duration-base ease-out fade-in-0"
+            className="w-1/4 max-w-56 min-w-32 shrink-0 animate-in overflow-y-auto border-r p-1 duration-base ease-out fade-in-0"
           >
             <ul className="space-y-px">
               {list.map(file => {

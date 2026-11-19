@@ -53,7 +53,7 @@ export function ThreadCard({
     <article
       aria-label={`Review thread on ${thread.path}${thread.line ? ` line ${thread.line}` : ''}`}
       data-thread-id={thread.id}
-      className="my-1.5 overflow-hidden rounded-surface border bg-card font-sans text-foreground"
+      className="my-1.5 overflow-hidden border-y border-border bg-info-panel font-sans text-foreground"
     >
       <Disclosure
         open={open}

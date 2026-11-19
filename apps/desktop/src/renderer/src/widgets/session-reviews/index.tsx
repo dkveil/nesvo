@@ -13,6 +13,7 @@ import {
   ReviewDecision,
   type ReviewDecisionProps,
 } from '@/features/review-decision';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -63,9 +64,30 @@ function ReviewVersion({
 }: VersionProps) {
   const [open, setOpen] = useOpenWhenFocused(focused);
   const status =
-    review.status === 'changes-requested'
-      ? 'Corrections'
-      : reviewStatusLabels[review.status];
+    review.status === 'superseded' && review.decision?.decision === 'accept'
+      ? 'Accepted'
+      : review.status === 'changes-requested' ||
+          (review.status === 'superseded' &&
+            review.decision?.decision === 'request-changes')
+        ? 'Corrections'
+        : review.status === 'superseded' &&
+            review.decision?.decision === 'reject'
+          ? 'Rejected'
+          : reviewStatusLabels[review.status];
+  const statusBadge = (
+    <Badge
+      appearance="outline"
+      tone={
+        status === 'Accepted'
+          ? 'success'
+          : status === 'Corrections' || status === 'Pending'
+            ? 'warning'
+            : 'neutral'
+      }
+    >
+      {status}
+    </Badge>
+  );
   const decision = (review.status === 'pending' ||
     decisionProps.feedbacks[entityKey(review)] ||
     decisionProps.decisionErrors[entityKey(review)]) && (
@@ -99,9 +121,6 @@ function ReviewVersion({
             Scope: {review.scope}
           </p>
         )}
-        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-          Working directory: {review.directory}
-        </p>
       </section>
       {!isDelegationReply(review.summary) && (
         <section aria-label="Result summary" className="space-y-2">
@@ -239,7 +258,7 @@ function ReviewVersion({
         <>
           <div className="flex items-center justify-between gap-2 text-xs">
             <span className="font-medium">Version {review.version}</span>
-            <span className="text-muted-foreground">{status}</span>
+            {statusBadge}
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             {reviewPreview(review)}
@@ -251,7 +270,7 @@ function ReviewVersion({
         lazyContent
         triggerLabel={`Open version ${review.version}`}
         title={latest ? 'Result details' : `Version ${review.version}`}
-        meta={latest ? undefined : status}
+        meta={latest ? undefined : statusBadge}
         description={latest ? undefined : reviewPreview(review)}
         open={open}
         onOpenChange={setOpen}

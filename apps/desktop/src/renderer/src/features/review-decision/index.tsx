@@ -2,12 +2,7 @@ import { useState } from 'react';
 import type { DecideReviewInput, Review } from '@/entities/review';
 import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
-import {
-  Composer,
-  ComposerInput,
-  ComposerSend,
-  ComposerToolbar,
-} from '@/shared/ui/composer';
+import { Composer, ComposerInput, ComposerToolbar } from '@/shared/ui/composer';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { entityKey } from '@/shared/lib/host-key';
 
@@ -113,10 +108,13 @@ export function ReviewDecision({
                 </span>
               }
               end={
-                <ComposerSend
-                  label="Send feedback"
+                <Button
+                  type="submit"
+                  size="sm"
                   disabled={disabled || !feedback.trim()}
-                />
+                >
+                  Send feedback
+                </Button>
               }
             />
           </Composer>

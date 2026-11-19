@@ -1,13 +1,15 @@
 import { useRef, type KeyboardEvent } from 'react';
 import type { PanelResizerProps as ResizerState } from '@/shared/lib/use-panel-width';
 import { ResizeHandle } from '@/shared/ui/resize-handle';
+import { cn } from '@/shared/lib/cn';
 
 const KEYBOARD_STEP_PX = 16;
 
-type PanelResizerProps = ResizerState & { label: string };
+type PanelResizerProps = ResizerState & { label: string; className?: string };
 
 export function PanelResizer({
   label,
+  className,
   width,
   min,
   max,
@@ -39,7 +41,7 @@ export function PanelResizer({
       onStep={direction => onResize(width - direction.x * KEYBOARD_STEP_PX)}
       onKeyDown={onKeyDown}
       onDoubleClick={onReset}
-      className="hidden min-[1200px]:block"
+      className={cn('hidden min-[1200px]:block', className)}
     />
   );
 }

@@ -357,9 +357,13 @@ export default function PullRequestPanel({
       data-pull-request-layout={layout}
       ref={attachPanel}
       style={panelStyle}
-      className={panelSurface}
+      className={`${panelSurface}${inSession ? '' : ' max-[1440px]:flex-1'}`}
     >
-      <PanelResizer label="Resize pull request panel" {...resizer} />
+      <PanelResizer
+        label="Resize pull request panel"
+        {...resizer}
+        className={inSession ? undefined : 'max-[1440px]:hidden'}
+      />
       <PanelHeader
         titleBar
         leading={
