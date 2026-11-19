@@ -5087,7 +5087,7 @@ try {
     .click();
   await restartedPage
     .locator('[data-run-status="completed"]')
-    .getByText('Waiting for acceptance')
+    .getByText('Done', { exact: true })
     .waitFor();
   const automationShot = async (target, name) => {
     if (!process.env.NESVO_SCREENSHOT) return;
