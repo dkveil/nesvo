@@ -43,6 +43,15 @@ type ExternalProvider = Extract<
   WorktreeProviderDefinition,
   { kind: 'external' }
 >;
+type ReconciliationContext = {
+  directory: string;
+  gitDirectory: string;
+  remote: string | null;
+  roots: string[];
+  branch: string;
+  base: string;
+  checkout: string | null;
+};
 type VerifiedRepository = Extract<
   RepositoryIdentity,
   { status: 'remote' | 'local' }
@@ -360,6 +369,7 @@ export class CustomWorktreeProviders {
   ): Promise<WorktreeProviderReply> {
     if (input.action === 'attachments')
       return this.attachments(input.directory, signal);
+    if (input.action === 'reconcile') return this.reconcile(input, signal);
     if (input.action === 'read')
       return {
         action: 'read',
@@ -474,6 +484,169 @@ export class CustomWorktreeProviders {
       this.updateReceipt(receipt, result);
     });
     return result;
+  }
+
+  private async reconcile(
+    input: Extract<WorktreeProviderInput, { action: 'reconcile' }>,
+    signal: AbortSignal,
+  ) {
+    type Result = Extract<WorktreeProviderReply, { action: 'reconcile' }>;
+    const existing = this.previous(input.actionId, input);
+    if (existing?.result) return existing.result as Result;
+    const row = this.database
+      .prepare(
+        'SELECT receipt, context FROM custom_worktree_actions LEFT JOIN custom_worktree_reconciliation ON action_id = id WHERE id = ?',
+      )
+      .get(input.receiptId);
+    if (!row) return fail('The worktree receipt was not found.');
+    const original = JSON.parse(String(row.receipt)) as Receipt;
+    if (
+      original.state !== 'uncertain' ||
+      (original.operation !== 'create' && original.operation !== 'remove')
+    )
+      return fail('Select an uncertain worktree create or remove receipt.');
+    const context =
+      typeof row.context === 'string'
+        ? (JSON.parse(row.context) as ReconciliationContext)
+        : null;
+    let result: Result = {
+      action: 'reconcile',
+      receiptId: input.receiptId,
+      decision: 'inconclusive',
+      checkout: null,
+      detail:
+        'This older receipt has no verified checkout context. Inspect the registered worktrees before taking another action.',
+    };
+    if (context)
+      result = await this.reconcileGit(
+        original.operation,
+        input.receiptId,
+        context,
+        signal,
+      );
+    signal.throwIfAborted();
+    const repeated = this.previous(input.actionId, input);
+    if (repeated?.result) return repeated.result as Result;
+    const receipt: Receipt = {
+      ...original,
+      actionId: input.actionId,
+      operation: 'reconcile',
+      state: 'succeeded',
+      at: new Date().toISOString(),
+      exitCode: null,
+      detail: result.detail,
+    };
+    this.transaction(() => {
+      this.insertReceipt(receipt, input);
+      this.updateReceipt(receipt, result);
+    });
+    return result;
+  }
+
+  private async reconcileGit(
+    operation: 'create' | 'remove',
+    receiptId: string,
+    context: ReconciliationContext,
+    signal: AbortSignal,
+  ) {
+    const result = (
+      decision: 'checkout-present' | 'checkout-removed' | 'inconclusive',
+      detail: string,
+      checkout: string | null = null,
+    ) => ({
+      action: 'reconcile' as const,
+      receiptId,
+      decision,
+      detail,
+      checkout,
+    });
+    try {
+      const identity = await this.identity(context.directory, signal);
+      if (
+        directoryKey(identity.gitDirectory) !==
+          directoryKey(context.gitDirectory) ||
+        remoteOf(identity) !== context.remote
+      )
+        return result(
+          'inconclusive',
+          'The recorded repository identity changed. Review it before taking another action.',
+        );
+      const entries = await registeredWorktrees(
+        identity.root,
+        signal,
+        identity.gitDirectory,
+      );
+      const candidate = entries.filter(
+        entry =>
+          entry.branch === context.branch &&
+          (!context.checkout ||
+            directoryKey(entry.worktree) === directoryKey(context.checkout)),
+      );
+      if (candidate.length === 1 && !candidate[0]!.prunable) {
+        const verified = await this.verifyCheckout(
+          candidate[0]!.worktree,
+          context.branch,
+          identity,
+          context.roots,
+          signal,
+        );
+        if (operation === 'create' && verified.head !== context.base)
+          return result(
+            'inconclusive',
+            'Git found the branch at a different commit. Review the checkout before attaching it.',
+            verified.checkout,
+          );
+        return result(
+          'checkout-present',
+          operation === 'create'
+            ? 'Git verified the checkout at the requested branch and commit. It can be reviewed in Attach existing worktree.'
+            : 'Git verified that the original checkout is still registered.',
+          verified.checkout,
+        );
+      }
+      if (
+        operation === 'remove' &&
+        context.checkout &&
+        !entries.some(
+          entry =>
+            directoryKey(entry.worktree) === directoryKey(context.checkout!),
+        )
+      ) {
+        const exists = await lstat(context.checkout).then(
+          () => true,
+          error => {
+            if (error.code === 'ENOENT') return false;
+            throw error;
+          },
+        );
+        const branch = await runGit({
+          args: [
+            'show-ref',
+            '--verify',
+            '--quiet',
+            'refs/heads/' + context.branch,
+          ],
+          cwd: identity.root,
+          timeoutMs: 5000,
+          signal,
+        });
+        if (!exists && branch.code === 0)
+          return result(
+            'checkout-removed',
+            'Git verified that the pinned checkout is gone and its branch remains.',
+          );
+      }
+      return result(
+        'inconclusive',
+        'Git could not verify the complete outcome. Inspect the repository before taking another action.',
+      );
+    } catch {
+      signal.throwIfAborted();
+      return result(
+        'inconclusive',
+        'Git could not verify the recorded checkout. No provider mutation was attempted.',
+      );
+    }
   }
 
   private transaction(apply: () => void) {
@@ -663,7 +836,25 @@ export class CustomWorktreeProviders {
       request.sessionId,
       'pending',
     );
-    this.insertReceipt(receipt, payload);
+    this.transaction(() => {
+      this.insertReceipt(receipt, payload);
+      if (operation === 'create' || operation === 'remove') {
+        const context: ReconciliationContext = {
+          directory: identity.root,
+          gitDirectory: identity.gitDirectory,
+          remote: remoteOf(identity),
+          roots: inspected.roots,
+          branch: bindings.branch!,
+          base: bindings.base!,
+          checkout: bindings.path ?? null,
+        };
+        this.database
+          .prepare(
+            'INSERT INTO custom_worktree_reconciliation (action_id, context) VALUES (?, ?)',
+          )
+          .run(actionId, JSON.stringify(context));
+      }
+    });
     let exitCode: number | null = null;
     let diagnostic = '';
     try {

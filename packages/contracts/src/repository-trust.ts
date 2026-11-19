@@ -30,8 +30,8 @@ export const repositoryTrustRuleSchema = z.discriminatedUnion('kind', [
 export const repositoryTrustDecisionSchema = z.strictObject({
   id: z.uuid(),
   hostId: z.uuid(),
-  actor: z.literal('operator'),
-  action: z.enum(['add-pattern', 'revoke', 'approve', 'defer']),
+  actor: z.enum(['operator', 'host']),
+  action: z.enum(['add-pattern', 'revoke', 'approve', 'defer', 'migrate']),
   target: z.string().min(1).max(4096),
   ruleId: z.uuid().nullable(),
   sessionId: z.uuid().nullable(),

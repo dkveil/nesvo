@@ -466,6 +466,10 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           receipt TEXT NOT NULL CHECK (json_valid(receipt)),
           result TEXT CHECK (result IS NULL OR json_valid(result))
         );
+        CREATE TABLE IF NOT EXISTS custom_worktree_reconciliation (
+          action_id TEXT PRIMARY KEY,
+          context TEXT NOT NULL CHECK (json_valid(context))
+        );
         CREATE TABLE IF NOT EXISTS provider_usage_policies (
           target TEXT PRIMARY KEY,
           document TEXT NOT NULL CHECK (json_valid(document))

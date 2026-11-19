@@ -1,9 +1,10 @@
-import type {
-  Computer,
-  DesktopApi,
-  WorktreeRecipeContent,
-  WorktreeRecipeRun,
-  WorktreeRecipeStep,
+import {
+  hasRecipeCommand,
+  type Computer,
+  type DesktopApi,
+  type WorktreeRecipeContent,
+  type WorktreeRecipeRun,
+  type WorktreeRecipeStep,
 } from '@nesvo/contracts';
 
 export type WorktreeRecipeApi = Pick<
@@ -93,13 +94,13 @@ export function recipeSummary(recipe: WorktreeRecipeContent) {
     parts.push(
       `copies ${recipe.copy.patterns.length} ${recipe.copy.patterns.length === 1 ? 'pattern' : 'patterns'}`,
     );
-  if (recipe.setup.command.trim()) parts.push('runs setup');
+  if (hasRecipeCommand(recipe.setup.command)) parts.push('runs setup');
   if (recipe.resources.ports)
     parts.push(
       `${recipe.resources.ports} ${recipe.resources.ports === 1 ? 'port' : 'ports'}`,
     );
   if (recipe.resources.tag) parts.push('tag');
   if (recipe.resources.tempDirectory) parts.push('temp folder');
-  if (recipe.cleanup.command.trim()) parts.push('cleanup');
+  if (hasRecipeCommand(recipe.cleanup.command)) parts.push('cleanup');
   return parts.join(' · ') || 'No steps';
 }

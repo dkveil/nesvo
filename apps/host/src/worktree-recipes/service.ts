@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import {
+  hasLegacyRecipeCommands,
+  hasRecipeCommand,
   worktreeRecipeEnvironment,
   worktreeRecipeLimits,
   type DecideSessionWorktreeRecipeInput,
+  type DirectCommand,
   type SaveWorktreeRecipeInput,
   type Session,
   type StartWorktreeRecipeTrialInput,
@@ -14,10 +17,13 @@ import {
   type WorktreeRecipeSnapshot,
   type WorktreeRecipeStep,
 } from '@nesvo/contracts';
+import { redactLogMessage } from '../log-redaction';
+import { inspectDirectCommand, runDirectCommand } from '../process/direct-command';
 import { SessionError } from '../sessions/session-error';
 import { resolveFolder } from '../workspace/folder';
 import {
   repositoryGitDirectory,
+  readSessionWorktreeStatus,
   repositoryRoot,
   runGit,
   sessionCheckout,
@@ -47,7 +53,7 @@ type Live = {
   done: Promise<void> | null;
 };
 
-type Checkout = { projectDirectory: string; gitDirectory: string };
+type Checkout = { projectDirectory: string; gitDirectory: string; binding?: NonNullable<Session['worktree']>['binding'] };
 
 export type WorktreeRecipesParams = {
   dataDirectory: string;
@@ -132,8 +138,8 @@ export class WorktreeRecipes {
       );
     const content = {
       copy: input.copy,
-      setup: input.setup,
-      cleanup: input.cleanup,
+      setup: await this.pinStage('setup', input.setup, match.directory, signal),
+      cleanup: await this.pinStage('cleanup', input.cleanup, match.directory, signal),
       environment: input.environment,
       resources: input.resources,
     };
@@ -207,8 +213,8 @@ export class WorktreeRecipes {
     const recipe = this.params.store.forRepository(
       repositoryCandidates(checkout.gitDirectory, checkout.projectDirectory),
     );
-    if (!recipe) return;
-    const repositoryScript = this.repositoryScript(session.id, checkout);
+    if (!recipe || (checkout.binding && hasLegacyRecipeCommands(recipe))) return;
+    const repositoryScript = checkout.binding ? null : this.repositoryScript(session.id, checkout);
     let release: () => void = noop;
     try {
       release = this.params.claim(session.id);
@@ -235,7 +241,7 @@ export class WorktreeRecipes {
     };
     this.live.set(session.id, live);
     if (
-      this.params.store.isApproved(recipe.sha256, checkout.gitDirectory) &&
+      !checkout.binding && this.params.store.isApproved(recipe.sha256, checkout.gitDirectory) &&
       (!repositoryScript || repositoryScript.approved)
     )
       this.start(live);
@@ -293,6 +299,11 @@ export class WorktreeRecipes {
         'not-found',
         'The session worktree record is missing.',
       );
+    const expectedStatus = run.status;
+    if (checkout.binding)
+      await this.verifyBoundCheckout(run.directory, checkout, live.controller.signal);
+    if (this.live.get(session.id) !== live || run.released || run.status !== expectedStatus)
+      return this.read(input.sessionId);
     if (live.release === noop) live.release = this.params.claim(session.id);
     this.params.store.approve(run.recipe.sha256, checkout.gitDirectory);
     live.controller = new AbortController();
@@ -319,12 +330,13 @@ export class WorktreeRecipes {
     const { run } = live;
     if (run.status === 'needs-approval') run.status = 'skipped';
     if (run.resources) {
-      const command = run.recipe.cleanup.command.trim();
+      const checkout = this.checkout(sessionId);
       if (
-        command &&
+        checkout &&
+        hasRecipeCommand(run.recipe.cleanup.command) &&
         this.params.store.isApproved(
           run.recipe.sha256,
-          this.checkout(sessionId)?.gitDirectory,
+          checkout.gitDirectory,
         ) &&
         existsSync(run.directory)
       ) {
@@ -334,17 +346,7 @@ export class WorktreeRecipes {
         this.persist(live);
         endStep(
           step,
-          await runRecipeCommand({
-            command,
-            cwd: run.directory,
-            env: commandEnvironment(recipeVariables(run)),
-            timeoutSeconds: run.recipe.cleanup.timeoutSeconds,
-            signal,
-            onOutput: (output, truncated) => {
-              step.output = output;
-              step.truncated = truncated;
-            },
-          }),
+          await this.runStage(live, step, 'cleanup', checkout.projectDirectory, signal),
         );
       }
       await removeTempDirectory(
@@ -463,6 +465,9 @@ export class WorktreeRecipes {
   }
 
   private checkout(sessionId: string): Checkout | undefined {
+    const worktree = this.params.session(sessionId)?.worktree;
+    if (worktree?.binding)
+      return { projectDirectory: worktree.projectDirectory, gitDirectory: worktree.binding.gitDirectory, binding: worktree.binding };
     const record = sessionCheckout(this.params.dataDirectory, sessionId);
     return (
       record && {
@@ -470,6 +475,55 @@ export class WorktreeRecipes {
         gitDirectory: record.gitDirectory,
       }
     );
+  }
+
+  private async verifyBoundCheckout(directory: string, checkout: Checkout, signal: AbortSignal) {
+    await readSessionWorktreeStatus({ dataDirectory: this.params.dataDirectory, projectDirectory: checkout.projectDirectory, worktree: directory, binding: checkout.binding, signal });
+  }
+
+  private async verifyDirect(kind: 'setup' | 'cleanup', command: DirectCommand, source: string, signal: AbortSignal) {
+    if (command.files.some(file => !isAbsolute(file)) || command.argv.some(argument =>
+      /(?:<[A-Za-z][A-Za-z0-9]*>|--?(?:token|api[-_]?key|password|secret|authorization)\b|:\/\/[^/\s]+@)/i.test(argument) ||
+      argument && !isAbsolute(argument) && !argument.startsWith('-') && existsSync(resolve(source, argument))
+    )) throw new SessionError('invalid-request', 'Use absolute command file paths and fixed arguments without secrets.');
+    return inspectDirectCommand(command, source, `worktree recipe ${kind}`, this.params.store.commandKey, signal);
+  }
+
+  private async pinStage(kind: 'setup' | 'cleanup', stage: WorktreeRecipeSnapshot['setup'], source: string, signal: AbortSignal) {
+    const { command, timeoutSeconds } = stage;
+    if (typeof command === 'string') return { command, timeoutSeconds };
+    try {
+      const verified = await this.verifyDirect(kind, command, source, signal);
+      return { command, timeoutSeconds, fingerprint: verified.fingerprint };
+    } catch (error) {
+      throw new SessionError('invalid-request', errorText(error, 'The direct command could not be verified.'));
+    }
+  }
+
+  private async runStage(live: Live, step: WorktreeRecipeStep, kind: 'setup' | 'cleanup', source: string, signal: AbortSignal): Promise<Partial<WorktreeRecipeStep> & Pick<WorktreeRecipeStep, 'status'>> {
+    const { run } = live;
+    const { command, timeoutSeconds, fingerprint } = run.recipe[kind];
+    const onOutput = (output: string, truncated: boolean) => {
+      step.output = output;
+      step.truncated = truncated;
+      run.updatedAt = now();
+    };
+    if (typeof command === 'string')
+      return runRecipeCommand({ command: command.trim(), cwd: run.directory, env: commandEnvironment(recipeVariables(run)), timeoutSeconds, signal, onOutput });
+    try {
+      const verified = await this.verifyDirect(kind, command, source, signal);
+      if (verified.fingerprint !== fingerprint)
+        throw new Error('The direct command or its files changed. Save and review the recipe again.');
+      const result = await runDirectCommand(command, { ...verified, cwd: run.directory }, {}, signal, undefined, recipeVariables(run));
+      return {
+        status: result.timedOut ? 'timed-out' : result.code === 0 ? 'completed' : 'failed',
+        exitCode: result.code,
+        output: redactLogMessage([result.stdout, result.stderr].filter(Boolean).join('\n')).slice(-worktreeRecipeLimits.output),
+        truncated: result.outputTruncated,
+      };
+    } catch (error) {
+      return { status: signal.aborted ? 'stopped' : 'failed', exitCode: null, output: errorText(error, 'The direct command could not run.') };
+    }
   }
 
   private repositoryScript(sessionId: string, checkout: Checkout) {
@@ -591,6 +645,7 @@ export class WorktreeRecipes {
     const checkout = this.checkout(sessionId);
     try {
       if (!checkout) throw new Error('The session worktree record is missing.');
+      if (checkout.binding) await this.verifyBoundCheckout(run.directory, checkout, signal);
       if (!run.resources) await this.allocate(live, sessionId);
       this.persist(live);
       const script = run.steps.find(step => step.kind === 'repository-script');
@@ -643,8 +698,7 @@ export class WorktreeRecipes {
     });
     this.persist(live);
     const setup = run.steps.find(step => step.kind === 'setup')!;
-    const command = run.recipe.setup.command.trim();
-    if (!command) {
+    if (!hasRecipeCommand(run.recipe.setup.command)) {
       endStep(setup, { status: 'skipped' });
       return this.conclude(live, setup);
     }
@@ -652,18 +706,7 @@ export class WorktreeRecipes {
     this.persist(live);
     endStep(
       setup,
-      await runRecipeCommand({
-        command,
-        cwd: run.directory,
-        env: commandEnvironment(recipeVariables(run)),
-        timeoutSeconds: run.recipe.setup.timeoutSeconds,
-        signal,
-        onOutput: (output, truncated) => {
-          setup.output = output;
-          setup.truncated = truncated;
-          run.updatedAt = now();
-        },
-      }),
+      await this.runStage(live, setup, 'setup', source, signal),
     );
     this.conclude(live, setup);
   }
@@ -706,23 +749,12 @@ export class WorktreeRecipes {
       this.fail(live, error);
     }
     const cleanup = run.steps.find(step => step.kind === 'cleanup')!;
-    const command = run.recipe.cleanup.command.trim();
     try {
-      if (command && run.resources) {
+      if (hasRecipeCommand(run.recipe.cleanup.command) && run.resources) {
         startStep(cleanup);
         endStep(
           cleanup,
-          await runRecipeCommand({
-            command,
-            cwd: run.directory,
-            env: commandEnvironment(recipeVariables(run)),
-            timeoutSeconds: run.recipe.cleanup.timeoutSeconds,
-            signal: new AbortController().signal,
-            onOutput: (output, truncated) => {
-              cleanup.output = output;
-              cleanup.truncated = truncated;
-            },
-          }),
+          await this.runStage(live, cleanup, 'cleanup', match.directory, new AbortController().signal),
         );
         if (run.status === 'ready' && cleanup.status !== 'completed')
           run.status = 'failed';

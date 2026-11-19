@@ -126,6 +126,11 @@ export const worktreeProviderInputSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('read') }),
   z.strictObject({ action: z.literal('attachments'), directory: path }),
   z.strictObject({
+    action: z.literal('reconcile'),
+    ...action,
+    receiptId: z.uuid(),
+  }),
+  z.strictObject({
     action: z.literal('inspect'),
     definition: worktreeProviderDefinitionSchema,
   }),
@@ -167,6 +172,7 @@ const fileFingerprint = z.strictObject({
     'list',
     'status',
     'adopt',
+    'reconcile',
   ]),
   providerId: z.uuid(),
   fingerprint,
@@ -178,6 +184,13 @@ const fileFingerprint = z.strictObject({
 });
 
 export const worktreeProviderReplySchema = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('reconcile'),
+    decision: z.enum(['checkout-present', 'checkout-removed', 'inconclusive']),
+    checkout: path.nullable(),
+    detail: z.string().max(1024),
+    receiptId: z.uuid(),
+  }),
   z.strictObject({
     action: z.literal('attachments'),
     rows: z.array(attachWorktreeSchema.extend({ dirty: z.boolean() })).max(80),

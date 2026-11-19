@@ -26,6 +26,7 @@ import { Textarea } from '@/shared/ui/textarea';
 
 type Listing = Extract<WorktreeProviderReply, { action: 'read' }>;
 type Inspection = Extract<WorktreeProviderReply, { action: 'inspect' }>;
+type Reconciliation = Extract<WorktreeProviderReply, { action: 'reconcile' }>;
 const initialDefinition = JSON.stringify(
   {
     version: 1,
@@ -52,6 +53,9 @@ export function WorktreeProviderSettings({
   const [source, setSource] = useState(initialDefinition);
   const [error, setError] = useState('');
   const [revoke, setRevoke] = useState<Listing['providers'][number]>();
+  const [evidence, setEvidence] = useState<Reconciliation>();
+  const [reconciling, setReconciling] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const read = async () => {
     const result = await window.nesvo.customWorktreeProviders(
       { action: 'read' },
@@ -110,6 +114,22 @@ export function WorktreeProviderSettings({
       setReview(undefined);
     } finally {
       setBusy(false);
+    }
+  };
+  const reconcile = async (receiptId: string) => {
+    setHistoryError('');
+    setReconciling(true);
+    try {
+      const result = await window.nesvo.customWorktreeProviders(
+        { action: 'reconcile', receiptId, actionId: crypto.randomUUID() },
+        hostId,
+      );
+      if (result.action === 'reconcile') setEvidence(result);
+      await read();
+    } catch (reason) {
+      setHistoryError(errorDetail(reason));
+    } finally {
+      setReconciling(false);
     }
   };
   return (
@@ -268,6 +288,19 @@ export function WorktreeProviderSettings({
             titleBar={false}
           />
           <PanelBody className="min-h-40">
+            {historyError && (
+              <StatusMessage tone="error">{historyError}</StatusMessage>
+            )}
+            {evidence && (
+              <StatusMessage
+                tone={evidence.decision === 'inconclusive' ? 'warning' : 'info'}
+              >
+                {evidence.detail}
+                {evidence.checkout && (
+                  <CodeBlock code={evidence.checkout} wrap />
+                )}
+              </StatusMessage>
+            )}
             {listing?.history.length ? (
               listing.history.map(receipt => (
                 <SettingsRow
@@ -277,7 +310,20 @@ export function WorktreeProviderSettings({
                     receipt.operation.slice(1)
                   }
                   description={`${receipt.state} · ${new Date(receipt.at).toLocaleString()}${receipt.detail ? ' · ' + receipt.detail : ''}`}
-                />
+                >
+                  {receipt.state === 'uncertain' &&
+                    (receipt.operation === 'create' ||
+                      receipt.operation === 'remove') && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={reconciling}
+                        onClick={() => void reconcile(receipt.actionId)}
+                      >
+                        Check Git state
+                      </Button>
+                    )}
+                </SettingsRow>
               ))
             ) : (
               <SettingsRow title="No decisions yet" />

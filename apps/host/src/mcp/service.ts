@@ -318,6 +318,27 @@ export class McpPolicy {
           signal ?? new AbortController().signal,
         )
       : { status: 'unverified' as const, root: folders.at(-1)! };
+    const fingerprint = this.fingerprint([
+      legacyFingerprint,
+      identity.status,
+      'gitDirectory' in identity ? directoryKey(identity.gitDirectory) : null,
+      'remote' in identity ? identity.remote : null,
+    ]);
+    if (legacyTrusted && stored) {
+      const previous: unknown = JSON.parse(stored.definitions);
+      if (Array.isArray(previous))
+        this.repositoryTrust.migrate(
+          {
+            identity,
+            sessionId: null,
+            provider,
+            fingerprint,
+            definitions: definitions.map(({ id, hash }) => [id, hash]),
+          },
+          repository,
+          previous,
+        );
+    }
     const identityPolicy = this.repositoryTrust.resolve(identity, provider);
     const approved =
       identityPolicy.state === 'eligible'
@@ -348,12 +369,6 @@ export class McpPolicy {
       : stored
         ? (JSON.parse(stored.definitions) as Definition[])
         : [];
-    const fingerprint = this.fingerprint([
-      legacyFingerprint,
-      identity.status,
-      'gitDirectory' in identity ? directoryKey(identity.gitDirectory) : null,
-      'remote' in identity ? identity.remote : null,
-    ]);
     const eligibleServers: ConfigTable = Object.fromEntries(
       claude && managed && !projectIssues.length
         ? Object.entries(projectServers).filter(([name, definition]) => {

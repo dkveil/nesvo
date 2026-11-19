@@ -2022,6 +2022,10 @@ async function smokeDesktop() {
     await application.evaluate(({ BrowserWindow }, size) => {
       BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height);
     }, previous);
+    await page.waitForFunction(
+      ({ width, height }) => innerWidth === width && innerHeight === height,
+      previous,
+    );
   };
   await captureD88('a-repository-trust');
   await trustSettings

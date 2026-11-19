@@ -1,6 +1,7 @@
-import type {
-  WorktreeRecipeRun,
-  WorktreeRecipeSnapshot,
+import {
+  recipeCommandText,
+  type WorktreeRecipeRun,
+  type WorktreeRecipeSnapshot,
 } from '@nesvo/contracts';
 import {
   formatRecipeBytes,
@@ -31,8 +32,8 @@ export function RecipeContents({
   recipe,
   repositoryScript,
 }: RecipeContentsProps) {
-  const setup = recipe.setup.command.trim();
-  const cleanup = recipe.cleanup.command.trim();
+  const setup = recipeCommandText(recipe.setup.command).trim();
+  const cleanup = recipeCommandText(recipe.cleanup.command).trim();
   return (
     <div className="space-y-3">
       <KeyValueList

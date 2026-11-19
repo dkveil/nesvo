@@ -142,6 +142,7 @@ export function runDirectCommand(
   bindings: Readonly<Record<string, string>>,
   signal: AbortSignal,
   onStdout?: (chunk: string) => void,
+  extraEnvironment?: Readonly<Record<string, string>>,
 ) {
   const argv = definition.argv.map(template => {
     const value = template.replace(
@@ -170,7 +171,7 @@ export function runDirectCommand(
     command: verified.executable,
     args: argv,
     cwd: verified.cwd,
-    env,
+    env: { ...env, ...extraEnvironment },
     timeoutMs: definition.timeoutMs,
     maxOutputBytes: definition.maxOutputBytes,
     signal,

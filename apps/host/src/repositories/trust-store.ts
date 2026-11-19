@@ -70,6 +70,7 @@ export class RepositoryTrustStore {
     execute: (
       now: string,
     ) => Omit<RepositoryTrustDecision, 'id' | 'at' | 'actor' | 'hostId'>,
+    actor: RepositoryTrustDecision['actor'] = 'operator',
   ) {
     const key = JSON.stringify(payload);
     const earlier = this.database
@@ -93,7 +94,7 @@ export class RepositoryTrustStore {
         ...execute(at),
         id,
         hostId,
-        actor: 'operator',
+        actor,
         at,
       });
       this.database
@@ -188,7 +189,11 @@ export class RepositoryTrustStore {
       : JSON.stringify([directoryKey(gitDirectory), remote]);
   }
 
-  decision(review: Review, input: RepositoryTrustReviewInput) {
+  decision(
+    review: Review,
+    input: RepositoryTrustReviewInput,
+    actor: RepositoryTrustDecision['actor'] = 'operator',
+  ) {
     const { identity, sessionId, provider, fingerprint } = review;
     const target = this.target(identity);
     this.record(
@@ -253,7 +258,7 @@ export class RepositoryTrustStore {
             );
         }
         return {
-          action: input.action,
+          action: actor === 'host' ? 'migrate' : input.action,
           target: target?.remote ?? target?.gitDirectory ?? identity.root,
           ruleId,
           sessionId,
@@ -261,7 +266,34 @@ export class RepositoryTrustStore {
           fingerprint,
         };
       },
+      actor,
     );
+  }
+
+  migrate(
+    review: Review,
+    checkout: string,
+    previous: readonly { id: string; hash: string }[],
+  ) {
+    if (
+      !this.target(review.identity) ||
+      directoryKey(review.identity.root) !== checkout ||
+      this.rules().length >= 256 ||
+      this.resolve(review.identity, review.provider).state !== 'none' ||
+      previous.length !== review.definitions.length ||
+      previous.some(
+        (entry, index) =>
+          entry?.id !== review.definitions[index]?.[0] ||
+          entry?.hash !== review.definitions[index]?.[1],
+      )
+    )
+      return false;
+    this.decision(
+      review,
+      { action: 'approve', actionId: randomUUID() },
+      'host',
+    );
+    return true;
   }
 
   private matchingPatterns(remote: string) {

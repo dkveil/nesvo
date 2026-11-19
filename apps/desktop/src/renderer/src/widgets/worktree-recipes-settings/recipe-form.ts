@@ -1,4 +1,5 @@
 import {
+  recipeCommandText,
   saveWorktreeRecipeSchema,
   worktreeRecipeDefaults,
   type SaveWorktreeRecipeInput,
@@ -56,9 +57,9 @@ export const recipeValues = (recipe: WorktreeRecipe): RecipeFormValues => ({
   patterns: recipe.copy.patterns.join('\n'),
   maxFiles: String(recipe.copy.maxFiles),
   maxMegabytes: String(Number((recipe.copy.maxBytes / MEBIBYTE).toFixed(2))),
-  setupCommand: recipe.setup.command,
+  setupCommand: recipeCommandText(recipe.setup.command),
   setupMinutes: String(Number((recipe.setup.timeoutSeconds / 60).toFixed(2))),
-  cleanupCommand: recipe.cleanup.command,
+  cleanupCommand: recipeCommandText(recipe.cleanup.command),
   cleanupMinutes: String(
     Number((recipe.cleanup.timeoutSeconds / 60).toFixed(2)),
   ),
@@ -123,6 +124,16 @@ export function parseRecipeValues(
   | { input: SaveWorktreeRecipeInput; errors: null }
   | { input: null; errors: RecipeFormErrors } {
   const errors: RecipeFormErrors = {};
+  const command = (field: 'setupCommand' | 'cleanupCommand'): unknown => {
+    const value = values[field].trim();
+    if (!value.startsWith('{')) return value;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      errors[field] = 'Enter a valid direct-argv JSON object.';
+      return value;
+    }
+  };
   const environment = lines(values.environment).map(line => {
     const separator = line.indexOf('=');
     if (separator < 1) errors.environment = 'Write one NAME=value per line.';
@@ -141,11 +152,11 @@ export function parseRecipeValues(
       maxBytes: Math.round(Number(values.maxMegabytes) * MEBIBYTE),
     },
     setup: {
-      command: values.setupCommand.trim(),
+      command: command('setupCommand'),
       timeoutSeconds: seconds(values.setupMinutes),
     },
     cleanup: {
-      command: values.cleanupCommand.trim(),
+      command: command('cleanupCommand'),
       timeoutSeconds: seconds(values.cleanupMinutes),
     },
     environment,

@@ -746,7 +746,8 @@ test(
     fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ action, path, branch, base, title }) + '\\n');
     if (action === 'create') execFileSync('git', ['worktree', 'add', '-qb', branch, path, base]);
     if (action === 'remove') execFileSync('git', ['worktree', 'remove', path]);
-    console.log(JSON.stringify(action === 'list' ? { version: 1, checkouts: [] } : {
+    if (title === 'Uncertain checkout') console.log('invalid result');
+    else console.log(JSON.stringify(action === 'list' ? { version: 1, checkouts: [] } : {
       version: 1, path, branch, base, ...(action === 'remove' ? { removed: true } : {})
     }));
   `,
@@ -875,6 +876,134 @@ test(
     });
     assert.equal(finished.session.worktree.state, 'kept');
     assert.equal((await stat(linked)).isDirectory(), true);
+    const recipeScript = join(root, 'recipe setup.cjs');
+    await writeFile(recipeScript, 'console.log(process.argv[2]);');
+    const recipeInput = {
+      id: null,
+      name: 'Migrated fixture recipe',
+      directory: project,
+      copy: { patterns: [], maxFiles: 5, maxBytes: 10000 },
+      setup: { command: 'exit 27', timeoutSeconds: 5 },
+      cleanup: { command: '', timeoutSeconds: 5 },
+      environment: [],
+      resources: {
+        ports: 0,
+        portRange: { from: 41000, to: 41999 },
+        tag: false,
+        tempDirectory: false,
+      },
+    };
+    const legacyRecipe = await host.request(
+      'save-worktree-recipe',
+      recipeInput,
+    );
+    assert.equal(
+      legacyRecipe.type,
+      'worktree-recipes',
+      JSON.stringify(legacyRecipe),
+    );
+    const migratedRecipe = await host.request('save-worktree-recipe', {
+      ...recipeInput,
+      id: legacyRecipe.recipes[0].id,
+      setup: {
+        command: {
+          executable: process.execPath,
+          argv: [recipeScript, 'literal & direct'],
+          files: [recipeScript],
+          timeoutMs: 5000,
+        },
+        timeoutSeconds: 5,
+      },
+    });
+    assert.equal(
+      migratedRecipe.type,
+      'worktree-recipes',
+      JSON.stringify(migratedRecipe),
+    );
+    assert.notEqual(
+      migratedRecipe.recipes[0].sha256,
+      legacyRecipe.recipes[0].sha256,
+    );
+    const forRecipe = join(root, 'checkout for recipe');
+    await git('worktree', 'add', '-qb', 'recipe/demo', forRecipe);
+    const recipeCandidates = await host.request('custom-worktree-providers', {
+      action: 'attachments',
+      directory: project,
+    });
+    const { dirty: _dirty, ...recipeAttach } = recipeCandidates.reply.rows.find(
+      row => row.branch === 'recipe/demo',
+    );
+    const recipeSession = await host.request('create-session', {
+      ...input,
+      requestId: randomUUID(),
+      isolation: { kind: 'worktree', attach: recipeAttach },
+    });
+    assert.equal(recipeSession.type, 'session', JSON.stringify(recipeSession));
+    const target = { sessionId: recipeSession.session.id };
+    const heldRecipe = (
+      await host.request('read-session-worktree-recipe', target)
+    ).run;
+    assert.equal(heldRecipe.status, 'needs-approval');
+    const acceptedRecipe = await host.request(
+      'decide-session-worktree-recipe',
+      { ...target, decision: 'approve', sha256: heldRecipe.recipe.sha256 },
+    );
+    assert.equal(
+      acceptedRecipe.type,
+      'session-worktree-recipe',
+      JSON.stringify(acceptedRecipe),
+    );
+    let readyRecipe;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      readyRecipe = (await host.request('read-session-worktree-recipe', target))
+        .run;
+      if (readyRecipe.status !== 'running') break;
+      await delay(50);
+    }
+    assert.equal(readyRecipe.status, 'ready', JSON.stringify(readyRecipe));
+    assert.match(
+      readyRecipe.steps.find(step => step.kind === 'setup').output,
+      /literal & direct/,
+    );
+    const uncertain = {
+      ...input,
+      title: 'Uncertain checkout',
+      requestId: randomUUID(),
+      isolation: {
+        kind: 'worktree',
+        task: { type: 'fix', ticket: 'T43', slug: 'reconcile' },
+      },
+    };
+    const failed = await host.request('create-session', uncertain);
+    assert.equal(failed.type, 'error');
+    assert.match(failed.message, /versioned JSON/);
+    const recorded = await host.request('custom-worktree-providers', {
+      action: 'read',
+    });
+    assert.equal(
+      recorded.reply.history.find(
+        entry => entry.actionId === uncertain.requestId,
+      ).state,
+      'uncertain',
+    );
+    const before = (await acts()).length;
+    const reconcile = {
+      action: 'reconcile',
+      actionId: randomUUID(),
+      receiptId: uncertain.requestId,
+    };
+    const evidence = await host.request('custom-worktree-providers', reconcile);
+    assert.equal(
+      evidence.reply.decision,
+      'checkout-present',
+      JSON.stringify(evidence),
+    );
+    assert.equal((await stat(evidence.reply.checkout)).isDirectory(), true);
+    assert.deepEqual(
+      (await host.request('custom-worktree-providers', reconcile)).reply,
+      evidence.reply,
+    );
+    assert.equal((await acts()).length, before);
   },
 );
 
@@ -1105,6 +1234,35 @@ test(
         .settings.history.length,
       2,
     );
+    const legacy = join(root, 'legacy');
+    await mkdir(legacy);
+    await git('-C', legacy, 'init', '-q', '-b', 'main');
+    await writeFile(
+      join(legacy, '.mcp.json'),
+      JSON.stringify({ mcpServers: configurations }),
+    );
+    const legacySession = await create(legacy);
+    const legacyRevision = await review(legacySession);
+    const request = await host.request('trust-repository-mcp', {
+      sessionId: legacySession,
+      fingerprint: legacyRevision.fingerprint,
+    });
+    assert.equal(request.type, 'mcp-servers', JSON.stringify(request));
+    assert.equal((await review(legacySession)).safeLoading, 'mcp-snapshot');
+    const migrated = await host.request('repository-trust-settings', {
+      action: 'read',
+    });
+    assert.equal(
+      migrated.settings.history.filter(entry => entry.action === 'migrate')
+        .length,
+      1,
+    );
+    assert.ok(
+      migrated.settings.rules.some(
+        rule => rule.kind === 'repository' && rule.remote === null,
+      ),
+    );
+    assert.equal((await review(legacySession)).status, 'trusted');
   },
 );
 

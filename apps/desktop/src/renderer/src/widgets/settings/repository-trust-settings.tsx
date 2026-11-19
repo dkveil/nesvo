@@ -199,7 +199,7 @@ export function RepositoryTrustSettings({
                 <SettingsRow
                   key={entry.id}
                   title={entry.target}
-                  description={`${{ 'add-pattern': 'Pattern added', revoke: 'Revoked', approve: 'Reviewed and approved', defer: 'Deferred' }[entry.action]} · ${new Date(entry.at).toLocaleString()}${entry.provider ? ' · ' + entry.provider : ''}`}
+                  description={`${{ 'add-pattern': 'Pattern added', revoke: 'Revoked', approve: 'Reviewed and approved', defer: 'Deferred', migrate: 'Verified checkout trust migrated' }[entry.action]} · ${new Date(entry.at).toLocaleString()}${entry.provider ? ' · ' + entry.provider : ''}`}
                 />
               ))
             ) : (

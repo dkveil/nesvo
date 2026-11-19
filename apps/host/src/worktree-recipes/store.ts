@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import {
   worktreeRecipeLimits,
@@ -48,6 +48,7 @@ export const recipeHash = (
           content.resources.tag,
           content.resources.tempDirectory,
         ],
+        ...(content.setup.fingerprint || content.cleanup.fingerprint ? [[content.setup.fingerprint ?? null, content.cleanup.fingerprint ?? null]] : []),
       ]),
     )
     .digest('hex');
@@ -55,7 +56,12 @@ export const recipeHash = (
 export type StoredRecipe = Omit<WorktreeRecipe, 'approved'>;
 
 export class WorktreeRecipeStore {
-  constructor(private readonly database: DatabaseSync) {}
+  readonly commandKey: string;
+
+  constructor(private readonly database: DatabaseSync) {
+    database.prepare("INSERT OR IGNORE INTO metadata (key, value) VALUES ('worktree_recipe_key', ?)").run(randomUUID());
+    this.commandKey = String(database.prepare("SELECT value FROM metadata WHERE key = 'worktree_recipe_key'").get()!.value);
+  }
 
   list(): WorktreeRecipe[] {
     return this.database

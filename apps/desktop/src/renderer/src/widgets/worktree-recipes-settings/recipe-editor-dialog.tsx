@@ -291,19 +291,19 @@ export function RecipeEditorDialog({
             {area(
               'setupCommand',
               'Setup command',
-              'Runs in the new worktree through the system shell after the files are copied. Output streams into the session.',
-              'npm ci',
+              'For external or attached worktrees, replace shell text with a JSON object containing an absolute executable, argv, files, and timeoutMs. Setup runs after the files are copied.',
+              '{"executable":"/absolute/path/to/program","argv":["setup"],"files":[],"timeoutMs":30000}',
             )}
-            {text('setupMinutes', 'Setup time limit (minutes)', {
+            {text('setupMinutes', 'Legacy setup time limit (minutes)', {
               type: 'number',
             })}
             {area(
               'cleanupCommand',
               'Cleanup command',
-              'Runs in the worktree when the session worktree is finished or removed, before its resources are released.',
-              'docker image rm "app:$NESVO_RESOURCE_TAG"',
+              'Use the same direct-argv JSON format. Cleanup runs before the worktree resources are released.',
+              '{"executable":"/absolute/path/to/program","argv":["cleanup"],"files":[],"timeoutMs":30000}',
             )}
-            {text('cleanupMinutes', 'Cleanup time limit (minutes)', {
+            {text('cleanupMinutes', 'Legacy cleanup time limit (minutes)', {
               type: 'number',
             })}
             {area(

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { directCommandSchema } from './direct-command';
 
 export const worktreeRecipeLimits = {
   recipes: 100,
@@ -48,6 +49,19 @@ const commandSchema = z
   .string()
   .max(worktreeRecipeLimits.command)
   .regex(/^[^\u0000]*$/);
+export const worktreeRecipeCommandSchema = z.union([
+  commandSchema,
+  directCommandSchema,
+]);
+export type WorktreeRecipeCommand = z.infer<typeof worktreeRecipeCommandSchema>;
+export const recipeCommandText = (command: WorktreeRecipeCommand) =>
+  typeof command === 'string' ? command : JSON.stringify(command, null, 2);
+export const hasRecipeCommand = (command: WorktreeRecipeCommand) =>
+  typeof command !== 'string' || !!command.trim();
+export const hasLegacyRecipeCommands = (recipe: WorktreeRecipeContent) =>
+  [recipe.setup.command, recipe.cleanup.command].some(
+    command => typeof command === 'string' && !!command.trim(),
+  );
 
 const variableSchema = z.strictObject({
   name: z
@@ -98,7 +112,8 @@ const contentShape = {
     maxBytes: z.number().int().min(1).max(worktreeRecipeLimits.maxBytes),
   }),
   setup: z.strictObject({
-    command: commandSchema,
+    command: worktreeRecipeCommandSchema,
+    fingerprint: hashSchema.optional(),
     timeoutSeconds: z
       .number()
       .int()
@@ -106,7 +121,8 @@ const contentShape = {
       .max(worktreeRecipeLimits.setupTimeoutSeconds),
   }),
   cleanup: z.strictObject({
-    command: commandSchema,
+    command: worktreeRecipeCommandSchema,
+    fingerprint: hashSchema.optional(),
     timeoutSeconds: z
       .number()
       .int()
