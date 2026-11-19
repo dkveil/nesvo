@@ -31,13 +31,15 @@ function PortRows({ apps, local, owner }: Props) {
             <ListRow
               density="two-line"
               title={
-                <span className="font-mono tabular-nums">
-                  {label}:{app.port}
+                <span className="tabular-nums">
+                  {app.web ? 'Web app' : 'TCP'} · port {app.port}
                 </span>
               }
               description={
-                owner(app.sessionId) +
-                (app.match === 'folder' ? ' · Folder match' : '')
+                <span title={label + ':' + app.port}>
+                  {owner(app.sessionId)}
+                  {app.match === 'folder' ? ' · Matched by folder' : ''}
+                </span>
               }
               actionsPlacement="visible"
               actions={

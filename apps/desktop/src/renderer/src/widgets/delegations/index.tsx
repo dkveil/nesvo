@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import {
   listSubsessions,
   isWorkerInterruptedByRestart,
@@ -17,6 +18,7 @@ import { StatusMessage } from '@/shared/ui/status-message';
 type Props = {
   session: Session;
   children: Session[];
+  coordinatorWait?: ReactNode;
   enabled: boolean;
   worktreeActions?: boolean;
   pending: Record<string, boolean>;
@@ -41,6 +43,7 @@ const ELAPSED_TICK_MS = 1000;
 export function Delegations({
   session,
   children,
+  coordinatorWait,
   enabled,
   worktreeActions,
   pending,
@@ -60,7 +63,8 @@ export function Delegations({
     child =>
       !current.some(delegation => delegation.childSessionId === child.id),
   );
-  if (current.length === 0 && children.length === 0) return null;
+  if (current.length === 0 && children.length === 0)
+    return coordinatorWait ?? null;
   const entries = listSubsessions(session, children);
   const elapsedOf = (child: Session | undefined) => {
     const entry = child && entries.find(item => item.session.id === child.id);
@@ -100,6 +104,7 @@ export function Delegations({
       >
         Workers
       </SectionLabel>
+      {coordinatorWait}
       {restartError && (
         <StatusMessage tone="error">{restartError}</StatusMessage>
       )}

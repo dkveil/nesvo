@@ -80,7 +80,7 @@ export function WorkerWorktree({ parent, worker, enabled }: Props) {
             <DialogTitle>{worker.title}</DialogTitle>
             <DialogDescription>
               {result
-                ? `${result.branch} to ${result.targetBranch}`
+                ? `Changes for ${result.targetBranch}`
                 : 'Worker branch and diff'}
             </DialogDescription>
           </DialogHeader>
@@ -91,6 +91,12 @@ export function WorkerWorktree({ parent, worker, enabled }: Props) {
           {result && (
             <>
               <WorkerDiff patch={result.diff} truncated={result.truncated} />
+              <p
+                className="truncate text-xs text-muted-foreground"
+                title={result.branch}
+              >
+                Worker branch · {result.branch}
+              </p>
               {result.truncated && (
                 <StatusMessage tone="info">
                   This diff is truncated.
@@ -102,9 +108,13 @@ export function WorkerWorktree({ parent, worker, enabled }: Props) {
                 </StatusMessage>
               )}
               {action && (
-                <StatusMessage tone="info">
+                <StatusMessage
+                  tone={action === 'discard' ? 'warning' : 'info'}
+                  variant="notice"
+                  className="text-ui"
+                >
                   {action === 'merge'
-                    ? `Merge commit ${result.head.slice(0, 12)} into ${result.targetBranch} and remove the worker worktree?`
+                    ? `Merge this result into ${result.targetBranch} and remove the worker worktree?`
                     : 'Discard this result and remove its worktree? The branch will remain in Git.'}
                 </StatusMessage>
               )}

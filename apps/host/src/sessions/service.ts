@@ -2032,6 +2032,7 @@ export class SessionService {
       this.markWorktreeFinished(
         this.sessionWorktree(child.id).session,
         'removed',
+        input.action,
       );
       return { ...result, resolved: true };
     } finally {
@@ -2231,8 +2232,13 @@ export class SessionService {
   private markWorktreeFinished(
     session: Session,
     state: 'kept' | 'removed',
+    workerResolution?: 'merge' | 'discard',
   ): void {
-    session.worktree = { ...session.worktree!, state };
+    session.worktree = {
+      ...session.worktree!,
+      state,
+      ...(workerResolution && { workerResolution }),
+    };
     holdQueue(session);
     this.publish(session);
   }

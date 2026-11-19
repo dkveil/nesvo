@@ -28,7 +28,6 @@ import type {
   StartWorkflowTaskInput,
   WorkflowImportOffer,
 } from '@nesvo/contracts';
-import { isWorkerInterruptedByRestart } from '@nesvo/contracts';
 import {
   AGENT_REVIEW_BRANCH_PREFIX,
   isGroupableSession,
@@ -157,7 +156,6 @@ import { StatusMessage } from '@/shared/ui/status-message';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
-import { WorkerRestartMenu } from '@/widgets/delegations/worker-restart';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { ChildDecisions } from '@/widgets/child-decisions';
@@ -3826,11 +3824,19 @@ ${text}`
       <div className="pointer-events-none absolute top-0 left-(--rail-width) hidden h-(--shell-topbar-height) items-center pl-(--shell-brand-start) select-none md:flex">
         <BrandWordmark />
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <div
+        className={cn(
+          'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background',
+          pullRequestsView &&
+            visiblePanel === 'pull-request' &&
+            'min-[1200px]:max-[1440px]:hidden',
+        )}
+      >
         <header
           className={cn(
             'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))] md:pl-[max(0.5rem,calc(var(--shell-brand-end)-var(--sidebar-extent)))]',
-            visiblePanel && 'min-[1200px]:pr-(--shell-gutter)',
+            visiblePanel &&
+              'min-[1200px]:gap-0.5 min-[1200px]:pr-(--shell-gutter)',
           )}
         >
           <div className="md:hidden">
@@ -3874,9 +3880,21 @@ ${text}`
             className="@container/breadcrumb min-w-24 flex-1 px-1"
           >
             <ol className="flex min-w-0 items-center gap-2 text-ui">
-              {breadcrumbDirectory !== null && (
+              {creating && branch && (
+                <li className="min-w-0 shrink-0">
+                  <BranchChip branch={branch} worktree={headerWorktree} />
+                </li>
+              )}
+              {breadcrumbDirectory !== null && !creating && (
                 <>
-                  <li className="hidden min-w-0 max-w-[min(20rem,50%)] shrink-0 items-center gap-1.5 text-muted-foreground @min-[10rem]/breadcrumb:flex">
+                  <li
+                    className={cn(
+                      'hidden min-w-0 max-w-[min(20rem,45%)] shrink-0 items-center gap-1.5 text-muted-foreground',
+                      visiblePanel
+                        ? '@min-[24rem]/breadcrumb:flex'
+                        : '@min-[10rem]/breadcrumb:flex',
+                    )}
+                  >
                     {breadcrumbDirectory ? (
                       <ProjectChip
                         label={directoryLabel(breadcrumbDirectory)}
@@ -3903,7 +3921,12 @@ ${text}`
                   </li>
                   <li
                     aria-hidden="true"
-                    className="hidden text-muted-foreground/60 @min-[10rem]/breadcrumb:block"
+                    className={cn(
+                      'hidden text-muted-foreground/60',
+                      visiblePanel
+                        ? '@min-[24rem]/breadcrumb:block'
+                        : '@min-[10rem]/breadcrumb:block',
+                    )}
                   >
                     /
                   </li>
@@ -3947,7 +3970,10 @@ ${text}`
                 aria-current="page"
                 className="flex min-w-0 flex-1 items-center gap-3"
               >
-                <h1 className="min-w-12 truncate text-ui font-semibold">
+                <h1
+                  title={!browsing && !creating ? selected?.title : undefined}
+                  className="min-w-12 truncate text-ui font-semibold"
+                >
                   {costsView
                     ? 'Costs'
                     : creating
@@ -4058,30 +4084,6 @@ ${text}`
                 {sessionStatusLabel(selected)}
               </span>
             )}
-          {!browsing && !creating && selected && (
-            <WorkerRestartMenu
-              workers={workers.filter(isWorkerInterruptedByRestart)}
-              enabled={
-                store.hostReady(selectedHostId) &&
-                !!selectedComputer?.capabilities.includes('worker-restart')
-              }
-              pending={restartingWorkers}
-              error={workerRestartErrors[entityKey(selected)] ?? ''}
-              onContinue={targets => void continueWorkers(selected, targets)}
-            />
-          )}
-          {!browsing && !creating && selected?.coordinatorWait && (
-            <CoordinatorWait
-              key={selectedKey}
-              session={selected}
-              sessions={workers}
-              enabled={
-                store.hostReady(selectedHostId) &&
-                !!selectedComputer?.capabilities.includes('coordinator-workers')
-              }
-              onContinue={() => continueCoordinator(selected)}
-            />
-          )}
           {finishingWorktree && headerWorktree && selected && window.nesvo && (
             <FinishWorktreeDialog
               key={selectedKey}
@@ -4335,6 +4337,7 @@ ${text}`
           {cardOpen && (
             <SessionCard
               id="session-card"
+              docked={workers.length > 0 && viewportWidth >= 1200}
               computer={selectedComputer}
               connection={connection}
               session={cardSession}
@@ -4419,6 +4422,16 @@ ${text}`
                     connected={store.hostReady(selectedHostId)}
                     onSession={select}
                     onStop={child => void stop(child)}
+                  />
+                )
+              }
+              servers={
+                cardSession &&
+                selectedApps.length > 0 && (
+                  <RunningAppsSection
+                    apps={selectedApps}
+                    owner={portOwner}
+                    local={selectedHostId === 'local'}
                   />
                 )
               }
@@ -4629,7 +4642,7 @@ ${text}`
                 'flex min-h-0 min-w-0 flex-1',
                 panel === 'pull-request' &&
                   pullRequestTarget &&
-                  'max-[1200px]:hidden',
+                  'max-[1440px]:hidden',
               )}
             >
               <PullRequestsView
@@ -4875,44 +4888,73 @@ ${text}`
                   )
                 }
                 preparation={
-                  <>
-                    {sessionRecipe.run && (
-                      <WorktreeRecipeCard
-                        {...sessionRecipe}
-                        run={sessionRecipe.run}
-                        enabled={store.hostReady(selectedHostId)}
+                  sessionRecipe.run ||
+                  store.sessions.some(
+                    child =>
+                      child.parentId === selected.id &&
+                      child.hostId === selected.hostId,
+                  ) ||
+                  inboxRules.items.some(
+                    item =>
+                      item.status === 'pending' &&
+                      item.parentId === selected.id &&
+                      item.hostId === selected.hostId,
+                  ) ? (
+                    <>
+                      {sessionRecipe.run && (
+                        <WorktreeRecipeCard
+                          {...sessionRecipe}
+                          run={sessionRecipe.run}
+                          enabled={store.hostReady(selectedHostId)}
+                        />
+                      )}
+                      <ChildDecisions
+                        parent={selected}
+                        sessions={store.sessions}
+                        items={inboxRules.items}
+                        routeOf={routeOf}
+                        enabled={
+                          !store.loading &&
+                          !store.error &&
+                          store.hostReady(selectedHostId)
+                        }
+                        stages={parentStages}
+                        rulePending={inboxRules.pending}
+                        ruleErrors={inboxRules.errors}
+                        onRuleDecision={(item, decision) =>
+                          void inboxRules.decide(item, decision)
+                        }
+                        approvalPending={approvalPending}
+                        onApproval={(input, hostId) =>
+                          void respondApproval(input, hostId)
+                        }
+                        onOpen={select}
+                        onOpenChanges={openRuleChanges}
+                        onOpenPullRequest={openRulePullRequest}
                       />
-                    )}
-                    <ChildDecisions
-                      parent={selected}
-                      sessions={store.sessions}
-                      items={inboxRules.items}
-                      routeOf={routeOf}
-                      enabled={
-                        !store.loading &&
-                        !store.error &&
-                        store.hostReady(selectedHostId)
-                      }
-                      stages={parentStages}
-                      rulePending={inboxRules.pending}
-                      ruleErrors={inboxRules.errors}
-                      onRuleDecision={(item, decision) =>
-                        void inboxRules.decide(item, decision)
-                      }
-                      approvalPending={approvalPending}
-                      onApproval={(input, hostId) =>
-                        void respondApproval(input, hostId)
-                      }
-                      onOpen={select}
-                      onOpenChanges={openRuleChanges}
-                      onOpenPullRequest={openRulePullRequest}
-                    />
-                  </>
+                    </>
+                  ) : undefined
                 }
                 delegations={
                   <Delegations
                     session={selected}
                     children={workers}
+                    coordinatorWait={
+                      selected.coordinatorWait && (
+                        <CoordinatorWait
+                          key={selectedKey}
+                          session={selected}
+                          sessions={workers}
+                          enabled={
+                            store.hostReady(selectedHostId) &&
+                            !!selectedComputer?.capabilities.includes(
+                              'coordinator-workers',
+                            )
+                          }
+                          onContinue={() => continueCoordinator(selected)}
+                        />
+                      )
+                    }
                     enabled={operationEnabled}
                     worktreeActions={selectedComputer?.capabilities.includes(
                       'coordinator-workers',

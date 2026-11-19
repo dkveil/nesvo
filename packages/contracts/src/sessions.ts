@@ -282,6 +282,7 @@ export const sessionWorktreeSchema = z.strictObject({
   base: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/),
   state: z.enum(['active', 'kept', 'removed']),
   workerTargetBranch: z.string().min(1).max(1024).optional(),
+  workerResolution: z.enum(['merge', 'discard']).optional(),
   includes: z
     .strictObject({
       copied: z.number().int().nonnegative().max(64),

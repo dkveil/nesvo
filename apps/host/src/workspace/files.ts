@@ -55,6 +55,7 @@ function excluded(name: string): boolean {
   return (
     excludedNames.has(lower) ||
     lower.startsWith('.env') ||
+    /^\.nesvo-(?:codex|fixture|probe)(?:[.-]|$)/.test(lower) ||
     /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/.test(lower) ||
     /\.(?:pem|key|p12|pfx|keystore)$/.test(lower)
   );

@@ -2434,6 +2434,11 @@ test(
       writeFile(join(explorerRoot, 'large.txt'), Buffer.alloc(262145, 97)),
       writeFile(join(explorerRoot, '.env.private'), 'private fixture'),
       writeFile(
+        join(explorerRoot, '.nesvo-fixture-approval.txt'),
+        'generated fixture',
+      ),
+      writeFile(join(explorerRoot, '.editorconfig'), 'root = true\n'),
+      writeFile(
         join(explorerRoot, 'node_modules', 'hidden.txt'),
         'generated fixture',
       ),
@@ -2468,9 +2473,18 @@ test(
     assert.equal(rootListing.type, 'workspace-directory');
     assert.equal(rootListing.directory.path, '');
     assert.equal(rootListing.directory.truncated, false);
+    assert.equal(
+      (
+        await workspaceRequest(
+          'read-workspace-file',
+          '.nesvo-fixture-approval.txt',
+        )
+      ).type,
+      'error',
+    );
     assert.deepEqual(
       rootListing.directory.entries.map(entry => entry.path),
-      ['many', 'notes', 'binary.dat', 'large.txt'],
+      ['many', 'notes', '.editorconfig', 'binary.dat', 'large.txt'],
     );
     const nestedListing = await workspaceRequest(
       'list-workspace-directory',
@@ -30402,6 +30416,10 @@ test('Codex delegation routes through session control and isolates writable Git 
     assert.equal(resolved.type, 'worker-worktree', JSON.stringify(resolved));
     assert.equal(resolved.result.resolved, true);
     assert.equal(existsSync(worker.directory), false);
+    const finished = await host.request('get-session', {
+      sessionId: worker.id,
+    });
+    assert.equal(finished.session.worktree.workerResolution, action);
     return viewed.result.head;
   };
   await writeFile(join(project, 'coordinator.txt'), 'Coordinator update.\n');

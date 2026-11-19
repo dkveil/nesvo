@@ -19,7 +19,7 @@ export function CoordinatorWait({
   const wait = session.coordinatorWait;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  if (!wait) return null;
+  if (!wait || !wait.away) return null;
   const workers = sessions.filter(
     child =>
       child.hostId === session.hostId &&
@@ -64,27 +64,27 @@ export function CoordinatorWait({
   };
   return (
     <div
-      className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground"
+      className="flex min-w-0 flex-wrap items-center gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground"
       data-coordinator-wait
     >
       <span>
-        Waiting on {waiting} {waiting === 1 ? 'worker' : 'workers'}
-        {wait.away && ` / ${finished} finished while you were away`}
+        {waiting
+          ? `Waiting on ${waiting} ${waiting === 1 ? 'worker' : 'workers'}`
+          : 'Coordinator paused'}
+        {finished > 0 && ` · ${finished} finished while you were away`}
       </span>
-      {wait.away && (
-        <Button
-          size="xs"
-          disabled={
-            !enabled ||
-            pending ||
-            session.status === 'running' ||
-            session.status === 'stopping'
-          }
-          onClick={() => void resume()}
-        >
-          Continue
-        </Button>
-      )}
+      <Button
+        size="xs"
+        disabled={
+          !enabled ||
+          pending ||
+          session.status === 'running' ||
+          session.status === 'stopping'
+        }
+        onClick={() => void resume()}
+      >
+        Continue coordinator
+      </Button>
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
     </div>
   );

@@ -1,4 +1,5 @@
 import {
+  directoryLabel,
   formatAgo,
   formatDateTime,
   modelLabel,
@@ -53,9 +54,9 @@ export function SessionDetails({ session, children, permissions }: Props) {
   const now = useNow(DETAILS_CLOCK_MS);
   const lastActivity = sessionLastActivityAt(session);
   return (
-    <div className="space-y-6 p-5">
+    <div className="space-y-5 p-5">
       <section aria-label="Session details" className="space-y-4">
-        <h2 className="text-xs font-medium">Session</h2>
+        <h2 className="text-ui font-medium">Session</h2>
         {session.browser && (
           <Chip
             interactive={false}
@@ -84,8 +85,15 @@ export function SessionDetails({ session, children, permissions }: Props) {
             },
             {
               key: 'directory',
-              label: 'Working directory',
-              value: session.directory,
+              label: 'Folder',
+              value: (
+                <span
+                  className="block min-w-0 truncate"
+                  title={session.directory}
+                >
+                  {directoryLabel(session.directory)}
+                </span>
+              ),
             },
             {
               key: 'created',
@@ -103,7 +111,7 @@ export function SessionDetails({ session, children, permissions }: Props) {
       {children}
       {usage && (
         <section aria-label="Usage" className="space-y-4">
-          <h2 className="text-xs font-medium">Usage</h2>
+          <h2 className="text-ui font-medium">Usage</h2>
           <KeyValueList
             density="comfortable"
             entries={[
@@ -126,14 +134,14 @@ export function SessionDetails({ session, children, permissions }: Props) {
       )}
       {session.scope && (
         <section className="space-y-2">
-          <h2 className="text-xs font-medium">Worker scope</h2>
+          <h2 className="text-ui font-medium">Worker scope</h2>
           <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
             {session.scope}
           </p>
         </section>
       )}
       <section className="space-y-2 border-t pt-5">
-        <h2 className="text-xs font-medium">
+        <h2 className="text-ui font-medium">
           {modeLabel(session.provider, session.mode)}
         </h2>
         <p className="text-xs leading-5 text-muted-foreground">
@@ -142,7 +150,7 @@ export function SessionDetails({ session, children, permissions }: Props) {
         {permissions}
       </section>
       <section className="space-y-2 border-t pt-5">
-        <h2 className="text-xs font-medium">Workers</h2>
+        <h2 className="text-ui font-medium">Workers</h2>
         <p className="text-xs leading-5 text-muted-foreground">
           {session.parentId
             ? 'This worker returns its result to the parent session. Stop affects this worker only. Workers cannot delegate.'

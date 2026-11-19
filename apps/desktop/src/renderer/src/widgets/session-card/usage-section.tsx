@@ -83,7 +83,9 @@ export function UsageSection({ states, connected }: Props) {
                     provider={provider}
                     className="size-3.5 text-current"
                   />
-                  <span className="truncate">Weekly</span>
+                  <span className="truncate">
+                    {providerNames[provider]} weekly
+                  </span>
                 </span>
                 <Meter
                   label={`Weekly ${providerNames[provider]} limit`}

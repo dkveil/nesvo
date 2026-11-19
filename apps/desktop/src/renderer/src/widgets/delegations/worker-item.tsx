@@ -60,6 +60,15 @@ export function WorkerItem({
   const expanded = toggled ?? (pending || status.tone === 'error');
   const detailsId = useId();
   const finished = !status.attention && status.variant !== 'spinner';
+  const result = child?.worktree?.workerResolution;
+  const resultLabel =
+    result === 'merge'
+      ? 'Merged'
+      : result === 'discard'
+        ? 'Discarded'
+        : child?.worktree?.state === 'removed'
+          ? 'Worktree removed'
+          : status.state;
   return (
     <li
       role="group"
@@ -68,16 +77,15 @@ export function WorkerItem({
       id={delegation ? `delegation-${delegation.id}` : undefined}
     >
       <ListRow
-        className={cn(finished && 'opacity-60')}
         leading={
           <StatusDot tone={status.tone} variant={status.variant} size="md" />
         }
         title={title}
         trailing={
           <>
-            {status.attention && (
+            {(status.attention || finished) && (
               <span className={statusTextTones[status.tone]}>
-                {status.state}
+                {resultLabel}
               </span>
             )}
             {elapsed && <span>{elapsed}</span>}
@@ -86,7 +94,7 @@ export function WorkerItem({
         aria-expanded={delegation ? expanded : undefined}
         aria-controls={delegation ? detailsId : undefined}
         mainProps={{
-          'aria-label': [title, status.state, elapsed, delegation && 'details']
+          'aria-label': [title, resultLabel, elapsed, delegation && 'details']
             .filter(Boolean)
             .join(', '),
         }}

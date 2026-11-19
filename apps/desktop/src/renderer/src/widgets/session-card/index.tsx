@@ -33,6 +33,7 @@ export { PullRequestSection } from './pull-request-section';
 
 type Props = {
   id: string;
+  docked?: boolean;
   computer: Computer | undefined;
   connection: 'connecting' | 'ready' | 'unavailable';
   session: Session | null;
@@ -42,6 +43,7 @@ type Props = {
   workflow: ReactNode;
   workers: ReactNode;
   usage: ReactNode;
+  servers?: ReactNode;
   context: ReactNode;
   changes?: ReactNode;
   onComputers: () => void;
@@ -111,6 +113,7 @@ const branchOf = (
 
 export function SessionCard({
   id,
+  docked = false,
   computer,
   connection,
   session,
@@ -120,6 +123,7 @@ export function SessionCard({
   workflow,
   workers,
   usage,
+  servers,
   context,
   changes,
   onComputers,
@@ -157,7 +161,10 @@ export function SessionCard({
       onKeyDown={moveBetweenRows}
       className={cn(
         infoPanelSurface,
-        'absolute top-2 right-3 z-20 flex max-h-[calc(100%-1rem)] w-60 flex-col divide-y divide-info-panel-divider overflow-y-auto shadow-(--popover-shadow) outline-none',
+        'z-20 flex max-h-[calc(100%-1rem)] w-60 flex-col divide-y divide-info-panel-divider overflow-y-auto outline-none',
+        docked
+          ? 'order-last m-2 shrink-0 self-start'
+          : 'absolute top-2 right-3 shadow-(--popover-shadow)',
       )}
     >
       <div className={cn(cardSection, 'flex min-w-0 items-center gap-1')}>
@@ -251,6 +258,7 @@ export function SessionCard({
       {workflow}
       {workers}
       {usage}
+      {servers && <div className={cn(cardSection, 'px-2 py-1')}>{servers}</div>}
       {context}
       {onPermissions && (
         <div className={cardSection}>

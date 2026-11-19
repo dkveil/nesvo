@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { AllowRule } from '@nesvo/contracts';
+import { directoryLabel } from '@/entities/session';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { Button } from '@/shared/ui/button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -34,15 +36,23 @@ export function PermissionRules({
         rules.map(rule => (
           <SettingsRow
             key={rule.id}
-            title={<code className="font-mono">{rule.pattern}</code>}
+            title={
+              <MiddleTruncatedText
+                value={rule.pattern}
+                className="font-mono text-xs"
+              />
+            }
             description={
-              (rule.scope === 'session' ? 'Session' : 'Project') +
-              ' · ' +
-              rule.directory
+              <span title={rule.directory}>
+                {rule.scope === 'session' ? 'This session' : 'This project'} ·{' '}
+                {directoryLabel(rule.directory)}
+              </span>
             }
           >
             <Button
-              variant="destructive"
+              variant="ghost"
+              size="sm"
+              className="text-error-foreground"
               disabled={removing !== null}
               aria-label={'Remove ' + rule.pattern}
               onClick={() => void remove(rule.id)}
