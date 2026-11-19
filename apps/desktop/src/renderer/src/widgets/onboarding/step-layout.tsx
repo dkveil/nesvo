@@ -9,7 +9,7 @@ type Props = {
 
 export function OnboardingStepLayout({ step, heading, children }: Props) {
   return (
-    <div className="flex min-h-0 flex-1 overflow-y-auto">
+    <div className="flex min-h-0 overflow-y-auto">
       <section
         id="onboarding-step"
         aria-labelledby="onboarding-title"
@@ -17,12 +17,12 @@ export function OnboardingStepLayout({ step, heading, children }: Props) {
         data-onboarding-step={step}
         className={cn(
           'mx-auto w-full max-w-3xl space-y-4 px-10 outline-none',
-          heading ? 'self-start pt-9 pb-5' : 'my-auto py-5',
+          heading ? 'self-start pt-6 pb-5' : 'py-7',
         )}
       >
         {heading && (
           <header className="space-y-1.5">
-            <h1 id="onboarding-title" className="text-xl font-medium">
+            <h1 id="onboarding-title" className="text-display font-medium">
               {heading.title}
             </h1>
             <p className="text-ui text-muted-foreground">

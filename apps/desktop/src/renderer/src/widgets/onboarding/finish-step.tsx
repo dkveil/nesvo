@@ -74,7 +74,7 @@ export function FinishStep({
       <header className="space-y-3">
         <h1
           id="onboarding-title"
-          className="text-display-lg font-semibold tracking-tight"
+          className="text-display font-semibold tracking-tight"
         >
           You’re ready to start
         </h1>
@@ -91,7 +91,11 @@ export function FinishStep({
             </dt>
             <dd className="min-w-0 text-right text-ui">
               {path ? (
-                <MiddleTruncatedText value={path} className="justify-end" />
+                <MiddleTruncatedText
+                  path
+                  value={path}
+                  className="justify-end"
+                />
               ) : (
                 <p className="truncate" title={value}>
                   {value}

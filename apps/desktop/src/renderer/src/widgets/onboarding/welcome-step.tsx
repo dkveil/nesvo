@@ -23,8 +23,8 @@ export function WelcomeStep() {
   return (
     <div className="space-y-6">
       <header className="space-y-4 text-center">
-        <BrandWordmark className="mx-auto h-8" />
-        <h1 id="onboarding-title" className="text-base font-semibold">
+        <BrandWordmark className="mx-auto h-6" />
+        <h1 id="onboarding-title" className="text-title font-semibold">
           vibe with full control
         </h1>
         <p className="mx-auto max-w-lg text-ui leading-relaxed text-muted-foreground">

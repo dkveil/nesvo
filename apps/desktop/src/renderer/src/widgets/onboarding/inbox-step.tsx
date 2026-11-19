@@ -119,6 +119,8 @@ export function InboxStep({ api, computer }: Props) {
               description={
                 state?.error ? (
                   <StatusMessage tone="error">{state.error}</StatusMessage>
+                ) : state?.on ? (
+                  'Enabled for this computer.'
                 ) : undefined
               }
             >

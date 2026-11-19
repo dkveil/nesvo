@@ -29,10 +29,6 @@ const SHOWN_SERVERS = 4;
 function ProviderReport({ report }: { report: ProviderSetupReport }) {
   const servers = report.servers?.servers ?? [];
   const repository = report.servers?.repository;
-  const serverNames = servers
-    .slice(0, SHOWN_SERVERS)
-    .map(server => `${server.name} (${server.scope})`)
-    .join(', ');
   const skills = report.skills?.skills ?? [];
   return (
     <li
@@ -56,14 +52,32 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
       </div>
       {report.servers && (
         <div className="space-y-1">
-          <p
-            className="truncate text-xs leading-5 text-muted-foreground"
-            title={serverNames || undefined}
-          >
-            {servers.length
-              ? `MCP servers (${servers.length}) · ${serverNames}${servers.length > SHOWN_SERVERS ? ` · +${servers.length - SHOWN_SERVERS} more` : ''}`
-              : 'No MCP servers configured'}
-          </p>
+          {servers.length ? (
+            <ul
+              aria-label="MCP servers"
+              className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
+            >
+              {servers.slice(0, SHOWN_SERVERS).map(server => (
+                <li
+                  key={server.key}
+                  className="min-w-0 truncate"
+                  title={server.name}
+                >
+                  {server.name}{' '}
+                  <span className="text-subtle-foreground">
+                    · {server.scope}
+                  </span>
+                </li>
+              ))}
+              {servers.length > SHOWN_SERVERS && (
+                <li>+{servers.length - SHOWN_SERVERS} more</li>
+              )}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No MCP servers configured
+            </p>
+          )}
           {repository && repository.definitions.length > 0 && (
             <p className="text-xs text-muted-foreground">
               {repository.definitions.length} repository{' '}

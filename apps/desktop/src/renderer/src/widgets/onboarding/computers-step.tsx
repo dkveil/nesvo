@@ -8,6 +8,7 @@ type Props = {
   defaultFolders: DefaultSessionFolders;
   api: DesktopApi;
   error: string;
+  onEditingChange: (editing: boolean) => void;
 };
 
 export function ComputersStep({
@@ -15,6 +16,7 @@ export function ComputersStep({
   defaultFolders,
   api,
   error,
+  onEditingChange,
 }: Props) {
   return (
     <div className="space-y-3">
@@ -28,6 +30,7 @@ export function ComputersStep({
       )}
       <ManageComputers
         api={api}
+        onEditingChange={onEditingChange}
         computers={computers}
         defaultFolders={defaultFolders}
         chooseLocalDirectory={api.chooseDirectory}

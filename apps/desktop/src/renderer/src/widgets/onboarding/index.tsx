@@ -54,6 +54,7 @@ const steps = [
 export function Onboarding({ onStartSession, onClose }: Props) {
   const api = window.nesvo;
   const [index, setIndex] = useState(0);
+  const [editingComputer, setEditingComputer] = useState(false);
   const [outcomes, setOutcomes] = useState<RoutineOutcomes>({});
   const { computers, local, error, statuses, checkProviders } =
     useOnboardingComputers(api);
@@ -71,107 +72,113 @@ export function Onboarding({ onStartSession, onClose }: Props) {
       className="flex h-dvh flex-col bg-background font-onboarding text-foreground"
     >
       <div className="drag-region h-10 shrink-0" />
-      <header className="mx-auto w-full max-w-3xl shrink-0 space-y-2 px-10 pt-4">
-        <div className="flex items-center justify-between gap-4">
-          <SectionLabel as="p" className="px-0">
-            Getting started
-          </SectionLabel>
-          <p className="text-2xs text-muted-foreground tabular-nums">
-            Step {index + 1} of {steps.length}
-          </p>
-        </div>
-        <Progress
-          label="Getting started progress"
-          value={((index + 1) / steps.length) * 100}
-        />
-      </header>
-      <OnboardingStepLayout
-        key={step.id}
-        step={step.id}
-        heading={'title' in step ? step : undefined}
-      >
-        {step.id === 'welcome' && <WelcomeStep />}
-        {step.id === 'providers' && (
-          <ProvidersStep
-            statuses={statuses}
-            computerName={local?.name ?? 'this computer'}
-            onCheckAgain={checkProviders}
-          />
-        )}
-        {step.id === 'computers' && (
-          <ComputersStep
-            computers={computers}
-            defaultFolders={defaultFolders}
-            api={api}
-            error={error}
-          />
-        )}
-        {step.id === 'setup' && (
-          <SetupStep
-            api={api}
-            hostId="local"
-            directory={folder ?? ''}
-            statuses={statuses}
-            onSetupAgents={() => setIndex(1)}
-          />
-        )}
-        {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
-        {step.id === 'routines' && (
-          <RoutinesStep
-            api={api}
-            computer={local}
-            statuses={statuses}
-            defaultFolder={folder}
-            outcomes={outcomes}
-            setOutcomes={setOutcomes}
-            onCheckProviders={checkProviders}
-            onChooseComputer={() => setIndex(2)}
-            onSetupAgents={() => setIndex(1)}
-          />
-        )}
-        {last && (
-          <FinishStep
-            computers={computers}
-            statuses={statuses}
-            folder={folder}
-            routines={Object.values(outcomes).flatMap(item =>
-              item.status === 'added' ? [item.name] : [],
-            )}
-            onClose={onClose}
-            onStartSession={onStartSession}
-          />
-        )}
-      </OnboardingStepLayout>
-      <footer className="mx-auto w-full max-w-3xl shrink-0 px-10 pb-6">
-        <nav
-          aria-label="Guide navigation"
-          className="flex items-center justify-between gap-2 border-t pt-4"
-        >
-          <div className="flex gap-2">
-            {index > 0 && (
-              <Button
-                variant="ghost"
-                size="md"
-                onClick={() => setIndex(index - 1)}
-              >
-                <ArrowLeft />
-                Back
-              </Button>
-            )}
+      <div className="mx-auto my-auto flex max-h-[min(46rem,calc(100dvh-2.5rem))] min-h-0 w-full max-w-3xl flex-col">
+        <header className="mx-auto w-full max-w-3xl shrink-0 space-y-2 px-10 pt-2">
+          <div className="flex items-center justify-between gap-4">
+            <SectionLabel as="p" className="px-0">
+              Getting started
+            </SectionLabel>
+            <p className="text-2xs text-muted-foreground tabular-nums">
+              Step {index + 1} of {steps.length}
+            </p>
           </div>
-          {!last && (
-            <div className="flex gap-2">
-              <Button variant="ghost" size="md" onClick={onClose}>
-                Skip
-              </Button>
-              <Button size="md" onClick={() => setIndex(index + 1)}>
-                {index === 0 ? 'Get started' : 'Continue'}
-                <ArrowRight />
-              </Button>
-            </div>
+          <Progress
+            label="Getting started progress"
+            value={((index + 1) / steps.length) * 100}
+          />
+        </header>
+        <OnboardingStepLayout
+          key={step.id}
+          step={step.id}
+          heading={'title' in step ? step : undefined}
+        >
+          {step.id === 'welcome' && <WelcomeStep />}
+          {step.id === 'providers' && (
+            <ProvidersStep
+              statuses={statuses}
+              computerName={local?.name ?? 'this computer'}
+              onCheckAgain={checkProviders}
+            />
           )}
-        </nav>
-      </footer>
+          {step.id === 'computers' && (
+            <ComputersStep
+              computers={computers}
+              defaultFolders={defaultFolders}
+              api={api}
+              error={error}
+              onEditingChange={setEditingComputer}
+            />
+          )}
+          {step.id === 'setup' && (
+            <SetupStep
+              api={api}
+              hostId="local"
+              directory={folder ?? ''}
+              statuses={statuses}
+              onSetupAgents={() => setIndex(1)}
+            />
+          )}
+          {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
+          {step.id === 'routines' && (
+            <RoutinesStep
+              api={api}
+              computer={local}
+              statuses={statuses}
+              defaultFolder={folder}
+              outcomes={outcomes}
+              setOutcomes={setOutcomes}
+              onCheckProviders={checkProviders}
+              onChooseComputer={() => setIndex(2)}
+              onSetupAgents={() => setIndex(1)}
+            />
+          )}
+          {last && (
+            <FinishStep
+              computers={computers}
+              statuses={statuses}
+              folder={folder}
+              routines={Object.values(outcomes).flatMap(item =>
+                item.status === 'added' ? [item.name] : [],
+              )}
+              onClose={onClose}
+              onStartSession={onStartSession}
+            />
+          )}
+        </OnboardingStepLayout>
+        <footer
+          hidden={step.id === 'computers' && editingComputer}
+          className="mx-auto w-full max-w-3xl shrink-0 px-10 pb-6"
+        >
+          <nav
+            aria-label="Guide navigation"
+            className="flex items-center justify-between gap-2 border-t pt-4"
+          >
+            <div className="flex gap-2">
+              {index > 0 && (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  onClick={() => setIndex(index - 1)}
+                >
+                  <ArrowLeft />
+                  Back
+                </Button>
+              )}
+            </div>
+            {!last && (
+              <div className="flex gap-2">
+                <Button variant="ghost" size="md" onClick={onClose}>
+                  Skip
+                </Button>
+                <Button size="md" onClick={() => setIndex(index + 1)}>
+                  {index === 0 ? 'Get started' : 'Continue'}
+                  <ArrowRight />
+                </Button>
+              </div>
+            )}
+          </nav>
+        </footer>
+      </div>
     </main>
   );
 }

@@ -1,3 +1,4 @@
+import { Badge } from '@/shared/ui/badge';
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import {
   GitPullRequest,
@@ -86,23 +87,30 @@ function RoutineRow({
             aria-hidden="true"
           />
           {title}
+          {added && (
+            <Badge appearance="outline" tone="success">
+              {outcome.message}
+            </Badge>
+          )}
         </span>
       }
       description={
         <div className="space-y-0.5 pl-6">
           <p>{summary}</p>
-          <StatusMessage
-            icon={false}
-            tone={outcome?.status === 'error' ? 'error' : 'info'}
-          >
-            {outcome?.message || state}
-          </StatusMessage>
+          {!added && (
+            <StatusMessage
+              icon={false}
+              tone={outcome?.status === 'error' ? 'error' : 'info'}
+            >
+              {outcome?.message || state}
+            </StatusMessage>
+          )}
         </div>
       }
     >
       {action && !added && !pending && (
         <Button
-          variant="outline"
+          variant={action.label === 'Add' ? 'outline' : 'ghost'}
           onClick={action.run}
           aria-label={action.label === 'Add' ? `Add ${title}` : undefined}
         >
@@ -400,7 +408,7 @@ export function RoutinesStep({
         >
           <div className="flex items-center justify-between gap-2">
             {target && (
-              <MiddleTruncatedText value={target} className="text-ui" />
+              <MiddleTruncatedText path value={target} className="text-ui" />
             )}
             <Button
               variant="outline"
