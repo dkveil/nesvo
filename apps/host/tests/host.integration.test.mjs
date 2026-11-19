@@ -1870,7 +1870,6 @@ test(
         'history-search',
         'session-groups',
         'costs',
-        'group-cost-budgets',
         'mcp-servers',
         'conversation-import',
         'scheduled-job-change-triggers',
@@ -1911,6 +1910,7 @@ test(
         'coordinator-workers',
         'worker-restart',
         'mcp-auth',
+        'group-cost-budgets',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -7490,7 +7490,6 @@ test(
       'history-search',
       'session-groups',
       'costs',
-      'group-cost-budgets',
       'mcp-servers',
       'conversation-import',
       'scheduled-job-change-triggers',
@@ -7531,6 +7530,7 @@ test(
       'coordinator-workers',
       'worker-restart',
       'mcp-auth',
+      'group-cost-budgets',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -29493,12 +29493,13 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-5), [
+  assert.deepEqual(capabilities.slice(-6), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
     'worker-restart',
     'mcp-auth',
+    'group-cost-budgets',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

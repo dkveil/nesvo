@@ -222,8 +222,6 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to fork or restart sessions.',
   costs:
     'Costs are unavailable on this computer. Update its Nesvo host, then reconnect.',
-  'group-cost-budgets':
-    'Update this computer’s Nesvo host to use session group budgets.',
   'scheduled-jobs':
     'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
   'scheduled-job-change-triggers':
@@ -324,6 +322,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update the Nesvo host on this computer to continue interrupted workers.',
   'mcp-auth':
     'Update this computer’s Nesvo host and reconnect to manage MCP authorization.',
+  'group-cost-budgets':
+    'Update this computer’s Nesvo host to use session group budgets.',
 };
 
 const hasFileAttachments = (input: unknown) =>

@@ -170,7 +170,12 @@ try {
       computer => computer.status === 'connected',
     ),
   );
-  const expectedPolicy = { enabled: true, requested: true, enforced: true };
+  const expectedPolicy = {
+    enabled: true,
+    requested: true,
+    enforced: true,
+    automaticallyEnabled: false,
+  };
   assert.deepEqual(
     await policyPage.evaluate(() => window.nesvo.workLaptopPolicy()),
     expectedPolicy,
@@ -341,6 +346,7 @@ try {
     enabled: false,
     requested: false,
     enforced: false,
+    automaticallyEnabled: false,
   });
   const page = await application.firstWindow();
   page.setDefaultTimeout(20000);
@@ -376,17 +382,19 @@ try {
     };
   }, defaultFolder);
   await guide
-    .getByRole('button', { name: 'Choose folder', exact: true })
+    .getByRole('button', { name: 'Choose folder…', exact: true })
     .click();
-  await guide.getByText(defaultFolder, { exact: true }).waitFor();
+  await guide.getByTitle(defaultFolder, { exact: true }).waitFor();
   assert.equal(
     await page.evaluate(() => window.nesvo.readDefaultSessionFolder('local')),
     defaultFolder,
   );
   await guide.getByRole('button', { name: 'Clear', exact: true }).click();
-  await guide
-    .getByText('Use an isolated folder by default', { exact: true })
-    .waitFor();
+  await guide.getByText('No folder selected', { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => window.nesvo.readDefaultSessionFolder('local')),
+    null,
+  );
   await guide
     .getByRole('button', { name: 'Add a computer', exact: true })
     .click();
@@ -1062,7 +1070,6 @@ try {
     'history-search',
     'session-groups',
     'costs',
-    'group-cost-budgets',
     'mcp-servers',
     'conversation-import',
     'scheduled-job-change-triggers',
@@ -1103,6 +1110,7 @@ try {
     'coordinator-workers',
     'worker-restart',
     'mcp-auth',
+    'group-cost-budgets',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
