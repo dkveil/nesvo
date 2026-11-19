@@ -141,7 +141,7 @@ async function configurationShot(app, page, name, ready) {
       ([width, height]) => innerWidth === width && innerHeight === height,
       size,
     );
-    await ready?.();
+    await ready?.(size);
     await page.evaluate(
       () =>
         new Promise(resolve =>
@@ -234,8 +234,18 @@ async function smokeConfigurationInbox(app, page) {
   await proposal
     .getByRole('button', { name: 'Review diff for external-inbox-fixture' })
     .click();
-  await configurationShot(app, page, 'stage-1-inbox-assistant', () =>
-    proposal.locator('[data-line]').first().waitFor(),
+  await configurationShot(
+    app,
+    page,
+    'stage-1-inbox-assistant',
+    async ([width]) => {
+      await proposal.locator('[data-line]').first().waitFor();
+      if (width !== 1280) return;
+      const layout = await source
+        .locator(':scope > [data-slot="list-row"]')
+        .evaluate(row => getComputedStyle(row.firstElementChild).display);
+      assert.equal(layout, 'flex');
+    },
   );
   await proposal.getByRole('button', { name: 'Accept', exact: true }).click();
   await proposal.getByRole('button', { name: 'Undo', exact: true }).click();

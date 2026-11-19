@@ -97,6 +97,26 @@ export async function smokeGateRuleFlow({
             step.state === 'awaiting-human',
         ),
     );
+    if (kind === 'fix' && !previous) {
+      const gate = page.locator('[data-inbox-row]').filter({
+        has: page.locator(`[data-workflow-step-id="${step.id}"]`),
+      });
+      await gate.getByRole('button', { name: 'Inbox item actions' }).click();
+      await page
+        .getByRole('menuitem', { name: 'Change how this reaches me' })
+        .click();
+      const drawer = page.locator(
+        '[data-slot="side-panel"][aria-label="Inbox assistant"]',
+      );
+      await drawer
+        .getByText('This workflow reached a human gate.', {
+          exact: false,
+        })
+        .waitFor();
+      await drawer
+        .getByRole('button', { name: 'Close Inbox assistant' })
+        .click();
+    }
     const gate = page
       .getByRole('article', { name: 'Workflow gate: approve' })
       .and(page.locator(`[data-workflow-step-id="${step.id}"]`));

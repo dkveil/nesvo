@@ -1239,6 +1239,17 @@ export const serveHost = ({
                       'This automation is waiting for owner approval. Its ask-first setting controls future requests.',
                   }
                 : null;
+            case 'workflow-gate': {
+              const run = workflowRunStore.getRun(subject.runId);
+              const step = workflowRunStore.getStep(subject.id);
+              return run && step?.runId === run.id && step.type === 'human'
+                ? {
+                    sessionId: run.sessionId,
+                    explanation:
+                      'This workflow reached a human gate. The workflow definition determines which steps need an owner decision.',
+                  }
+                : null;
+            }
             case 'gate-rule-proposal': {
               const proposal = gateRuleStore.proposal(subject.id)?.row;
               return proposal

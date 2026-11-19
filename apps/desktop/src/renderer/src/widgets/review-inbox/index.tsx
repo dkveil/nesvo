@@ -224,6 +224,11 @@ function assistantSubject(row: ActionRow): AssistantSelection | null {
         hostId: row.hostId,
         subject: { kind: 'gate-rule-proposal', id: row.row.id },
       };
+    case 'workflow-gate':
+      return {
+        hostId: row.run.hostId,
+        subject: { kind: 'workflow-gate', id: row.step.id, runId: row.run.id },
+      };
     default: {
       const id =
         row.type === 'approval'
@@ -286,7 +291,7 @@ function ActionItem({
   return (
     <article {...props} className="@container/inbox-item">
       <DecisionRow
-        className="@max-[520px]/inbox-item:[&>div]:grid-cols-1! @max-[520px]/inbox-item:[&>div>*]:col-start-1! @max-[520px]/inbox-item:[&>div>*]:row-start-auto!"
+        className="@max-[520px]/inbox-item:[&>div]:flex! @max-[520px]/inbox-item:[&>div]:flex-col @max-[520px]/inbox-item:[&>div]:items-stretch! @max-[520px]/inbox-item:[&_[data-inbox-actions]]:justify-start!"
         heading={
           <>
             {typeLabel && (
@@ -988,7 +993,7 @@ export function ReviewInbox({
                 const definition = run.workflow.steps.find(
                   item => item.name === step.name,
                 );
-                return (
+                return wrap(
                   <ActionItem
                     key={row.id}
                     aria-label={`Workflow gate: ${step.name}`}
@@ -1015,7 +1020,7 @@ export function ReviewInbox({
                       step={step}
                       enabled={isOperationEnabled(run)}
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'review') {

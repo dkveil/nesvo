@@ -15,6 +15,11 @@ const sessionSubject = z.enum([
 ]);
 export const configurationInboxSubjectSchema = z.union([
   z.strictObject({
+    kind: z.literal('workflow-gate'),
+    id: z.uuid(),
+    runId: z.uuid(),
+  }),
+  z.strictObject({
     kind: z.enum(['rule', 'review', 'automation', 'gate-rule-proposal']),
     id: z.uuid(),
   }),
