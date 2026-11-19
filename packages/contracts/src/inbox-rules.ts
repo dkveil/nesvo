@@ -237,6 +237,7 @@ export const inboxRuleEntrySchema = z.strictObject({
   rule: inboxRuleFieldsSchema.nullable(),
   active: z.boolean(),
   inactiveReason: z.string().max(500).nullable(),
+  fromProfile: z.boolean().optional(),
   issues: z.array(inboxRuleIssueSchema).max(inboxRuleLimits.issues),
   enforcement: z.array(inboxRuleEnforcementSchema).max(8),
 });

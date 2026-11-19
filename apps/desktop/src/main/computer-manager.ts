@@ -350,6 +350,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     "Update this computer's Nesvo host and reconnect to use portable checks.",
   'setup-profile-v1':
     'Update this computer’s Nesvo host and reconnect to use Your setup.',
+  'setup-profile-values-v1':
+    'Update this computer’s Nesvo host and reconnect to edit profile layers.',
   'setup-detection-v1':
     'Update this computer’s Nesvo host and reconnect to detect setup.',
   'setup-assistant-v1':
@@ -382,7 +384,15 @@ function requiredCapability(
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(lessonResponses, method)) return 'lessons';
   if (method === 'gate-rules') return 'gate-rules';
-  if (method === 'setup-profile') return 'setup-profile-v1';
+  if (method === 'setup-profile') {
+    const action =
+      input && typeof input === 'object' && 'action' in input
+        ? input.action
+        : null;
+    return action === 'inspect-fragment' || action === 'edit-fragment'
+      ? 'setup-profile-values-v1'
+      : 'setup-profile-v1';
+  }
   if (method === 'setup-detection') return 'setup-detection-v1';
   if (method === 'setup-assistant') return 'setup-assistant-v1';
   if (

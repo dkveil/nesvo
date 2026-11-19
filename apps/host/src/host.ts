@@ -101,7 +101,10 @@ import {
 } from './configuration-devices';
 import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
 import { DesktopConfigurationProfile } from './desktop-configuration-profile';
-import { SetupProfileService } from './setup-profile-service';
+import {
+  SetupProfileService,
+  withProfileUsageWarning,
+} from './setup-profile-service';
 import { SetupProfileFileError } from './setup-profile-file';
 import { SetupDetection } from './setup-detection';
 import { SetupAssistant } from './setup-assistant';
@@ -1949,7 +1952,11 @@ export const serveHost = ({
               ),
             )
             .then(usage =>
-              send({ type: 'provider-usage', id: request.id, usage }),
+              send({
+                type: 'provider-usage',
+                id: request.id,
+                usage: withProfileUsageWarning(database, usage, profileId),
+              }),
             )
             .catch(error =>
               send({
@@ -2211,6 +2218,12 @@ export const serveHost = ({
           const operation = async (): Promise<SetupProfileResult> => {
             if (input.action === 'inspect')
               return { ok: true, review: setupProfile.inspect(input.file) };
+            if (input.action === 'inspect-fragment')
+              return {
+                ok: true,
+                review: setupProfile.inspect(),
+                fragment: setupProfile.inspectFragment(input),
+              };
             if (workLaptopMode)
               throw new ConfigurationRefusal(
                 'unsupported',
@@ -2220,11 +2233,15 @@ export const serveHost = ({
               ? setupProfile.saveAs(input)
               : input.action === 'edit-routing'
                 ? setupProfile.editRouting(input)
-                : setupProfile.apply(input));
+                : input.action === 'edit-fragment'
+                  ? setupProfile.editFragment(input)
+                  : setupProfile.apply(input));
             return {
               ok: true,
-              review: setupProfile.inspect(input.file),
-              receipt: result.receipt,
+              review: setupProfile.inspect(
+                'file' in input ? input.file : undefined,
+              ),
+              receipt: result?.receipt,
             };
           };
           const pending = operation()

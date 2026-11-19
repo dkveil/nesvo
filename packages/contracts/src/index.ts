@@ -59,6 +59,7 @@ import { setupAssistantInputSchema } from './setup-assistant';
 import { setupDetectionInputSchema, setupScanSchema } from './setup-detection';
 import {
   setupProfileInputSchema,
+  setupProfileFragmentSchema,
   setupProfileReviewSchema,
 } from './setup-profile';
 import {
@@ -1751,6 +1752,7 @@ export const setupProfileResultSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     review: setupProfileReviewSchema,
+    fragment: setupProfileFragmentSchema.optional(),
     receipt: configurationReceiptSchema.optional(),
   }),
 ]);

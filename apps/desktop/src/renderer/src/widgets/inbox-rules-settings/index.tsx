@@ -55,6 +55,7 @@ type InboxRulesSettingsProps = {
   onRefreshProvider: (provider: Provider) => void;
   api: InboxRulesApi;
   onEditProfile?: () => void;
+  onViewProfile?: () => void;
 };
 
 type Draft = {
@@ -152,6 +153,7 @@ export function InboxRulesSettings({
   onRefreshProvider,
   api,
   onEditProfile,
+  onViewProfile,
 }: InboxRulesSettingsProps) {
   const unavailable = unavailableReason(computer);
   const hostId = computer?.id ?? 'local';
@@ -424,7 +426,7 @@ export function InboxRulesSettings({
         ) : (
           catalog.rules.map(entry => (
             <SettingsRow
-              key={entry.path}
+              key={entry.path + ':' + entry.name}
               title={
                 <span className="flex flex-wrap items-center gap-1.5">
                   {entry.name}
@@ -439,6 +441,7 @@ export function InboxRulesSettings({
               description={
                 <div className="space-y-1">
                   <p>{ruleSummary(entry)}</p>
+                  {entry.fromProfile && <p>From profile</p>}
                   {entry.enforcement
                     .filter(item => item.status === 'unsupported')
                     .map(item => (
@@ -460,51 +463,62 @@ export function InboxRulesSettings({
                 </div>
               }
             >
-              <div className="flex items-center gap-1.5">
-                <Switch
-                  aria-label={`Enable ${entry.name}`}
-                  checked={!!entry.rule?.enabled}
-                  disabled={busy || !entry.rule}
-                  onCheckedChange={enabled =>
-                    void run(() =>
-                      api.setInboxRuleEnabled(
-                        {
-                          scope: entry.scope,
-                          ...(entry.scope === 'project' && directory
-                            ? { directory }
-                            : {}),
-                          name: entry.name,
-                          expectedHash: entry.contentHash,
-                          enabled,
-                        },
-                        hostId,
-                      ),
-                    )
-                  }
-                />
+              {entry.fromProfile ? (
                 <Button
                   size="xs"
                   variant="ghost"
-                  onClick={() => {
-                    setDraft({
-                      scope: entry.scope,
-                      text: entry.text,
-                      expectedHash: entry.contentHash,
-                      previousName: entry.name,
-                    });
-                    setIssues(entry.issues);
-                  }}
+                  onClick={onViewProfile}
+                  disabled={!onViewProfile}
                 >
-                  Edit
+                  View in Your setup
                 </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => setRemoving(entry)}
-                >
-                  Delete
-                </Button>
-              </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <Switch
+                    aria-label={`Enable ${entry.name}`}
+                    checked={!!entry.rule?.enabled}
+                    disabled={busy || !entry.rule}
+                    onCheckedChange={enabled =>
+                      void run(() =>
+                        api.setInboxRuleEnabled(
+                          {
+                            scope: entry.scope,
+                            ...(entry.scope === 'project' && directory
+                              ? { directory }
+                              : {}),
+                            name: entry.name,
+                            expectedHash: entry.contentHash,
+                            enabled,
+                          },
+                          hostId,
+                        ),
+                      )
+                    }
+                  />
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => {
+                      setDraft({
+                        scope: entry.scope,
+                        text: entry.text,
+                        expectedHash: entry.contentHash,
+                        previousName: entry.name,
+                      });
+                      setIssues(entry.issues);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setRemoving(entry)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              )}
             </SettingsRow>
           ))
         )}

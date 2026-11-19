@@ -57,6 +57,7 @@ export type RuleFile = {
   name: string;
   rule: InboxRule | null;
   issues: InboxRuleIssue[];
+  fromProfile?: boolean;
 };
 
 export const globalRulesRoot = () => join(dirname(globalRoot()), 'inbox-rules');

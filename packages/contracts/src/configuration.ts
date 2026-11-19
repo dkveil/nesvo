@@ -108,7 +108,7 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
   }),
   z.strictObject({
     area: z.literal('setup-profile-file'),
-    key: z.enum(['routing', 'shared-routing', 'recipe']),
+    key: z.enum(['routing', 'shared-routing', 'recipe', 'fragment']),
     name: key.optional(),
   }),
   z.strictObject({
@@ -245,7 +245,9 @@ export const configurationMutationSchema = z
           : target.area === 'setup-profile-file'
             ? target.key === 'recipe'
               ? 'setup-recipe'
-              : 'route'
+              : target.key === 'fragment'
+                ? 'markdown'
+                : 'route'
             : target.area === 'setup-profile'
               ? target.area
               : target.area === 'appearance'

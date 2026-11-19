@@ -48,6 +48,7 @@ import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { z } from 'zod';
+import { dump } from 'js-yaml';
 import type {
   StepExecution,
   StepExecutor,
@@ -348,6 +349,7 @@ export class InboxRules {
           signal,
           access,
           (file, identity, write) => {
+            if (!project) this.assertManualRule(target.name);
             const current = file?.text ?? null;
             const value: ConfigurationValue | null =
               current === null ? null : { kind: 'markdown', document: current };
@@ -565,7 +567,7 @@ export class InboxRules {
   ): Promise<InboxRuleCatalog> {
     const issues: InboxRuleIssue[] = [];
     const globalRoot = globalRulesRoot();
-    const global = await readRuleRoot(globalRoot, 'global', signal, issues);
+    const global = await this.readGlobalRules(signal, issues);
     let projectRoot: string | null = null;
     let project: RuleFile[] = [];
     let trust: InboxRuleCatalog['projectTrust'] = 'none';
@@ -595,6 +597,7 @@ export class InboxRules {
         rule: file.rule,
         active: inactiveReason === null,
         inactiveReason,
+        ...(file.fromProfile ? { fromProfile: true } : {}),
         issues: file.issues.slice(0, inboxRuleLimits.issues),
         enforcement: file.rule ? ruleEnforcement(file.rule) : [],
       };
@@ -629,6 +632,11 @@ export class InboxRules {
   }
 
   async save(input: SaveInboxRuleInput, signal: AbortSignal) {
+    if (input.scope === 'global') {
+      const name = parseRuleText(input.text, '').name;
+      this.assertManualRule(name);
+      if (input.previousName) this.assertManualRule(input.previousName);
+    }
     const root = await this.rootFor(input.scope, input.directory, signal);
     await writeRuleFile(
       root,
@@ -644,6 +652,7 @@ export class InboxRules {
     input: { scope: InboxRuleScope; directory?: string; name: string; expectedHash: string },
     signal: AbortSignal,
   ) {
+    if (input.scope === 'global') this.assertManualRule(input.name);
     const root = await this.rootFor(input.scope, input.directory, signal);
     await deleteRuleFile(root, input.name, input.expectedHash, signal);
     return this.catalog(input.directory, signal);
@@ -702,12 +711,7 @@ export class InboxRules {
     const key = `${session.provider}\u0000${session.directory}`;
     const rules = (async (): Promise<ApplicableRule[]> => {
       const issues: InboxRuleIssue[] = [];
-      const global = await readRuleRoot(
-        globalRulesRoot(),
-        'global',
-        signal,
-        issues,
-      );
+      const global = await this.readGlobalRules(signal, issues);
       let project: RuleFile[] = [];
       try {
         const root = await this.ports.projectRoot(session.directory, signal);
@@ -737,6 +741,42 @@ export class InboxRules {
       );
     })();
     return rules;
+  }
+
+  private assertManualRule(name: string) {
+    if (this.ports.store.profileRules().some(entry => entry.value.id === name))
+      throw new InboxRuleFileError('busy', 'This Inbox rule is managed by the profile. Edit it in Your setup.');
+  }
+
+  private async readGlobalRules(signal: AbortSignal, issues: InboxRuleIssue[]) {
+    const manual = await readRuleRoot(globalRulesRoot(), 'global', signal, issues);
+    const profile = this.ports.store.profileRules();
+    const managedIds = new Set(profile.map(entry => entry.value.id));
+    const restrictiveIds = new Set(manual.filter(file => file.rule?.action !== 'route').map(file => file.name));
+    const projected = profile.flatMap(({ value, source, digest }): Array<{ order: number; file: RuleFile }> => {
+      if ('disabled' in value || restrictiveIds.has(value.id)) return [];
+      const { body, ...frontmatter } = value.definition;
+      return [{
+        order: value.order,
+        file: {
+          scope: 'global',
+          name: value.id,
+          path: source,
+          text: '---\n' + dump(frontmatter, {noRefs: true}) + '---\n' + body,
+          contentHash: digest,
+          rule: value.definition,
+          issues: [],
+          fromProfile: true,
+        },
+      }];
+    });
+    const unmanaged = manual.filter(file => !managedIds.has(file.name) || restrictiveIds.has(file.name));
+    const available = Math.max(0, inboxRuleLimits.rules - unmanaged.length);
+    return [
+      ...projected.sort((a, b) => a.order - b.order)
+        .slice(0, available).map(entry => entry.file),
+      ...unmanaged,
+    ];
   }
 
   private async rulesFor(session: Session, signal: AbortSignal) {
@@ -1155,7 +1195,7 @@ export class InboxRules {
   private async globalRules(signal: AbortSignal): Promise<ApplicableRule[]> {
     const issues: InboxRuleIssue[] = [];
     return (
-      await readRuleRoot(globalRulesRoot(), 'global', signal, issues)
+      await this.readGlobalRules(signal, issues)
     ).flatMap(file =>
       file.rule?.enabled &&
       !file.rule.repository &&

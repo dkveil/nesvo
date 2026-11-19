@@ -40,6 +40,9 @@ type Layer = SetupProfileReview['files'][number]['layer'];
 type Issue = SetupProfileReview['issues'][number];
 type Route = SetupProfileReview['routing']['effective'];
 type Entry = { id: string; disabled?: true; name?: string };
+type InboxRuleEntry = NonNullable<
+  NonNullable<SetupProfileDocument['inbox']>['rules']
+>[number];
 
 export class SetupProfileFileError extends Error {
   constructor(
@@ -235,6 +238,10 @@ export type LoadedSetupProfile = {
   route: Route | null;
   routeSource: string | null;
   routeWritePath: string;
+  sessionControl?: SetupProfileDocument['sessionControl'];
+  inboxRules?: Array<{ value: InboxRuleEntry; source: string; digest: string }>;
+  usageLimits?: SetupProfileDocument['limits'];
+  portable?: SetupProfileDocument;
 };
 
 function profileLayers(file: string, replacement?: Replacement) {
@@ -296,6 +303,13 @@ export function readSetupRouteSource(file: string, shared: boolean) {
   if (!source)
     fileError(path, 'The profile has no shared fragment.', 'include.shared');
   return { profile, source, definition: null };
+}
+
+export function readSetupFragment(file: string, layer: Layer) {
+  const { path, layers } = profileLayers(file);
+  const source = layers.find(item => item.layer === layer);
+  if (!source) fileError(path, 'This profile layer is unavailable.');
+  return { profile: mergeProfile(path, layers), source, definition: null };
 }
 
 export function readSetupRecipeSource(file: string, id: string) {
@@ -375,7 +389,7 @@ export function replaceSetupProfileFile(
 
 export function writeNewSetupProfile(
   file: string,
-  route: Route,
+  document: SetupProfileDocument,
   defaultPath: string,
 ) {
   if (!isAbsolute(file) || !/\.ya?ml$/iu.test(file))
@@ -392,7 +406,7 @@ export function writeNewSetupProfile(
   )
     fileError(file, 'Choose a local profile directory without symbolic links.');
   try {
-    writeFileSync(path, profileWithRoute({ version: 1 }, route), {
+    writeFileSync(path, dump(document, { lineWidth: -1, noRefs: true }), {
       flag: 'wx',
       mode: 0o600,
       flush: true,
@@ -419,6 +433,15 @@ function mergeProfile(
   const overrides = new Map<string, SetupProfileDeclaration>();
   let route: Route | null = null;
   let routeSource: string | null = null;
+  let sessionControl: SetupProfileDocument['sessionControl'];
+  const inboxRules = new Map<
+    string,
+    { value: InboxRuleEntry; source: string; digest: string }
+  >();
+  const usageLimits = new Map<
+    string,
+    NonNullable<SetupProfileDocument['limits']>[number]
+  >();
   const add = (layer: ProfileLayer, field: string, entries: Entry[] = []) =>
     entries.forEach((value, index) =>
       merged.set(field + '/' + value.id, {
@@ -431,6 +454,13 @@ function mergeProfile(
     const value: SetupProfileDocument = layer.value;
     for (const key of setupProfileCollectionKeys) add(layer, key, value[key]);
     add(layer, 'inbox.rules', value.inbox?.rules);
+    for (const rule of value.inbox?.rules ?? [])
+      inboxRules.set(rule.id, {
+        value: rule,
+        source: layer.path,
+        digest: sha(JSON.stringify(rule)),
+      });
+    for (const limit of value.limits ?? []) usageLimits.set(limit.id, limit);
     if (value.inbox?.defaultRoute !== undefined) {
       route = value.inbox.defaultRoute;
       routeSource = layer.path;
@@ -441,16 +471,29 @@ function mergeProfile(
         source: layer.path,
         revision: sha(JSON.stringify(route)),
         state: 'ordinary',
+        preview: route,
       });
     }
+    if (value.sessionControl)
+      sessionControl = { ...sessionControl, ...value.sessionControl };
     for (const [key, content] of Object.entries(value.sessionControl ?? {})) {
       overrides.set('sessionControl.' + key, {
         key: 'sessionControl.' + key,
-        label: 'Session control',
+        label:
+          {
+            maxSessions: 'Coordinator group limit',
+            maxDepth: 'Coordinator nesting limit',
+            workers: 'Worker permissions',
+            wake: 'Coordinator wake',
+          }[key] ?? 'Session control',
         field: 'sessionControl.' + key,
         source: layer.path,
         revision: sha(JSON.stringify(content)),
-        state: 'pending',
+        state:
+          key === 'wake' || (key === 'workers' && content === 'ask')
+            ? 'pending'
+            : 'ordinary',
+        preview: String(content),
       });
     }
   }
@@ -469,13 +512,37 @@ function mergeProfile(
           entry.field + '.provider',
         );
     }
+    const value = entry.value;
+    const preview =
+      'template' in value && typeof value.template === 'string'
+        ? value.template
+        : 'threshold' in value && 'effect' in value
+          ? `${value.effect} at ${value.threshold}%`
+          : 'schedule' in value && 'timeZone' in value
+            ? `${value.schedule} · ${value.timeZone} · Paused pending review`
+            : undefined;
+    const rule = key.startsWith('inbox.rules/')
+      ? inboxRules.get(value.id)?.value
+      : undefined;
+    const ordinary =
+      key.startsWith('branches/') ||
+      (key.startsWith('limits/') &&
+        'effect' in value &&
+        value.effect === 'warn' &&
+        (!('account' in value) || value.account === 'default')) ||
+      (rule &&
+        !('disabled' in rule) &&
+        rule.scope.kind === 'global' &&
+        rule.definition.action === 'route' &&
+        rule.definition.name === rule.id);
     overrides.set(key, {
       key,
       source: entry.source,
       field: entry.field,
       label: (entry.value.name ?? entry.value.id).slice(0, 120),
       revision: sha(JSON.stringify(entry.value)),
-      state: entry.value.disabled ? 'masked' : 'pending',
+      state: value.disabled ? 'masked' : ordinary ? 'ordinary' : 'pending',
+      preview: configurationText(preview ?? '').slice(0, 300) || undefined,
     });
   }
   const files = layers.map(({ layer, path, revision }) => ({
@@ -483,10 +550,30 @@ function mergeProfile(
     path,
     revision,
   }));
+  const collection = (key: string) =>
+    [...merged.entries()]
+      .filter(([path]) => path.startsWith(key + '/'))
+      .map(([, entry]) => entry.value);
+  const settings: SetupProfileDocument = setupProfileDocumentSchema.parse({
+    version: 1,
+    branches: collection('branches'),
+    recipes: collection('recipes').filter(entry => !('provider' in entry)),
+    automations: collection('automations'),
+    limits: [...usageLimits.values()],
+    sessionControl,
+    inbox: {
+      defaultRoute: route ?? undefined,
+      rules: [...inboxRules.values()].map(entry => entry.value),
+    },
+  });
   return {
     path,
     files,
     declarations: [...overrides.values()],
+    sessionControl,
+    inboxRules: [...inboxRules.values()],
+    usageLimits: [...usageLimits.values()],
+    portable: settings,
     route,
     routeSource,
     routeWritePath:

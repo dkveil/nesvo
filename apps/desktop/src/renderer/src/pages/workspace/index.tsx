@@ -6632,6 +6632,7 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <InboxRulesSettings
+                  onViewProfile={() => setSettingsPage('your-setup')}
                   onEditProfile={() => {
                     setEditProfileRouting(true);
                     setSettingsPage('your-setup');

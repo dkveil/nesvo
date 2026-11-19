@@ -1,10 +1,14 @@
 import {
   inboxSettingsSchema,
+  setupProfileSessionControlSchema,
+  setupProfileLayerSchema,
   setupProfileReviewSchema,
   type ConfigurationTarget,
   type ConfigurationValue,
   type SetupProfileInput,
+  type SetupProfileDeclaration,
   type SetupProfileReview,
+  type ProviderUsage,
 } from '@nesvo/contracts';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +28,7 @@ import {
   readSetupProfile,
   readSetupRouteSource,
   readSetupRecipeSource,
+  readSetupFragment,
   replaceSetupProfileFile,
   writeNewSetupProfile,
   SetupProfileFileError,
@@ -37,11 +42,20 @@ const target = {
 } as const satisfies ConfigurationTarget;
 const routeSchema = inboxSettingsSchema.shape.defaultRoute;
 type Routing = SetupProfileReview['routing']['effective'];
+type SessionLimits = Pick<
+  NonNullable<LoadedSetupProfile['sessionControl']>,
+  'maxSessions' | 'maxDepth' | 'workers'
+>;
 type Selection = {
   profile: LoadedSetupProfile;
   managed: boolean;
+  sessionLimits?: SessionLimits;
 };
-type RouteEditorState = { path: string; text: string };
+type RouteEditorState = {
+  path: string;
+  text: string;
+  selection?: Pick<Selection, 'managed' | 'sessionLimits'>;
+};
 
 const allowOnlyProfile = (verb: string, requested: ConfigurationTarget) => {
   if (verb !== 'apply' || requested.area !== 'setup-profile')
@@ -80,6 +94,124 @@ export function managedSetupRoute(database: DatabaseSync): Routing | null {
     : null;
 }
 
+function activeProfileSelection(database: DatabaseSync): Selection | null {
+  if (!tableExists(database, 'setup_profile')) return null;
+  const row = database
+    .prepare('SELECT document FROM setup_profile WHERE id = 1')
+    .get();
+  return typeof row?.document === 'string' ? JSON.parse(row.document) : null;
+}
+
+export function managedSessionLimits(database: DatabaseSync): SessionLimits {
+  const selection = activeProfileSelection(database);
+  return (
+    setupProfileSessionControlSchema.safeParse(selection?.sessionLimits).data ??
+    {}
+  );
+}
+
+export function managedGlobalInboxRules(database: DatabaseSync) {
+  const profile = activeProfileSelection(database)?.profile;
+  return (profile?.inboxRules ?? []).filter(
+    ({ value }) =>
+      'disabled' in value ||
+      (value.scope.kind === 'global' &&
+        value.definition.action === 'route' &&
+        value.definition.name === value.id),
+  );
+}
+
+export function withProfileUsageWarning(
+  database: DatabaseSync,
+  usage: ProviderUsage,
+  profileId: string | null | undefined,
+): ProviderUsage {
+  if (profileId || usage.status !== 'ready') return usage;
+  const limits = activeProfileSelection(database)?.profile.usageLimits ?? [];
+  const warnings = limits.flatMap(limit => {
+    if (
+      'disabled' in limit ||
+      limit.provider !== usage.provider ||
+      limit.effect !== 'warn' ||
+      (limit.account && limit.account !== 'default')
+    )
+      return [];
+    const window = usage.windows.find(item => item.id === limit.window);
+    if (
+      !window ||
+      window.usedPercent < limit.threshold ||
+      (window.resetsAt && Date.parse(window.resetsAt) <= Date.now())
+    )
+      return [];
+    return [
+      `${window.label} reached the profile warning threshold of ${limit.threshold}%.`,
+    ];
+  });
+  if (!warnings.length) return usage;
+  return {
+    ...usage,
+    detail: [...new Set([...warnings, ...(usage.detail ? [usage.detail] : [])])]
+      .join(' ')
+      .slice(0, 1000),
+  };
+}
+
+function profileChanges(
+  current: SetupProfileDeclaration[],
+  desired: SetupProfileDeclaration[],
+) {
+  const previous = new Map(current.map(item => [item.key, item]));
+  const next = new Map(desired.map(item => [item.key, item]));
+  const summary = (item: SetupProfileDeclaration | undefined) =>
+    item?.state === 'masked'
+      ? 'Disabled'
+      : (item?.preview ??
+        (item?.state === 'pending'
+          ? 'Awaiting local review'
+          : (item?.label ?? null)));
+  return [...new Set([...previous.keys(), ...next.keys()])].map(key => {
+    const before = previous.get(key);
+    const after = next.get(key);
+    return {
+      key,
+      label: (after ?? before)!.label,
+      before: summary(before),
+      after: summary(after),
+      effect: !before
+        ? ('add' as const)
+        : !after
+          ? ('remove' as const)
+          : before.revision === after.revision
+            ? ('keep' as const)
+            : ('update' as const),
+    };
+  });
+}
+
+function restrictSessionLimits(
+  previous: SessionLimits | undefined,
+  desired: LoadedSetupProfile['sessionControl'],
+): SessionLimits {
+  const maxSessions = Math.min(
+    previous?.maxSessions ?? 8,
+    desired?.maxSessions ?? 8,
+  );
+  const maxDepth = Math.min(previous?.maxDepth ?? 2, desired?.maxDepth ?? 2);
+  const readOnly =
+    previous?.workers === 'read-only' || desired?.workers === 'read-only';
+  return {
+    maxSessions:
+      previous?.maxSessions !== undefined || desired?.maxSessions !== undefined
+        ? maxSessions
+        : undefined,
+    maxDepth:
+      previous?.maxDepth !== undefined || desired?.maxDepth !== undefined
+        ? maxDepth
+        : undefined,
+    workers: readOnly ? 'read-only' : undefined,
+  };
+}
+
 function manualRoute(database?: DatabaseSync) {
   const stored = tableExists(database, 'inbox_settings')
     ? database
@@ -94,10 +226,13 @@ function manualRoute(database?: DatabaseSync) {
 
 function selectionText(selection: Selection | null) {
   if (!selection) return 'Manual setup';
-  const { profile, managed } = selection;
+  const { profile, managed, sessionLimits } = selection;
   return [
     'Profile ' + basename(profile.path),
     ...(managed ? ['Default Inbox route: ' + (profile.route ?? 'inbox')] : []),
+    ...Object.entries(sessionLimits ?? {}).map(
+      ([key, value]) => `Session control · ${key} · ${value}`,
+    ),
     ...profile.declarations
       .filter(item => item.state === 'pending' || item.state === 'masked')
       .map(
@@ -191,6 +326,10 @@ export class SetupProfileService {
         files: loaded.files,
         issues: [],
         declarations: loaded.declarations,
+        changes: profileChanges(
+          current.selection?.profile.declarations ?? [],
+          loaded.declarations,
+        ),
         routing: {
           ...common.routing,
           desired: loaded.route,
@@ -270,6 +409,63 @@ export class SetupProfileService {
     );
   }
 
+  inspectFragment(
+    input: Extract<
+      SetupProfileInput,
+      { action: 'inspect-fragment' | 'edit-fragment' }
+    >,
+  ) {
+    const current = this.current();
+    if (
+      current.instanceId !== input.instanceId ||
+      !current.selection ||
+      current.selection.profile.revision !== input.revision ||
+      (input.action === 'edit-fragment' &&
+        input.effectiveRevision !== current.revision)
+    )
+      throw new ConfigurationRefusal(
+        'conflict',
+        'The computer or profile changed. Refresh the profile first.',
+      );
+    const { profile, source } = readSetupFragment(
+      current.selection.profile.path,
+      input.layer,
+    );
+    if (profile.revision !== input.revision)
+      throw new ConfigurationRefusal(
+        'conflict',
+        'The profile or an include changed. Refresh it before editing.',
+      );
+    return { layer: source.layer, path: source.path, text: source.text };
+  }
+
+  async editFragment(
+    input: Extract<SetupProfileInput, { action: 'edit-fragment' }>,
+  ) {
+    const result = await this.changes!.submit(
+      {
+        source: { kind: 'owner' },
+        authorize: () => {
+          this.inspectFragment(input);
+        },
+      },
+      'apply',
+      {
+        actionId: input.actionId,
+        target: {
+          area: 'setup-profile-file',
+          key: 'fragment',
+          name: input.layer,
+        },
+        operation: 'update',
+        baseVersion: { type: 'hash', hash: input.revision },
+        draft: { kind: 'markdown', document: input.text },
+      },
+    );
+    if (result.receipt.status === 'applied') await this.recoverPendingReviews();
+    return result;
+  }
+
   saveAs(input: Extract<SetupProfileInput, { action: 'save-as' }>) {
     const current = this.inspect();
     if (
@@ -282,9 +478,10 @@ export class SetupProfileService {
       );
     const file = writeNewSetupProfile(
       input.file,
-      current.routing.effective,
+      this.portableProfile(),
       this.defaultFile,
     );
+    if (current.activePath) return undefined;
     const candidate = readSetupProfile(file);
     return this.apply({
       action: 'apply',
@@ -294,6 +491,22 @@ export class SetupProfileService {
       revision: candidate.revision,
       actionId: input.actionId,
     });
+  }
+
+  portableProfile() {
+    const { selection, route } = this.current();
+    const desired = selection?.profile.portable;
+    return {
+      ...desired,
+      version: 1 as const,
+      sessionControl: selection?.sessionLimits,
+      inbox: {
+        ...desired?.inbox,
+        defaultRoute: selection?.managed
+          ? (selection.profile.route ?? 'inbox')
+          : route.value,
+      },
+    };
   }
 
   async refresh() {
@@ -379,6 +592,12 @@ export class SetupProfileService {
                   managed: restore
                     ? !!oldSelection?.managed
                     : loaded.route !== null || !!previous?.managed,
+                  sessionLimits: restore
+                    ? oldSelection?.sessionLimits
+                    : restrictSessionLimits(
+                        previous?.sessionLimits,
+                        loaded.sessionControl,
+                      ),
                 }
               : null;
             return {
@@ -438,7 +657,17 @@ export class SetupProfileService {
           );
         const recipeId =
           requested.key === 'recipe' ? requested.name : undefined;
-        if (requested.key === 'recipe' ? !recipeId : !current.selection.managed)
+        const layer =
+          requested.key === 'fragment'
+            ? setupProfileLayerSchema.safeParse(requested.name).data
+            : undefined;
+        if (
+          requested.key === 'recipe'
+            ? !recipeId
+            : requested.key === 'fragment'
+              ? !layer
+              : !current.selection.managed
+        )
           throw new ConfigurationRefusal(
             'unsupported',
             'Choose a valid profile setting.',
@@ -446,10 +675,12 @@ export class SetupProfileService {
         const selected = current.selection.profile;
         const opened = recipeId
           ? readSetupRecipeSource(selected.path, recipeId)
-          : readSetupRouteSource(
-              selected.path,
-              requested.key === 'shared-routing',
-            );
+          : layer
+            ? readSetupFragment(selected.path, layer)
+            : readSetupRouteSource(
+                selected.path,
+                requested.key === 'shared-routing',
+              );
         const { profile, source } = opened;
         const value: ConfigurationValue = recipeId
           ? {
@@ -459,7 +690,9 @@ export class SetupProfileService {
                 definition: opened.definition,
               },
             }
-          : { kind: 'route', value: profile.route ?? 'inbox' };
+          : layer
+            ? { kind: 'markdown', document: source.text }
+            : { kind: 'route', value: profile.route ?? 'inbox' };
         const ensureFresh = (digest: string) => {
           const now = this.current();
           const loaded = readSetupProfile(selected.path);
@@ -479,12 +712,24 @@ export class SetupProfileService {
         const state: RouteEditorState = {
           path: source.path,
           text: source.text,
+          ...(layer
+            ? {
+                selection: {
+                  managed: current.selection.managed,
+                  sessionLimits: current.selection.sessionLimits,
+                },
+              }
+            : {}),
         };
         return use({
           read: () => ({
             identity,
             dependencies: String(current.revision),
-            label: recipeId ? undefined : 'Profile Inbox route',
+            label: layer
+              ? 'Profile fragment'
+              : recipeId
+                ? undefined
+                : 'Profile Inbox route',
             version: { type: 'hash', hash: profile.revision },
             value,
             state: JSON.stringify(state),
@@ -516,7 +761,9 @@ export class SetupProfileService {
                       ? profileWithRecipe(source.value, draft.value.definition)
                       : draft.kind === 'route'
                         ? profileWithRoute(source.value, draft.value)
-                        : source.text,
+                        : draft.kind === 'markdown'
+                          ? draft.document
+                          : source.text,
                 };
             if (!profile.files.some(file => file.path === replacement.path))
               throw new ConfigurationRefusal(
@@ -524,6 +771,25 @@ export class SetupProfileService {
                 'The original profile fragment is unavailable.',
               );
             const preview = readSetupProfile(selected.path, replacement);
+            if (
+              layer &&
+              (preview.files.length !== profile.files.length ||
+                preview.files.some(
+                  (file, index) => file.path !== profile.files[index]?.path,
+                ))
+            )
+              throw new ConfigurationRefusal(
+                'invalid-request',
+                'Keep the same include paths when editing a fragment.',
+              );
+            if (layer && !restore)
+              replacement.selection = {
+                managed: preview.route !== null || !!current.selection?.managed,
+                sessionLimits: restrictSessionLimits(
+                  current.selection?.sessionLimits,
+                  preview.sessionControl,
+                ),
+              };
             if (
               draft.kind === 'route' &&
               (preview.route ?? 'inbox') !== draft.value
@@ -569,9 +835,17 @@ export class SetupProfileService {
                 'Inspect the unconfirmed profile edit.',
               );
             const verified = ensureFresh(to.version.hash);
+            const replacement: RouteEditorState | null = to.state
+              ? JSON.parse(to.state)
+              : null;
             this.save({
               profile: verified,
-              managed: Boolean(current.selection?.managed),
+              managed:
+                replacement?.selection?.managed ??
+                Boolean(current.selection?.managed),
+              sessionLimits: replacement?.selection
+                ? replacement.selection.sessionLimits
+                : current.selection?.sessionLimits,
             });
           },
         });

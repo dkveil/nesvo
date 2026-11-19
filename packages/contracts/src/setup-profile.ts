@@ -124,6 +124,12 @@ const worktree = z.discriminatedUnion('kind', [
     status: command.optional(),
   }),
 ]);
+const branchTemplate = z.strictObject({
+  id,
+  name: label,
+  scope: gitScope,
+  template: branch,
+});
 export const setupProfileRecipeSchema = z.strictObject({
   id,
   name: label,
@@ -194,6 +200,13 @@ const automation = z.strictObject({
   askFirst: z.boolean().optional(),
 });
 
+export const setupProfileSessionControlSchema = z.strictObject({
+  maxSessions: z.number().int().min(1).max(8).optional(),
+  maxDepth: z.number().int().min(1).max(2).optional(),
+  workers: z.enum(['read-only', 'ask']).optional(),
+  wake: z.enum(['manual', 'ask']).optional(),
+});
+
 export const setupProfileDocumentSchema = z.strictObject({
   version: z.literal(1),
   include: z
@@ -203,20 +216,14 @@ export const setupProfileDocumentSchema = z.strictObject({
     })
     .optional(),
   worktrees: withIds(worktree).optional(),
+  branches: withIds(branchTemplate).optional(),
   recipes: withIds(setupProfileRecipeSchema).optional(),
   repositoryTrust: withIds(
     z.strictObject({ id, pattern: repo, effect: z.enum(['allow', 'deny']) }),
   ).optional(),
   integrations: withIds(integration).optional(),
   externalMessages: withIds(source).optional(),
-  sessionControl: z
-    .strictObject({
-      maxSessions: z.number().int().min(1).max(8).optional(),
-      maxDepth: z.number().int().min(1).max(2).optional(),
-      workers: z.enum(['read-only', 'ask']).optional(),
-      wake: z.enum(['manual', 'ask']).optional(),
-    })
-    .optional(),
+  sessionControl: setupProfileSessionControlSchema.optional(),
   inbox: z
     .strictObject({
       defaultRoute: inboxSettingsSchema.shape.defaultRoute.optional(),
@@ -236,6 +243,7 @@ export const setupProfileDocumentSchema = z.strictObject({
 export type SetupProfileDocument = z.output<typeof setupProfileDocumentSchema>;
 export const setupProfileCollectionKeys = [
   'worktrees',
+  'branches',
   'recipes',
   'repositoryTrust',
   'integrations',
@@ -252,6 +260,7 @@ export const setupProfileDeclarationSchema = z.strictObject({
   label,
   revision: setupProfileDigestSchema,
   state: z.enum(['ordinary', 'pending', 'masked', 'unsupported']),
+  preview: z.string().max(300).optional(),
 });
 export const setupProfileReviewSchema = z.strictObject({
   instanceId: z.uuid().nullable(),
@@ -277,6 +286,18 @@ export const setupProfileReviewSchema = z.strictObject({
     )
     .max(3),
   declarations: z.array(setupProfileDeclarationSchema).max(500),
+  changes: z
+    .array(
+      z.strictObject({
+        key: z.string().min(1).max(110),
+        label,
+        before: z.string().max(300).nullable(),
+        after: z.string().max(300).nullable(),
+        effect: z.enum(['add', 'update', 'remove', 'keep']),
+      }),
+    )
+    .max(1000)
+    .optional(),
   issues: z
     .array(
       z.strictObject({
@@ -300,10 +321,33 @@ export type SetupProfileDeclaration = z.output<
   typeof setupProfileDeclarationSchema
 >;
 
+export const setupProfileLayerSchema = z.enum(['entry', 'machine', 'shared']);
+export const setupProfileFragmentSchema = z.strictObject({
+  layer: setupProfileLayerSchema,
+  path: setupProfilePathSchema,
+  text: z.string().max(65536),
+});
+export type SetupProfileFragment = z.output<typeof setupProfileFragmentSchema>;
+
 export const setupProfileInputSchema = z.discriminatedUnion('action', [
   z.strictObject({
     action: z.literal('inspect'),
     file: setupProfilePathSchema.optional(),
+  }),
+  z.strictObject({
+    action: z.literal('inspect-fragment'),
+    instanceId: z.uuid(),
+    revision: setupProfileDigestSchema,
+    layer: setupProfileLayerSchema,
+  }),
+  z.strictObject({
+    action: z.literal('edit-fragment'),
+    instanceId: z.uuid(),
+    revision: setupProfileDigestSchema,
+    effectiveRevision: z.number().int().nonnegative(),
+    layer: setupProfileLayerSchema,
+    text: z.string().min(1).max(65536),
+    actionId: z.uuid(),
   }),
   z.strictObject({
     action: z.literal('apply'),

@@ -107,7 +107,7 @@ export const coordinatorPolicySchema = z.strictObject({
   groupSize: z
     .number()
     .int()
-    .min(2)
+    .min(1)
     .max(sessionControlLimits.groupSize)
     .default(4),
   nested: z.boolean().default(false),

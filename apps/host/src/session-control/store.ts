@@ -17,6 +17,8 @@ import {
   type SessionMode,
   type SessionState,
 } from '@nesvo/contracts';
+import { managedSessionLimits } from '../setup-profile-service';
+import { SessionError } from '../sessions/session-error';
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -198,6 +200,19 @@ export class SessionControlStore {
   }
 
   policy(): CoordinatorPolicy {
+    const policy = this.manualPolicy();
+    const limits = managedSessionLimits(this.database);
+    return {
+      ...policy,
+      groupSize: Math.min(policy.groupSize, limits.maxSessions ?? policy.groupSize),
+      nested: policy.nested && limits.maxDepth !== 1,
+      childModes: limits.workers === 'read-only'
+        ? policy.childModes.filter(mode => mode === 'read-only')
+        : policy.childModes,
+    };
+  }
+
+  private manualPolicy(): CoordinatorPolicy {
     const row = this.database
       .prepare('SELECT document FROM session_control_policy WHERE id = 1')
       .get();
@@ -214,12 +229,28 @@ export class SessionControlStore {
 
   savePolicy(policy: CoordinatorPolicy): CoordinatorPolicy {
     const valid = coordinatorPolicySchema.parse(policy);
+    const limits = managedSessionLimits(this.database);
+    const current = this.policy();
+    const manual = this.manualPolicy();
+    if (
+      (limits.maxSessions !== undefined && valid.groupSize !== current.groupSize) ||
+      (limits.maxDepth !== undefined && valid.nested !== current.nested) ||
+      (limits.workers === 'read-only' &&
+        JSON.stringify(valid.childModes) !== JSON.stringify(current.childModes))
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This coordinator setting is managed by the profile. Edit it in Your setup.',
+      );
+    if (limits.maxSessions !== undefined) valid.groupSize = manual.groupSize;
+    if (limits.maxDepth !== undefined) valid.nested = manual.nested;
+    if (limits.workers === 'read-only') valid.childModes = manual.childModes;
     this.database
       .prepare(
         'INSERT INTO session_control_policy (id, document) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document',
       )
       .run(JSON.stringify(valid));
-    return valid;
+    return this.policy();
   }
 
   action(actionId: string): StoredAction | undefined {
