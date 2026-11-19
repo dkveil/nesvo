@@ -103,7 +103,10 @@ export const createCheckResolver =
           sessionId: session.id,
           messageId,
           text,
-          outputSchema: z.toJSONSchema(checkResolutionSchema, { io: 'input' }),
+          outputSchema: z.toJSONSchema(checkResolutionSchema, {
+            io: 'input',
+            target: 'draft-7',
+          }),
           ephemeral: true,
           readOnly: true,
           instructionsOnly: true,
