@@ -16,7 +16,7 @@ import { installSessionControlTables } from './session-control/store';
 import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 
-const DATABASE_VERSION = 33;
+const DATABASE_VERSION = 34;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -416,7 +416,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       if (version < 28) migrateTranscriptCosts(database);
       installTranscriptIndex(database);
       installInboxTables(database);
-      if (version < 33)
+      if (version < 34)
         database.exec(`UPDATE reviews AS review
           SET document = json_set(document, '$.status', 'done', '$.revision', coalesce(json_extract(document, '$.revision'), 1) + 1)
           WHERE json_extract(document, '$.status') = 'pending'
