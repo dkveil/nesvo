@@ -116,7 +116,7 @@ export async function smokeGateRuleFlow({
   };
   const quote = 'Application messages must use the shared logger.';
   const source = await start();
-  await page.getByRole('button', { name: /^Inbox/ }).click();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   const fix = await decision(source.id, 'fix', quote);
   await decision(source.id, 'accept', '', fix);
   const row = page.getByRole('article', { name: 'Gate rule proposal' });

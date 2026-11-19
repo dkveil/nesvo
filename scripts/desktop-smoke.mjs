@@ -259,30 +259,6 @@ async function smokeConfigurationInbox(app, page) {
 }
 
 async function smokeConfigurationProfile(app, page) {
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Devices', exact: true }).click();
-  await page
-    .getByRole('button', { name: 'Enroll device', exact: true })
-    .click();
-  const grantsDialog = page.getByRole('dialog', {
-    name: 'Enroll configuration device',
-  });
-  await grantsDialog
-    .getByRole('textbox', { name: 'Device name' })
-    .fill('Release reviewer');
-  await grantsDialog
-    .getByRole('checkbox', { name: 'Appearance', exact: true })
-    .check();
-  await configurationShot(app, page, 'stage-2-device-grants');
-  await grantsDialog
-    .getByRole('button', { name: 'Cancel', exact: true })
-    .press('Enter');
-  await grantsDialog.waitFor({ state: 'hidden' });
-  const closeSettings = page.getByRole('button', {
-    name: 'Close settings',
-    exact: true,
-  });
-  if (await closeSettings.isVisible()) await closeSettings.click();
   const enrollment = await page.evaluate(() =>
     window.nesvo.configuration.enroll(
       {
@@ -715,6 +691,22 @@ async function smokeConfigurationProfile(app, page) {
         'direct apply, durable receipt, Undo and CLI proposals verified',
     }),
   );
+  if (!configurationScreenshots) return;
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Devices', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Enroll device', exact: true })
+    .click();
+  const grantsDialog = page.getByRole('dialog', {
+    name: 'Enroll configuration device',
+  });
+  await grantsDialog
+    .getByRole('textbox', { name: 'Device name' })
+    .fill('Release reviewer');
+  await grantsDialog
+    .getByRole('checkbox', { name: 'Appearance', exact: true })
+    .check();
+  await configurationShot(app, page, 'stage-2-device-grants');
 }
 const providerPids = new Set();
 const alive = pid => {
@@ -744,6 +736,7 @@ async function smokeDesktop() {
       }
     });
     hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+    await smokeGateRuleFlow({ application, page, directory });
     await smokeConfigurationInbox(application, page);
     await smokeConfigurationProfile(application, page);
     return;
