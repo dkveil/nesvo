@@ -1599,7 +1599,10 @@ if (args.length === 1 && args[0] === '--version') {
   } else if (command === 'fixture:stream') {
     start('Fixture streamed ');
     startRead();
-    await setTimeout(300);
+    const release = process.env.NESVO_FIXTURE_STREAM_RELEASE;
+    if (release) {
+      while (!existsSync(release)) await setTimeout(25);
+    } else await setTimeout(300);
     stream({
       type: 'content_block_delta',
       index: 0,

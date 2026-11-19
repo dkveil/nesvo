@@ -1750,6 +1750,7 @@ test(
     const workspace = join(directory, 'non-git-workspace');
     const pidFile = join(directory, 'fixture-pids.json');
     const usageControl = join(directory, 'usage-control.json');
+    const streamRelease = join(directory, 'release-stream');
     const children = [];
     const ownedPids = new Set();
     t.after(async () => {
@@ -1782,7 +1783,9 @@ test(
     database.close();
     await writeFile(usageControl, '{}');
     const open = () => {
-      const host = launch(directory, pidFile);
+      const host = launch(directory, pidFile, {
+        NESVO_FIXTURE_STREAM_RELEASE: streamRelease,
+      });
       children.push(host);
       return host;
     };
@@ -2696,6 +2699,7 @@ test(
       false,
     );
     assert.equal((await host.request('health')).health.status, 'ready');
+    await writeFile(streamRelease, '');
     const completed = await host.event(
       value => value.runId === running.runId && value.status === 'completed',
     );
