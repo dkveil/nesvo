@@ -3862,7 +3862,7 @@ ${text}`
           )}
           <nav
             aria-label="Breadcrumb"
-            className="@container/breadcrumb min-w-0 flex-1 px-1"
+            className="@container/breadcrumb min-w-24 flex-1 px-1"
           >
             <ol className="flex min-w-0 items-center gap-2 text-ui">
               {breadcrumbDirectory !== null && (
@@ -3936,9 +3936,9 @@ ${text}`
               )}
               <li
                 aria-current="page"
-                className="flex min-w-0 items-center gap-3"
+                className="flex min-w-0 flex-1 items-center gap-3"
               >
-                <h1 className="truncate text-ui font-semibold">
+                <h1 className="min-w-12 truncate text-ui font-semibold">
                   {costsView
                     ? 'Costs'
                     : creating
@@ -3966,7 +3966,7 @@ ${text}`
                     asChild
                     variant="link"
                     size="inline"
-                    className="min-w-0 text-2xs text-muted-foreground"
+                    className="min-w-0 shrink text-2xs text-muted-foreground"
                   >
                     <a
                       href={
@@ -3993,7 +3993,7 @@ ${text}`
                   !creating &&
                   selected &&
                   sessionRoleLabel(selected) && (
-                    <span className="hidden text-2xs text-muted-foreground sm:inline">
+                    <span className="hidden text-2xs text-muted-foreground @min-[14rem]/breadcrumb:inline">
                       {sessionRoleLabel(selected)}
                     </span>
                   )}
@@ -4173,7 +4173,7 @@ ${text}`
             )}
           {!browsing && !creating && selected?.provider === 'Claude Code' && (
             <IconButton
-              size={32}
+              size={headerIconSize}
               label="Open Claude terminal"
               pressed={panel === 'terminal'}
               onClick={() => setPanel(panel === 'terminal' ? null : 'terminal')}
