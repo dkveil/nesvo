@@ -712,6 +712,7 @@ test(
     );
     const openHost = () =>
       launch(directory, join(directory, 'pids.json'), {
+        NESVO_TEST_MODE: '1',
         NESVO_WORKFLOWS_HOME: join(agents, 'workflows'),
       });
     let host = openHost();
