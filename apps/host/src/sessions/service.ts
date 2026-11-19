@@ -4072,6 +4072,22 @@ export class SessionService {
     let persisted = false;
     try {
       const directory = this.workerDirectory(parent, proposal.directory);
+      await this.options.usageGates?.require(
+        {
+          id: proposal.id,
+          kind: 'create',
+          provider: proposal.provider,
+          profileId:
+            proposal.provider === parent.provider
+              ? (parent.profileId ?? null)
+              : null,
+          model: proposal.model,
+          title: proposal.title,
+          sessionId: parent.id,
+        },
+        input,
+        signal,
+      );
       const base = isWritableSessionMode(proposal.mode)
         ? await this.workerBase(parent, signal)
         : undefined;

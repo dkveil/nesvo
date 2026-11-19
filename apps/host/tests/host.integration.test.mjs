@@ -32783,6 +32783,35 @@ test('Codex delegation routes through session control and isolates writable Git 
           proposal.status === 'pending',
       ).length === 2,
   );
+  const worker = awaiting.delegations[0];
+  const usagePolicy = {
+    provider: worker.provider,
+    threshold: 1,
+    policy: 'hold',
+    onUnavailable: 'hold',
+    windows: [],
+  };
+  const usage = input =>
+    host.request('provider-usage-gates', { ...input, actionId: randomUUID() });
+  await usage({ action: 'save', policy: usagePolicy });
+  const heldDecision = await host.request('decide-delegation', {
+    sessionId: root.id,
+    runId: awaiting.runId,
+    delegationId: worker.id,
+    decision: 'accept',
+  });
+  assert.equal(
+    heldDecision.usageHold.id,
+    worker.id,
+    JSON.stringify(heldDecision),
+  );
+  assert.equal(existsSync(join(data, 'session-worktrees')), false);
+  await usage({
+    action: 'remove',
+    target: { provider: worker.provider, profileId: null },
+  });
+  const rechecked = await usage({ action: 'check', holdId: worker.id });
+  assert.equal(rechecked.settings.holds[0].status, 'ready');
   const workers = [];
   for (const proposal of awaiting.delegations) {
     const decision = await host.request('decide-delegation', {
