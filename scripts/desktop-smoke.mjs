@@ -4865,12 +4865,12 @@ try {
     .getByText(/Expires /)
     .first()
     .waitFor();
-  await importDialog.getByRole('combobox', { name: 'Save to' }).click();
+  await importDialog.getByRole('combobox', { name: 'Saved in' }).click();
   await restartedPage
     .getByRole('option', { name: 'Choose a folder…', exact: true })
     .click();
   await importDialog
-    .getByRole('combobox', { name: 'Save to' })
+    .getByRole('combobox', { name: 'Saved in' })
     .filter({ hasText: 'share-target' })
     .waitFor();
   await importDialog.getByText('New', { exact: true }).first().waitFor();
