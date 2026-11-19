@@ -153,12 +153,19 @@ function DialogCancel({
 
 function DialogTitle({
   className,
+  size = 'md',
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Title>) {
+}: React.ComponentProps<typeof DialogPrimitive.Title> & {
+  size?: 'sm' | 'md';
+}) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('text-base leading-6 font-semibold', className)}
+      className={cn(
+        'font-semibold',
+        size === 'sm' ? 'text-sm leading-5' : 'text-base leading-6',
+        className,
+      )}
       {...props}
     />
   );

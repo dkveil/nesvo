@@ -125,7 +125,6 @@ export const settingsPages: SettingsPageEntry[] = [
     group: '',
     keywords:
       'inbox rules hold notify ask before push merge approval gate route parent decisions presets',
-    wide: true,
   },
   {
     id: 'computers',

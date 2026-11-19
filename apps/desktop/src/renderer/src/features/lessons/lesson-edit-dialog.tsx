@@ -112,9 +112,13 @@ export function LessonEditDialog({
         if (!open && !pending) onClose();
       }}
     >
-      <DialogContent showCloseButton={!pending} className="sm:max-w-xl">
+      <DialogContent
+        surface="panel"
+        showCloseButton={!pending}
+        className="sm:max-w-xl"
+      >
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle size="sm">
             {approve ? 'Approve lesson' : `Edit ${lesson.id ?? 'lesson'}`}
           </DialogTitle>
           <DialogDescription>

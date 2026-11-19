@@ -109,9 +109,12 @@ export function RecipeTrialDialog({
   );
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent
+        surface="panel"
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
+      >
         <DialogHeader>
-          <DialogTitle>Test {recipe.name}</DialogTitle>
+          <DialogTitle size="sm">Test {recipe.name}</DialogTitle>
           <DialogDescription>
             Runs the copy, setup and cleanup steps in a throwaway worktree of{' '}
             {directory ?? recipe.repository.label} at its current commit, with

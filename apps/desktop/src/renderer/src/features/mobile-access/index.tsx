@@ -9,7 +9,6 @@ import { Copy, Smartphone } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
-import { EmptyState } from '@/shared/ui/empty-state';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { Textarea } from '@/shared/ui/textarea';
@@ -192,9 +191,7 @@ export function MobileAccess({ api }: Props) {
           </SettingsSection>
           <SettingsSection title="Paired devices">
             {status.devices.length === 0 ? (
-              <EmptyState
-                size="sm"
-                icon={Smartphone}
+              <SettingsRow
                 title="No paired devices yet"
                 description="Devices you pair appear here and can be revoked at any time."
               />
@@ -230,6 +227,7 @@ export function MobileAccess({ api }: Props) {
         </>
       )}
       <ConfirmDialog
+        surface="panel"
         open={!!revoking}
         onOpenChange={open => {
           if (!open) setRevoking(null);

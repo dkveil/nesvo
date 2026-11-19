@@ -209,12 +209,13 @@ export function RecipeEditorDialog({
       }}
     >
       <DialogContent
+        surface="panel"
         showCloseButton={!pending}
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
       >
         <form onSubmit={submit} className="grid gap-5" noValidate>
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle size="sm">
               {recipe ? 'Edit worktree recipe' : 'New worktree recipe'}
             </DialogTitle>
             <DialogDescription>

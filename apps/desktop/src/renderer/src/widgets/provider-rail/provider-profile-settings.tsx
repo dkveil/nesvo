@@ -91,7 +91,7 @@ export function ProviderProfileSettings({
           status.refresh();
           void usage.refresh();
         }}
-        className="rounded-surface border bg-card px-4 pt-3 pb-4"
+        className="px-3"
       >
         {selected && (
           <p className="text-xs text-muted-foreground">
@@ -263,6 +263,7 @@ export function ProviderProfileSettings({
         )}
       </SettingsSection>
       <ConfirmDialog
+        surface="panel"
         open={removing}
         onOpenChange={setRemoving}
         title={`Remove ${selected?.label ?? 'account'}?`}

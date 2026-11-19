@@ -168,6 +168,7 @@ export function DataPrivacySettings({
       {message && <StatusMessage tone="success">{message}</StatusMessage>}
       {error && !dialog && <StatusMessage tone="error">{error}</StatusMessage>}
       <ConfirmDialog
+        surface="panel"
         open={dialog !== undefined}
         onOpenChange={open => {
           if (!open) closeDialog();

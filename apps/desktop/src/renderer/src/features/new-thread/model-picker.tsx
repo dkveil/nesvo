@@ -30,6 +30,7 @@ type Props = {
   claudeEffort?: boolean;
   showEffort?: boolean;
   includeDefault?: boolean;
+  surface?: 'solid' | 'panel';
   triggerLabel?: string;
   displayLabel?: string;
   hint?: string;
@@ -48,6 +49,7 @@ export function ModelPicker({
   claudeEffort = false,
   showEffort = true,
   includeDefault = false,
+  surface = 'solid',
   triggerLabel = 'Choose model',
   displayLabel,
   hint,
@@ -118,7 +120,7 @@ export function ModelPicker({
         align="end"
         collisionPadding={12}
         aria-label="Model"
-        surface="solid"
+        surface={surface}
         size="lg"
         padding="none"
         className="flex max-h-[min(22rem,var(--radix-popover-content-available-height))] overflow-hidden"

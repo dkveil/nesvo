@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -20,6 +26,7 @@ type ConfirmDialogProps = {
   confirmDisabled?: boolean;
   cancelLabel?: string;
   tone?: 'destructive' | 'default';
+  surface?: ComponentProps<typeof DialogContent>['surface'];
   onConfirm: () => unknown;
   children?: ReactNode;
 };
@@ -34,6 +41,7 @@ export function ConfirmDialog({
   confirmDisabled = false,
   cancelLabel = 'Cancel',
   tone = 'destructive',
+  surface,
   onConfirm,
   children,
 }: ConfirmDialogProps) {
@@ -67,11 +75,14 @@ export function ConfirmDialog({
       <DialogContent
         data-slot="confirm-dialog"
         role="alertdialog"
+        surface={surface}
         className="sm:max-w-sm"
         showCloseButton={!pending}
       >
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle size={surface === 'panel' ? 'sm' : 'md'}>
+            {title}
+          </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         {children}

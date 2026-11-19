@@ -21,10 +21,8 @@ export function SettingsSection({
         {title}
       </SectionLabel>
       <div
-        className={cn(
-          'divide-y rounded-surface border bg-card text-card-foreground',
-          className,
-        )}
+        data-slot="settings-section-rows"
+        className={cn('divide-y divide-border', className)}
       >
         {children}
       </div>

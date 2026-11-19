@@ -151,6 +151,7 @@ export function LessonsSettings({
             statuses={statuses}
             showEffort={false}
             includeDefault
+            surface="panel"
             disabled={busy}
             triggerLabel="Choose proposal model"
             onRefreshProvider={onRefreshProvider}

@@ -243,7 +243,7 @@ export function InboxRulesSettings({
       <SettingsSection title="Routing">
         <SettingsRow
           title="Decisions of child sessions"
-          description="Where plans, questions, approvals and rule items of child sessions appear when a rule, workflow or group does not say."
+          description="Fallback when a rule, workflow or group sets no route."
         >
           <Select
             value={catalog?.defaultRoute ?? 'inbox'}
@@ -464,6 +464,7 @@ export function InboxRulesSettings({
               statuses={statuses}
               showEffort={false}
               includeDefault
+              surface="panel"
               triggerLabel="Choose proposal model"
               onRefreshProvider={onRefreshProvider}
               onChange={(nextProvider, nextModel) => {
@@ -506,6 +507,7 @@ export function InboxRulesSettings({
         })}
       </SettingsSection>
       <ConfirmDialog
+        surface="panel"
         open={!!removing}
         onOpenChange={open => {
           if (!open) setRemoving(null);

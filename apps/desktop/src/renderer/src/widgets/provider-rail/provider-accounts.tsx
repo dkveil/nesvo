@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { providers, type Provider } from '@/entities/session';
 import { IconButton } from '@/shared/ui/icon-button';
+import { SectionLabel } from '@/shared/ui/section-label';
 import { UsageDetails } from './usage-details';
 import { useUsageClock } from './use-usage-clock';
 import type { UsageState } from './usage-state';
@@ -32,26 +33,26 @@ export function ProviderAccounts({
   const loading = providers.some(provider => states[provider].loading);
   return (
     <div data-host-id={hostId} className={className}>
-      <header className="mb-2 flex items-center gap-2">
-        <h2 className="min-w-0 flex-1 truncate text-xs font-semibold">
-          Limits
-          <span
-            className="ml-1.5 font-normal text-muted-foreground"
-            title={computerName}
+      <SectionLabel
+        as="h2"
+        className="mb-2 px-0"
+        action={
+          <IconButton
+            label="Refresh limits"
+            size={24}
+            disabled={!connected || loading}
+            onClick={onRefresh}
           >
-            {computerName}
-            {connected ? '' : ' · Offline'}
-          </span>
-        </h2>
-        <IconButton
-          label="Refresh limits"
-          size={24}
-          disabled={!connected || loading}
-          onClick={onRefresh}
-        >
-          <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
-        </IconButton>
-      </header>
+            <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
+          </IconButton>
+        }
+      >
+        Limits
+        <span className="truncate font-normal" title={computerName}>
+          {computerName}
+          {connected ? '' : ' · Offline'}
+        </span>
+      </SectionLabel>
       {children}
       <div className="divide-y">
         {providers

@@ -100,7 +100,7 @@ export function Settings({
         <DialogDescription id="settings-description" className="sr-only">
           Nesvo settings for this desktop.
         </DialogDescription>
-        <div className="flex w-44 shrink-0 flex-col border-r bg-card p-2 md:w-52">
+        <div className="flex w-44 shrink-0 flex-col border-r p-2 md:w-52">
           <SearchField
             ref={search}
             aria-label="Search settings"
@@ -152,7 +152,7 @@ export function Settings({
                 <li aria-hidden="true" className="text-muted-foreground/60">
                   /
                 </li>
-                <li aria-current="page" className="truncate font-semibold">
+                <li aria-current="page" className="truncate font-medium">
                   {current.label}
                 </li>
               </ol>
@@ -167,7 +167,7 @@ export function Settings({
               </IconButton>
             </DialogClose>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
             <section
               aria-label={current.label}
               className={cn(

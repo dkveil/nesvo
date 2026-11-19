@@ -182,6 +182,7 @@ export function SharingSettings({ api }: Props) {
         )}
       </SettingsSection>
       <ConfirmDialog
+        surface="panel"
         open={!!revoking}
         onOpenChange={open => {
           if (!open) setRevoking(null);
