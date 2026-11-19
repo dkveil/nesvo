@@ -3887,7 +3887,7 @@ async function smokeDesktop() {
   await screenshot('-subsessions-previous');
   await page.keyboard.press('Escape');
   await sessionCard.waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop group', exact: true }).click();
   await waitState(orchestrator.id, 'stopped');
   await waitState(childB.id, 'stopped');
   await Promise.all(childB.fixturePids.map(waitDead));
