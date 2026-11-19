@@ -5214,6 +5214,7 @@ test(
         'session-message-watchers',
         'coordinator-orchestration',
         'portable-checks',
+        'setup-profile-v1',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -10875,6 +10876,7 @@ test(
       'session-message-watchers',
       'coordinator-orchestration',
       'portable-checks',
+      'setup-profile-v1',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -34349,7 +34351,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-16), [
+  assert.deepEqual(capabilities.slice(-17), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -34366,6 +34368,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'session-message-watchers',
     'coordinator-orchestration',
     'portable-checks',
+    'setup-profile-v1',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

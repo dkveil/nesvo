@@ -218,6 +218,7 @@ async function smokeSetupProfile() {
   const editor = page.getByRole('dialog', { name: 'Edit profile setting' });
   await editor.getByRole('combobox', { name: 'Default Inbox route' }).click();
   await page.getByRole('option', { name: 'Inbox and parent session' }).click();
+  await page.getByRole('listbox').waitFor({ state: 'hidden' });
   await setupShot(application, page, 'stage-a-managed-routing');
   await editor.getByRole('button', { name: 'Save profile setting' }).click();
   await editor.waitFor({ state: 'hidden' });
@@ -2421,6 +2422,7 @@ async function smokeDesktop() {
     'session-message-watchers',
     'coordinator-orchestration',
     'portable-checks',
+    'setup-profile-v1',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
