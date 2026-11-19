@@ -1,7 +1,8 @@
 import { useReactFlow, useViewport } from '@xyflow/react';
-import { LayoutGrid, Map, Maximize, Minus, Plus } from 'lucide-react';
+import { LayoutGrid, Map } from 'lucide-react';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ToolbarSeparator } from '@/shared/ui/panel';
+import { ZoomControls } from '@/shared/ui/zoom-controls';
 import { fitViewOptions } from './canvas-types';
 
 type Props = {
@@ -25,21 +26,12 @@ export function CanvasControls({
       aria-label="Canvas controls"
       className="glass-popover absolute bottom-3 left-3 z-10 flex items-center gap-0.5 rounded-surface border p-0.5"
     >
-      <IconButton label="Zoom out" onClick={() => void zoomOut()}>
-        <Minus />
-      </IconButton>
-      <span className="w-9 text-center text-2xs text-muted-foreground tabular-nums">
-        {Math.round(zoom * 100)}%
-      </span>
-      <IconButton label="Zoom in" onClick={() => void zoomIn()}>
-        <Plus />
-      </IconButton>
-      <IconButton
-        label="Fit graph"
-        onClick={() => void fitView(fitViewOptions)}
-      >
-        <Maximize />
-      </IconButton>
+      <ZoomControls
+        zoom={zoom}
+        onZoomOut={() => void zoomOut()}
+        onZoomIn={() => void zoomIn()}
+        onFit={() => void fitView(fitViewOptions)}
+      />
       {(onToggleMinimap || onTidy) && <ToolbarSeparator className="mx-0.5" />}
       {onToggleMinimap && (
         <IconButton label="Minimap" pressed={minimap} onClick={onToggleMinimap}>
