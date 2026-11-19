@@ -477,10 +477,16 @@ export function useSessions() {
     let initial = true;
     const events: WorkspaceEvent[] = [];
     let frame = 0;
+    let flushTimer = 0;
     let deltas: SessionChange<DesktopSession>[] = [];
-    const flushDeltas = () => {
+    const cancelDeltaFlush = () => {
       if (frame) cancelAnimationFrame(frame);
+      if (flushTimer) window.clearTimeout(flushTimer);
       frame = 0;
+      flushTimer = 0;
+    };
+    const flushDeltas = () => {
+      cancelDeltaFlush();
       if (!deltas.length) return;
       const changes = deltas;
       deltas = [];
@@ -548,7 +554,10 @@ export function useSessions() {
       if (event.type === 'session-message-upserted') {
         deltas.push(upsertChange(event));
         if (document.hidden || deltas.length >= 128) flushDeltas();
-        else if (!frame) frame = requestAnimationFrame(flushDeltas);
+        else if (!frame) {
+          frame = requestAnimationFrame(flushDeltas);
+          flushTimer = window.setTimeout(flushDeltas, 50);
+        }
         return;
       }
       flushDeltas();
@@ -675,7 +684,7 @@ export function useSessions() {
         counters[key] = (counters[key] ?? 0) + 1;
       unsubscribe();
       document.removeEventListener('visibilitychange', onVisibility);
-      if (frame) cancelAnimationFrame(frame);
+      cancelDeltaFlush();
     };
   }, [
     attempt,
