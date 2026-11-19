@@ -463,7 +463,71 @@ async function smokeSetupDetection() {
     .getByRole('button', { name: 'Apply choices', exact: true })
     .click();
   await setupShot(application, page, 'stage-b-guide-without-profile');
-  await writeFile(file, 'version: 1\ninbox:\n  defaultRoute: both\n');
+  assert.deepEqual(await page.evaluate(() => window.nesvo.listSessions()), []);
+  const session = await page.evaluate(async folder => {
+    await window.nesvo.enrollExternalInboxDevice(
+      { name: 'guide-fixture' },
+      'local',
+    );
+    return window.nesvo.createSession({
+      provider: 'Claude Code',
+      model: 'haiku',
+      mode: 'read-only',
+      title: 'Watcher fixture destination',
+      directory: folder,
+    });
+  }, directory);
+  const watcherScript = join(directory, 'guide-watcher.cjs');
+  const watcherMarker = join(directory, 'guide-watcher-ran');
+  const automationScript = join(directory, 'guide-automation.cjs');
+  const automationMarker = join(directory, 'guide-automation-ran');
+  await writeFile(
+    watcherScript,
+    `require('node:fs').writeFileSync(${JSON.stringify(watcherMarker)}, 'started'); setTimeout(() => {}, 60000);`,
+  );
+  await writeFile(
+    automationScript,
+    `require('node:fs').writeFileSync(${JSON.stringify(automationMarker)}, 'started');`,
+  );
+  const futureTime = new Date(Date.now() + 3600000).toISOString().slice(11, 16);
+  await writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      inbox: { defaultRoute: 'both' },
+      automations: [
+        {
+          id: 'guide-automation',
+          name: 'Guide automation',
+          schedule: futureTime,
+          timeZone: 'UTC',
+          directory,
+          provider: 'Claude Code',
+          model: 'haiku',
+          task: {
+            kind: 'command',
+            command: { executable: process.execPath, argv: [automationScript] },
+          },
+          desired: 'active',
+        },
+      ],
+      externalMessages: [
+        {
+          id: 'guide-watcher',
+          name: 'Guide watcher',
+          device: 'guide-fixture',
+          targets: [session.id],
+          destination: 'session',
+          watcherDirectory: directory,
+          watcher: {
+            executable: process.execPath,
+            argv: [watcherScript],
+            files: ['guide-watcher.cjs'],
+          },
+        },
+      ],
+    }),
+  );
   await guide.getByRole('button', { name: 'Refresh', exact: true }).click();
   await guide.getByText('Profile ready to review', { exact: true }).waitFor();
   await guide
@@ -484,9 +548,11 @@ async function smokeSetupDetection() {
     .getByRole('button', { name: 'Sessions to import', exact: true })
     .click();
   await guide.getByRole('button', { name: 'Open import', exact: true }).click();
-  assert.equal(
-    (await page.evaluate(() => window.nesvo.listSessions())).length,
-    0,
+  assert.deepEqual(
+    (await page.evaluate(() => window.nesvo.listSessions())).map(
+      item => item.id,
+    ),
+    [session.id],
   );
   await guide.getByRole('button', { name: 'Continue', exact: true }).click();
   await guide
@@ -499,6 +565,48 @@ async function smokeSetupDetection() {
     .getByRole('heading', { name: 'This is how Nesvo will work', exact: true })
     .waitFor();
   await setupShot(application, page, 'stage-b-setup-summary');
+  await guide.getByRole('button', { name: /Review local approvals/ }).click();
+  for (const label of ['Guide automation', 'Guide watcher']) {
+    const row = guide.getByRole('article', {
+      name: `Configuration change ${label}`,
+      exact: true,
+    });
+    await row
+      .getByRole('button', { name: `Review diff for ${label}`, exact: true })
+      .click();
+    await row.getByRole('button', { name: 'Accept', exact: true }).click();
+    const confirmation = page.getByRole('alertdialog', {
+      name: 'Confirm configuration change',
+    });
+    await confirmation
+      .getByRole('button', { name: 'Confirm and accept' })
+      .click();
+    await confirmation.waitFor({ state: 'hidden' });
+  }
+  const activation = guide.getByRole('region', {
+    name: 'Automations and watchers',
+  });
+  const start = activation.getByRole('button', { name: 'Start', exact: true });
+  const arm = activation.getByRole('button', { name: 'Arm', exact: true });
+  await start.waitFor();
+  await arm.waitFor();
+  assert.equal(existsSync(watcherMarker), false);
+  assert.equal(existsSync(automationMarker), false);
+  await start.click();
+  const stop = activation.getByRole('button', { name: 'Stop', exact: true });
+  await stop.waitFor();
+  for (let attempt = 0; attempt < 60 && !existsSync(watcherMarker); attempt++)
+    await delay(100);
+  assert.equal(await readFile(watcherMarker, 'utf8'), 'started');
+  await arm.click();
+  const pause = activation.getByRole('button', { name: 'Pause', exact: true });
+  await pause.waitFor();
+  assert.equal(existsSync(automationMarker), false);
+  await setupShot(application, page, 'stage-c-guide-activation', activation);
+  await stop.click();
+  await start.waitFor();
+  await pause.click();
+  await arm.waitFor();
   await guide
     .getByRole('button', { name: 'Save as profile', exact: true })
     .click();
@@ -512,6 +620,20 @@ async function smokeSetupDetection() {
   await setupShot(application, page, 'stage-b-save-as-profile');
   await saveProfile
     .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Open workspace', exact: true })
+    .click();
+  await guide.getByRole('button', { name: 'Review setup again' }).click();
+  await guide
+    .getByRole('button', { name: 'Mark reviewed', exact: true })
+    .click();
+  await guide.getByRole('button', { name: 'Continue', exact: true }).click();
+  await guide
+    .getByRole('button', { name: 'Skip this step', exact: true })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Skip this step', exact: true })
     .click();
   await guide
     .getByRole('button', { name: 'Open workspace', exact: true })
@@ -553,9 +675,11 @@ async function smokeSetupDetection() {
   );
   await setupShot(application, page, 'stage-b-setup-changed');
   await page.getByRole('button', { name: 'Close setup review' }).click();
-  assert.equal(
-    (await page.evaluate(() => window.nesvo.listSessions())).length,
-    0,
+  assert.deepEqual(
+    (await page.evaluate(() => window.nesvo.listSessions())).map(
+      item => item.id,
+    ),
+    [session.id],
   );
   console.log(
     JSON.stringify({

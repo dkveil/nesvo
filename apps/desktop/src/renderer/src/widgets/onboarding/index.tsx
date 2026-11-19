@@ -281,6 +281,11 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               setup={setupScan}
               pending={finishing}
               error={setupError}
+              onReviewSetup={() => {
+                setSetupError('');
+                setSetupScan(null);
+                setStepId('setup');
+              }}
               onClose={() => void finish(onClose)}
               onStartSession={provider =>
                 void finish(() => onStartSession(provider))

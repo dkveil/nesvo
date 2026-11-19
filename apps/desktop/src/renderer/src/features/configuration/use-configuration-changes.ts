@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { Computer, ConfigurationChange, HostId } from '@nesvo/contracts';
+import type {
+  Computer,
+  ConfigurationArea,
+  ConfigurationChange,
+  HostId,
+} from '@nesvo/contracts';
 
 export type HostedConfigurationChange = ConfigurationChange & {
   hostId: HostId;
@@ -8,6 +13,7 @@ export type HostedConfigurationChange = ConfigurationChange & {
 export function useConfigurationChanges(
   computers: Computer[],
   status?: ConfigurationChange['status'],
+  area?: ConfigurationArea,
 ) {
   const ready = computers
     .filter(
@@ -43,7 +49,7 @@ export function useConfigurationChanges(
       let after: number | undefined;
       do {
         const result = await window.nesvo.configuration.history(
-          { status, after },
+          { status, after, area },
           hostId,
         );
         if (!current || !result.ok || result.kind !== 'history') return;
@@ -58,12 +64,13 @@ export function useConfigurationChanges(
       current = false;
       unsubscribe();
     };
-  }, [ready, status]);
+  }, [ready, status, area]);
 
   return Object.values(changes)
     .filter(
       change =>
         (!status || change.status === status) &&
+        (!area || change.target.area === area) &&
         computers.some(computer => computer.id === change.hostId),
     )
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));

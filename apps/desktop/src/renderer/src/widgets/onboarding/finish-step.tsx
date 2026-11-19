@@ -17,6 +17,7 @@ import { Button } from '@/shared/ui/button';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
+import { SetupActivation } from './setup-activation';
 
 type Props = {
   computers: Computer[];
@@ -28,6 +29,7 @@ type Props = {
   error?: string;
   onStartSession: (provider: Provider | null) => void;
   onClose: () => void;
+  onReviewSetup: () => void;
 };
 
 export function FinishStep({
@@ -40,7 +42,9 @@ export function FinishStep({
   error,
   onStartSession,
   onClose,
+  onReviewSetup,
 }: Props) {
+  const local = computers.find(computer => computer.id === 'local');
   const ready = providers.find(provider => providerUsable(statuses[provider]));
   const detected = providers.filter(provider => {
     const status = statuses[provider].status?.status;
@@ -98,7 +102,7 @@ export function FinishStep({
       : []),
   ];
   return (
-    <div className="space-y-6 text-center">
+    <div className="space-y-4 text-center">
       <header className="space-y-3">
         <h1
           id="onboarding-title"
@@ -111,7 +115,7 @@ export function FinishStep({
         {summary.map(({ icon: Icon, label, value, path }) => (
           <div
             key={label}
-            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-4 px-3 py-3"
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-4 px-3 py-2"
           >
             <dt className="flex items-center gap-2 text-xs text-muted-foreground">
               <Icon aria-hidden="true" className="size-4 shrink-0" />
@@ -133,12 +137,20 @@ export function FinishStep({
           </div>
         ))}
       </dl>
-      {error && <StatusMessage tone="error">{error}</StatusMessage>}
+      {error && (
+        <div className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-2">
+          <StatusMessage tone="error">{error}</StatusMessage>
+          <Button size="xs" variant="outline" onClick={onReviewSetup}>
+            Review setup again
+          </Button>
+        </div>
+      )}
+      {local?.status === 'connected' &&
+        local.capabilities.includes('setup-profile-v1') && (
+          <SetupActivation key={local.instanceId} computer={local} />
+        )}
       <div className="flex justify-center">
-        <SetupProfileSettings
-          computer={computers.find(computer => computer.id === 'local')}
-          saveOnly
-        />
+        <SetupProfileSettings computer={local} saveOnly />
       </div>
       <div className="flex flex-wrap justify-center gap-2">
         <Button
