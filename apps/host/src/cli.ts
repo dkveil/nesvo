@@ -5,9 +5,11 @@ import {
   externalInboxLimits,
   externalInboxPostSchema,
   externalInboxWaitSchema,
+  externalSessionMessageSchema,
 } from '@nesvo/contracts';
 import {
   createInboxClient,
+  createSessionMessageClient,
   InboxClientError,
   inboxDecisionExitCode,
   readSmallInboxFile,
@@ -22,6 +24,8 @@ const usage = `Usage:
     [--wait [--timeout <seconds>]] [--idempotency-key <key>]
   nesvo inbox status <id>
   nesvo inbox cancel <id>
+  nesvo session send|notify (--session <id> | --title <exact title> --group <id or name>)
+    (--text <text> | --text-file <path>) --source <label> --idempotency-key <key>
   nesvo mcp
 
 Inbox commands accept --computer <id> and --json.
@@ -35,12 +39,28 @@ const options = {
   actions: { type: 'string' },
   source: { type: 'string' },
   session: { type: 'string' },
+  group: { type: 'string' },
+  text: { type: 'string' },
+  'text-file': { type: 'string' },
   wait: { type: 'boolean' },
   timeout: { type: 'string' },
   'idempotency-key': { type: 'string' },
   computer: { type: 'string' },
   json: { type: 'boolean' },
 } as const;
+
+const sessionOptions = new Set([
+  'session',
+  'group',
+  'title',
+  'text',
+  'text-file',
+  'source',
+  'idempotency-key',
+  'computer',
+  'json',
+]);
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
 async function main(args: string[]) {
   if (!args.length || args.includes('--help')) {
@@ -58,6 +78,58 @@ async function main(args: string[]) {
       values,
       positionals: [namespace, operation, itemId, ...extra],
     } = parseArgs({ args, options, allowPositionals: true });
+    if (namespace === 'session') {
+      if (
+        (operation !== 'send' && operation !== 'notify') ||
+        itemId ||
+        extra.length ||
+        Object.keys(values).some(key => !sessionOptions.has(key))
+      )
+        throw new InboxClientError('Run nesvo --help for session usage.');
+      const group = values.group;
+      if (
+        (values.session && (values.title || group)) ||
+        (!values.session && (!values.title || !group)) ||
+        (values.text !== undefined) === (values['text-file'] !== undefined)
+      )
+        throw new InboxClientError(
+          'Use a session ID or exact title and group, and supply one text source.',
+        );
+      const text =
+        values['text-file'] === undefined
+          ? values.text
+          : await readSmallInboxFile(values['text-file'], 8192);
+      const parsed = externalSessionMessageSchema.safeParse({
+        kind: operation,
+        source: values.source,
+        target: values.session
+          ? { kind: 'id', sessionId: values.session }
+          : {
+              kind: 'title',
+              title: values.title,
+              group: uuid.test(group!)
+                ? { kind: 'id', id: group }
+                : { kind: 'name', name: group },
+            },
+        text,
+        idempotencyKey: values['idempotency-key'],
+      });
+      if (!parsed.success)
+        throw new InboxClientError(
+          'Check the target, source, text and idempotency key.',
+        );
+      const client = await createSessionMessageClient(
+        process.env,
+        values.computer,
+      );
+      const receipt = await client(parsed.data);
+      process.stdout.write(
+        values.json
+          ? JSON.stringify(receipt) + '\n'
+          : `${receipt.id} ${receipt.status}\n`,
+      );
+      return receipt.status === 'rejected' ? 3 : 0;
+    }
     if (namespace !== 'inbox' || extra.length)
       throw new InboxClientError('Run nesvo --help for usage.');
     const print = (value: unknown) =>
@@ -138,7 +210,7 @@ async function main(args: string[]) {
         ? { code: error.code, message: error.message }
         : {
             code: 'invalid-request',
-            message: 'Invalid Inbox command. Run nesvo --help for usage.',
+            message: 'Invalid Nesvo command. Run nesvo --help for usage.',
           };
     if (args.includes('--json'))
       process.stdout.write(

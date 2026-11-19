@@ -306,6 +306,12 @@ export class ProviderUsageGates {
   }
 
   reject(target: ProviderUsageInput, resetsAt: string | null) {
+    if (
+      !this.database
+        .prepare('SELECT target FROM provider_usage_policies WHERE target = ?')
+        .get(targetKey(target))
+    )
+      return;
     this.transaction(() => {
       this.database
         .prepare(

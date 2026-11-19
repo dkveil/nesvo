@@ -336,6 +336,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage provider usage gates.',
   'readonly-integration-grants':
     'Update this computer’s Nesvo host and reconnect to manage read-only integration grants.',
+  'external-session-messages':
+    'Update this computer’s Nesvo host and reconnect to manage external session messages.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -408,6 +410,8 @@ function requiredCapability(
   if (method === 'provider-usage-gates') return 'provider-usage-gates';
   if (method === 'readonly-integration-grants')
     return 'readonly-integration-grants';
+  if (method === 'external-session-messages')
+    return 'external-session-messages';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -1367,6 +1371,7 @@ export class ComputerManager {
       'custom-worktree-providers': 'custom-worktree-providers',
       'provider-usage-gates': 'provider-usage-gates',
       'readonly-integration-grants': 'readonly-integration-grants',
+      'external-session-messages': 'external-session-messages',
       'read-default-session-folder': 'default-session-folder',
       'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
@@ -1477,6 +1482,7 @@ export class ComputerManager {
       case 'claude-autonomy':
         return response.autonomy;
       case 'repository-trust-settings':
+      case 'external-session-messages':
         return response.settings;
       case 'custom-worktree-providers':
       case 'readonly-integration-grants':

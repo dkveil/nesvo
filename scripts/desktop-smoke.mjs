@@ -2215,6 +2215,7 @@ async function smokeDesktop() {
     'custom-worktree-providers',
     'provider-usage-gates',
     'readonly-integration-grants',
+    'external-session-messages',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

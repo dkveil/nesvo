@@ -90,6 +90,7 @@ export const hostCapabilitySchema = z.enum([
   'custom-worktree-providers',
   'provider-usage-gates',
   'readonly-integration-grants',
+  'external-session-messages',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

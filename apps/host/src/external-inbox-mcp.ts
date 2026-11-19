@@ -8,12 +8,14 @@ import {
   configurationTargetSchema,
   externalInboxMcpLookupSchema,
   externalInboxMcpPostSchema,
+  externalSessionMessageSchema,
 } from '@nesvo/contracts';
 import { readFrames } from './daemon-channel';
 import { externalInboxFrameLimit } from './external-inbox-endpoint';
 import {
   createConfigurationClient,
   createInboxClient,
+  createSessionMessageClient,
   InboxClientError,
   inboxDecisionExitCode,
   waitForInboxDecision,
@@ -27,6 +29,7 @@ const requestSchema = z.strictObject({
   method: z.string().max(100),
   params: z.record(z.string(), z.unknown()).optional(),
 });
+const sessionSendSchema = externalSessionMessageSchema.omit({ kind: true });
 
 const computer = z.union([z.literal('local'), z.uuid()]).optional();
 const configurationTools = {
@@ -80,6 +83,19 @@ const tools = [
       readOnlyHint: name !== 'config_propose' && name !== 'config_apply',
     },
   })),
+  {
+    name: 'session_send',
+    description:
+      'Queue external data for the next operator-initiated turn of an authorized session.',
+    inputSchema: z.toJSONSchema(sessionSendSchema),
+    annotations: { idempotentHint: true },
+  },
+  {
+    name: 'session_notify',
+    description: 'Record an external notification for an authorized session.',
+    inputSchema: z.toJSONSchema(sessionSendSchema),
+    annotations: { idempotentHint: true },
+  },
 ];
 
 async function callConfiguration(
@@ -103,6 +119,14 @@ async function callConfiguration(
 async function callTool(name: string, args: unknown, signal: AbortSignal) {
   if (Object.hasOwn(configurationTools, name))
     return callConfiguration(name as ConfigTool, args, signal);
+  if (name === 'session_send' || name === 'session_notify') {
+    const fields = sessionSendSchema.parse(args);
+    const client = await createSessionMessageClient(process.env);
+    return client(
+      { ...fields, kind: name === 'session_send' ? 'send' : 'notify' },
+      signal,
+    );
+  }
   if (name === 'inbox_post') {
     const { computer, wait, timeout, idempotencyKey, ...fields } =
       externalInboxMcpPostSchema.parse(args);

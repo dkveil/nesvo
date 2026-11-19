@@ -448,6 +448,7 @@ export class InboxRules {
     deviceName: string,
     input: ExternalInboxPost,
     active: () => boolean,
+    routeOverride?: DecisionRoute,
   ) {
     const digest = (value: string) =>
       createHash('sha256').update(value).digest('hex');
@@ -471,7 +472,7 @@ export class InboxRules {
       : undefined;
     if (input.sessionId && !initialSession) return 'not-found' as const;
     const source = input.source ?? deviceName;
-    const rules = initialSession
+    const rules = initialSession && !routeOverride
       ? await this.rulesFor(initialSession, this.ports.signal)
       : [];
     const entry = rules.find(
@@ -517,8 +518,8 @@ export class InboxRules {
       sessionId: session?.id ?? null,
       sessionTitle: session?.title.slice(0, 200) ?? '',
       parentId: session?.parentId ?? null,
-      route,
-      routing,
+      route: routeOverride ?? route,
+      routing: routeOverride ? undefined : routing,
       status: 'pending',
       options: input.actions,
       presentation: {

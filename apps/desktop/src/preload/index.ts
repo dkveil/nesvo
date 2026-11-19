@@ -205,6 +205,8 @@ import {
   providerUsageGateSettingsSchema,
   readonlyIntegrationInputSchema,
   readonlyIntegrationReplySchema,
+  externalSessionSettingsInputSchema,
+  externalSessionSettingsSchema,
   mcpServerListSchema,
   setSessionMcpSchema,
   skillCatalogSchema,
@@ -1651,6 +1653,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:readonly-integration-grants',
         readonlyIntegrationInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
+      ),
+    ),
+  externalSessionMessages: async (input, hostId) =>
+    externalSessionSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:external-session-messages',
+        externalSessionSettingsInputSchema.parse(input),
         hostIdSchema.optional().parse(hostId),
       ),
     ),

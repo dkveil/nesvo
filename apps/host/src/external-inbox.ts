@@ -10,6 +10,7 @@ import {
   type ExternalInboxErrorCode,
   type ExternalInboxItem,
   type ExternalInboxReply,
+  type ExternalSessionReply,
 } from '@nesvo/contracts';
 import { readFrames, sendFrame } from './daemon-channel';
 import type { InboxRules } from './inbox-rules/service';
@@ -57,6 +58,22 @@ export class ExternalInbox {
     private readonly inbox: InboxRules,
     readonly computerId: string,
   ) {}
+
+  hasDevice(id: string) {
+    return !!this.database
+      .prepare('SELECT id FROM external_inbox_devices WHERE id = ?')
+      .get(id);
+  }
+
+  authenticate(token: string) {
+    if (!token.startsWith(`${this.computerId}.`)) return null;
+    const row = this.database
+      .prepare(
+        'SELECT id, name FROM external_inbox_devices WHERE token_hash = ?',
+      )
+      .get(hash(token));
+    return row ? { id: String(row.id), name: String(row.name) } : null;
+  }
 
   list() {
     return this.database
@@ -128,11 +145,23 @@ export class ExternalInbox {
   }
 }
 
-export function listenForExternalInbox(inbox: ExternalInbox) {
+export function listenForExternalInbox(
+  inbox: ExternalInbox,
+  sessionMessage?: (
+    value: unknown,
+    signal: AbortSignal,
+  ) => Promise<ExternalSessionReply>,
+) {
   return listenForDeviceRequests(
     externalInboxEndpoint(inbox.computerId),
     externalInboxFrameLimit,
-    (value, signal) => inbox.execute(value, signal),
+    (value, signal) =>
+      sessionMessage &&
+      typeof value === 'object' &&
+      value !== null &&
+      'message' in value
+        ? sessionMessage(value, signal)
+        : inbox.execute(value, signal),
   );
 }
 

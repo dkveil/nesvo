@@ -496,6 +496,35 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           document TEXT NOT NULL CHECK (json_valid(document)),
           reply TEXT NOT NULL CHECK (json_valid(reply))
         );
+        CREATE TABLE IF NOT EXISTS external_session_routes (
+          id TEXT PRIMARY KEY,
+          device_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          document TEXT NOT NULL CHECK (json_valid(document)),
+          UNIQUE (device_id, source)
+        );
+        CREATE TABLE IF NOT EXISTS external_session_messages (
+          id TEXT PRIMARY KEY,
+          issuer TEXT NOT NULL,
+          dedupe TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          rule_id TEXT NOT NULL,
+          session_id TEXT,
+          inbox_id TEXT,
+          message_id TEXT,
+          status TEXT NOT NULL,
+          recorded_at TEXT NOT NULL,
+          document TEXT NOT NULL CHECK (json_valid(document)),
+          UNIQUE (issuer, dedupe)
+        );
+        CREATE INDEX IF NOT EXISTS external_messages_session_idx ON external_session_messages (session_id, status);
+        CREATE INDEX IF NOT EXISTS external_messages_time_idx ON external_session_messages (recorded_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS external_messages_inbox_idx ON external_session_messages (inbox_id) WHERE inbox_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS external_session_actions (
+          id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          document TEXT NOT NULL CHECK (json_valid(document))
+        );
       `);
       database.exec(`
         CREATE TABLE IF NOT EXISTS manager_import_provenance (

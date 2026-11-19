@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  externalSessionSettingsInputSchema,
+  externalSessionSettingsSchema,
+  type ExternalSessionSettingsInput,
+  type ExternalSessionSettings,
+} from './external-session-messages';
+import {
   readonlyIntegrationInputSchema,
   readonlyIntegrationReplySchema,
   type ReadonlyIntegrationInput,
@@ -637,6 +643,7 @@ export * from './direct-command';
 export * from './worktree-providers';
 export * from './usage-gates';
 export * from './readonly-integrations';
+export * from './external-session-messages';
 export * from './provider-profiles';
 export * from './costs';
 export * from './mobile';
@@ -1249,6 +1256,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('readonly-integration-grants'),
     input: readonlyIntegrationInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('external-session-messages'),
+    input: externalSessionSettingsInputSchema,
   }),
   z.strictObject({
     id: z.string().min(1).max(200),
@@ -2030,6 +2042,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     reply: readonlyIntegrationReplySchema,
   }),
   z.strictObject({
+    type: z.literal('external-session-messages'),
+    id: z.uuid(),
+    settings: externalSessionSettingsSchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2488,6 +2505,10 @@ export type DesktopApi = {
     input: ReadonlyIntegrationInput,
     hostId?: HostId,
   ) => Promise<ReadonlyIntegrationReply>;
+  externalSessionMessages: (
+    input: ExternalSessionSettingsInput,
+    hostId?: HostId,
+  ) => Promise<ExternalSessionSettings>;
   listMcpServers: (
     input: ListMcpServersInput,
     hostId?: HostId,

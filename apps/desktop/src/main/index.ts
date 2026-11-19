@@ -180,6 +180,7 @@ import {
   worktreeProviderInputSchema,
   providerUsageGateInputSchema,
   readonlyIntegrationInputSchema,
+  externalSessionSettingsInputSchema,
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -1380,6 +1381,17 @@ void app.whenReady().then(async () => {
       route(hostId),
     );
   });
+  handle(
+    'nesvo:external-session-messages',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'external-session-messages',
+        externalSessionSettingsInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle(
     'nesvo:provider-usage-gates',
     (event, input: unknown, hostId: unknown) => {

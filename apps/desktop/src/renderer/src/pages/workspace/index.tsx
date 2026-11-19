@@ -214,6 +214,12 @@ import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profil
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
 import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-settings';
 import { SessionControlSettings } from '@/widgets/session-control-settings';
+import { useSessionIngressHistory } from '@/features/session-ingress/use-session-ingress-history';
+import { ExternalSessionSettings } from '@/widgets/settings/external-session-settings';
+import {
+  SessionIngressDetails,
+  SessionIngressItems,
+} from '@/features/session-ingress/session-ingress-history';
 import { GateRuleSettings } from '@/features/gate-rules/gate-rule-settings';
 import { LessonsSettings } from '@/widgets/lessons-settings';
 import { LessonInbox } from '@/widgets/lesson-inbox';
@@ -1288,6 +1294,16 @@ export function Workspace({
       ? selected.runId + ':' + selected.status
       : null,
     connection === 'ready' && supportsMcp(selectedHostId),
+  );
+  const [externalReceipt, setExternalReceipt] = useState<{
+    key: string;
+    id: string;
+  } | null>(null);
+  const externalEntries = useSessionIngressHistory(
+    selectedHostId,
+    selected?.id,
+    connection === 'ready' &&
+      !!selectedComputer?.capabilities.includes('external-session-messages'),
   );
   const [repositoryReviewKey, setRepositoryReviewKey] = useState<string | null>(
     null,
@@ -5349,13 +5365,21 @@ ${text}`
                   />
                 }
                 mcpNotice={
-                  supportsMcpTrust &&
-                  !isolatedMcp && (
-                    <McpRepositoryNotice
-                      configuration={mcpConfiguration}
-                      onReview={() => setRepositoryReviewKey(selectedKey)}
+                  <>
+                    {supportsMcpTrust && !isolatedMcp && (
+                      <McpRepositoryNotice
+                        configuration={mcpConfiguration}
+                        onReview={() => setRepositoryReviewKey(selectedKey)}
+                      />
+                    )}
+                    <SessionIngressItems
+                      entries={externalEntries}
+                      onOpen={id => {
+                        if (selectedKey)
+                          setExternalReceipt({ key: selectedKey, id });
+                      }}
                     />
-                  )
+                  </>
                 }
                 mcpChip={
                   <McpChip
@@ -5427,6 +5451,15 @@ ${text}`
                 </PanelBody>
               </SidePanel>
             )}
+          {selectedKey && externalReceipt?.key === selectedKey && !creating && (
+            <SessionIngressDetails
+              hostId={selectedHostId}
+              entries={externalEntries}
+              selectedId={externalReceipt.id}
+              onOpen={id => setExternalReceipt({ key: selectedKey, id })}
+              onClose={() => setExternalReceipt(null)}
+            />
+          )}
         </main>
       </div>
       {automationView === 'detail' && automationJob && !editor && (
@@ -6226,6 +6259,20 @@ ${text}`
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   api={desktopApi(settingsHostId)}
+                />
+                <ExternalSessionSettings
+                  key={'external:' + settingsHostId}
+                  hostId={settingsHostId}
+                  ready={
+                    store.hostReady(settingsHostId) &&
+                    !!settingsComputer?.capabilities.includes(
+                      'external-session-messages',
+                    )
+                  }
+                  sessions={store.sessions.filter(
+                    session =>
+                      session.hostId === settingsHostId && !session.archivedAt,
+                  )}
                 />
               </div>
             ) : page === 'workflows' ? (

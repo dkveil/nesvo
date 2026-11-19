@@ -172,6 +172,7 @@ import { InboxRuleFileError } from './inbox-rules/files';
 import { proposeInboxRule } from './inbox-rules/proposal';
 import { InboxItemStore } from './inbox-rules/store';
 import { ExternalInbox, listenForExternalInbox } from './external-inbox';
+import { ExternalSessionIngress } from './external-session-ingress';
 import type { PreparedTurnRules } from './inbox-rules/turn-gate';
 import type { StepExecutor } from './workflows/runner';
 
@@ -433,6 +434,7 @@ export const serveHost = ({
       const controlStore = new SessionControlStore(database);
       const mcpPolicy = new McpPolicy(database);
       const customWorktrees = new CustomWorktreeProviders(database, directory);
+      const ingress: { current?: ExternalSessionIngress } = {};
       const readonlyGrants = new ReadonlyMcpGrants(
         database,
         id => store.get(id),
@@ -507,6 +509,10 @@ export const serveHost = ({
                 customWorktrees,
                 usageGates,
                 readonlyGrants,
+                externalMessages: {
+                  claim: (sessionId, messageId) =>
+                    ingress.current?.claim(sessionId, messageId) ?? [],
+                },
                 inbox: {
                   prepareTurn: (session, turn, signal) =>
                     inbox.current
@@ -706,14 +712,42 @@ export const serveHost = ({
           .get('instance_id')?.value,
       );
       const externalInbox = new ExternalInbox(database, inboxRules, computerId);
+      const externalMessages = new ExternalSessionIngress(
+        database,
+        externalInbox,
+        inboxRules,
+        sessionId => store.get(sessionId),
+        () => store.listSummaries(),
+        () => groupStore.list().groups,
+      );
+      ingress.current = externalMessages;
       yield* Effect.acquireRelease(
         Effect.promise(() =>
-          listenForExternalInbox(externalInbox).catch(() => null),
+          listenForExternalInbox(externalInbox, (value, signal) =>
+            externalMessages.device(value, signal),
+          ).catch(() => null),
         ),
         close =>
           Effect.promise(async () => {
             await close?.();
           }),
+      );
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          sessions.onRunFinished(run => {
+            const session = store.get(run.sessionId);
+            const message = session?.messages.find(
+              item => item.runId === run.runId && item.author === 'operator',
+            );
+            if (message)
+              externalMessages.settle(
+                run.sessionId,
+                message.id,
+                run.status === 'completed' ? 'delivered' : 'uncertain',
+              );
+          }),
+        ),
+        release => Effect.sync(() => release()),
       );
       yield* Effect.acquireRelease(
         Effect.sync(() =>
@@ -2031,12 +2065,16 @@ export const serveHost = ({
                 };
               case 'list-inbox-items':
                 return { type: 'inbox-items', id, items: inboxRules.items() };
-              case 'decide-inbox-item':
+              case 'decide-inbox-item': {
+                const item = await inboxRules.decide(request.input);
+                if (item.binding === 'external' && item.answer)
+                  externalMessages.decideInbox(item.id, item.answer);
                 return {
                   type: 'inbox-item',
                   id,
-                  item: await inboxRules.decide(request.input),
+                  item,
                 };
+              }
               case 'read-inbox-settings':
                 return {
                   type: 'inbox-settings',
@@ -2154,10 +2192,7 @@ export const serveHost = ({
           continue;
         }
         if (
-          (request.method === 'create-session' &&
-            (request.input.profileId ||
-              request.input.effort ||
-              request.input.isolation)) ||
+          request.method === 'create-session' ||
           request.method === 'read-session-worktree' ||
           request.method === 'finish-session-worktree' ||
           request.method === 'read-session-worktree-setup' ||
@@ -3864,6 +3899,30 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (request.method === 'external-session-messages') {
+          const response = yield* Effect.sync((): HostReply => {
+            try {
+              return {
+                type: 'external-session-messages',
+                id: request.id,
+                settings: externalMessages.settings(request.input),
+              };
+            } catch (error) {
+              return {
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'External messages are unavailable.',
+              };
+            }
+          });
+          yield* Effect.tryPromise(() => send(response));
+          continue;
+        }
         if (
           request.method === 'send-message' ||
           request.method === 'start-queued'
@@ -4008,12 +4067,6 @@ export const serveHost = ({
                 type: 'history-search',
                 id: request.id,
                 search: history.search(request.input),
-              };
-            if (request.method === 'create-session')
-              return {
-                type: 'session',
-                id: request.id,
-                session: sessions.create(request.input),
               };
             if (request.method === 'restart-session')
               return {

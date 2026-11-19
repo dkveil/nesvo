@@ -13,11 +13,15 @@ import {
   externalInboxReplySchema,
   externalInboxRequestSchema,
   externalInboxTokenSchema,
+  externalSessionReplySchema,
+  externalSessionRequestSchema,
   hostConnectionSchema,
   sshComputerInputSchema,
   type ExternalInboxRequest,
   type ExternalInboxResult,
+  type ExternalSessionMessage,
   type HostCapability,
+  type SessionIngressReceipt,
 } from '@nesvo/contracts';
 import { readFrames, responseFrameLimit, sendFrame } from './daemon-channel';
 import {
@@ -155,10 +159,30 @@ export async function createConfigurationClient(
   };
 }
 
+export async function createSessionMessageClient(
+  env: NodeJS.ProcessEnv,
+  computer?: string,
+) {
+  const send = await createDeviceTransport(inboxChannel, env, computer, true);
+  return async (
+    message: ExternalSessionMessage,
+    signal?: AbortSignal,
+  ): Promise<SessionIngressReceipt> => {
+    const reply = externalSessionReplySchema.safeParse(
+      await send(message, signal),
+    );
+    if (!reply.success) throw unavailable();
+    if (!reply.data.ok)
+      throw new InboxClientError(reply.data.message, reply.data.code);
+    return reply.data.receipt;
+  };
+}
+
 async function createDeviceTransport(
   channel: Channel,
   env: NodeJS.ProcessEnv,
   computer?: string,
+  sessionMessage = false,
 ) {
   const get = (suffix: string) => env[`${channel.envPrefix}_${suffix}`];
   const configPath = get('CONFIG');
@@ -190,12 +214,17 @@ async function createDeviceTransport(
       'The token belongs to a different computer.',
       'unauthorized',
     );
+  if (sessionMessage && remote)
+    throw new InboxClientError(
+      'Run the session message client on the computer that owns the session.',
+    );
   return async (command: unknown, signal?: AbortSignal) => {
-    const request = (
-      channel === inboxChannel
-        ? externalInboxRequestSchema
-        : configurationRequestSchema
-    ).safeParse({ token, command });
+    const request = sessionMessage
+      ? externalSessionRequestSchema.safeParse({ token, message: command })
+      : (channel === inboxChannel
+          ? externalInboxRequestSchema
+          : configurationRequestSchema
+        ).safeParse({ token, command });
     if (
       !request.success ||
       Buffer.byteLength(JSON.stringify(request.data)) > channel.frameLimit
