@@ -4084,6 +4084,7 @@ async function smokeDesktop() {
   });
   const checkWorkspaceFiles = async () => {
     await filesPanel.waitFor();
+    assert.equal(await filesPanel.getAttribute('data-slot'), 'side-panel');
     assert.equal(
       await filesPanel.getAttribute('data-session-id'),
       writingSession.id,
@@ -5341,7 +5342,7 @@ async function smokeDesktop() {
       exact: true,
     });
     await revealGraphControls([sourceHandle, targetHandle]);
-    await sourceHandle.dragTo(targetHandle, { force: true });
+    await sourceHandle.dragTo(targetHandle, { force: true, steps: 8 });
     if (expectedRefusal) {
       await restartedPage
         .locator('[data-editor-notice]')
