@@ -43,6 +43,7 @@ type Props = {
   defaultFolder: string | null;
   outcomes: RoutineOutcomes;
   setOutcomes: Dispatch<SetStateAction<RoutineOutcomes>>;
+  onCheckProviders: () => void;
   onChooseComputer: () => void;
   onSetupAgents: () => void;
 };
@@ -119,6 +120,7 @@ export function RoutinesStep({
   defaultFolder,
   outcomes,
   setOutcomes,
+  onCheckProviders,
   onChooseComputer,
   onSetupAgents,
 }: Props) {
@@ -337,7 +339,7 @@ export function RoutinesStep({
             className="max-h-[80dvh] overflow-y-auto"
           >
             <DialogHeader>
-              <DialogTitle>
+              <DialogTitle size="sm">
                 {prerequisite === 'reviewer'
                   ? 'Reviewer profiles'
                   : 'Track a repository'}
@@ -347,7 +349,12 @@ export function RoutinesStep({
               </DialogDescription>
             </DialogHeader>
             {prerequisite === 'reviewer' ? (
-              <CodeReviewSettings computer={computer} api={api} />
+              <CodeReviewSettings
+                computer={computer}
+                api={api}
+                statuses={statuses}
+                onRefreshProvider={onCheckProviders}
+              />
             ) : (
               <TrackedRepositoriesSettings computer={computer} api={api} />
             )}

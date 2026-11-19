@@ -124,6 +124,7 @@ export function Onboarding({ onStartSession, onClose }: Props) {
             defaultFolder={folder}
             outcomes={outcomes}
             setOutcomes={setOutcomes}
+            onCheckProviders={checkProviders}
             onChooseComputer={() => setIndex(2)}
             onSetupAgents={() => setIndex(1)}
           />

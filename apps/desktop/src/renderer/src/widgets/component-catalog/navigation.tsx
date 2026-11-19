@@ -458,7 +458,7 @@ export function NavigationSection() {
             />
           </div>
           <div className="space-y-2">
-            <SettingsSection title="Flat settings section" surface="flat">
+            <SettingsSection title="Flat settings section">
               <SettingsRow
                 title="Project folder"
                 description={

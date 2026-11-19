@@ -393,6 +393,44 @@ try {
     .getByRole('button', { name: 'Add and connect', exact: true })
     .waitFor();
   await guide.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const guideContinue = guide.getByRole('button', {
+    name: 'Continue',
+    exact: true,
+  });
+  for (const name of ['Your setup', 'Your Inbox']) {
+    await guideContinue.click();
+    await guide.getByRole('heading', { name, exact: true }).waitFor();
+  }
+  const guidePreset = guide.getByRole('switch', {
+    name: 'Before push: review the diff locally',
+    exact: true,
+  });
+  const guidePresetOn = guidePreset.and(
+    page.locator('[aria-checked="true"]:enabled'),
+  );
+  await guidePreset.click();
+  await guidePresetOn.waitFor();
+  await guideContinue.click();
+  await guide
+    .getByRole('heading', { name: 'Starter routines', exact: true })
+    .waitFor();
+  await guide.getByRole('button', { name: 'Back', exact: true }).click();
+  await guidePresetOn.waitFor();
+  await guidePreset.click();
+  await guidePreset
+    .and(page.locator('[aria-checked="false"]:enabled'))
+    .waitFor();
+  const guideRule = await page.evaluate(async () => {
+    const catalog = await window.nesvo.listInboxRules({}, 'local');
+    return catalog.rules.find(rule => rule.name === 'review-before-push');
+  });
+  assert.equal(guideRule.scope, 'global');
+  assert.equal(guideRule.rule.enabled, false);
+  await page.evaluate(rule => window.nesvo.deleteInboxRule(rule, 'local'), {
+    scope: 'global',
+    name: guideRule.name,
+    expectedHash: guideRule.contentHash,
+  });
   await guide.getByRole('button', { name: 'Skip', exact: true }).click();
   await guide.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => window.nesvo.colorScheme()), 'system');

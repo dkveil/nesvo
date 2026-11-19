@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   inboxRulePresets,
   type Computer,
@@ -29,7 +29,39 @@ export function InboxStep({ api, computer }: Props) {
   const supported =
     computer?.status === 'connected' &&
     computer.capabilities.includes('inbox-rules');
-  const [states, setStates] = useState<Record<string, PresetState>>({});
+  const [states, setStates] = useState<Record<string, PresetState> | null>(
+    null,
+  );
+  const [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    if (!supported) return;
+    let active = true;
+    void api.listInboxRules({}, hostId).then(
+      catalog => {
+        if (!active) return;
+        const enabled = new Set(
+          catalog.rules
+            .filter(rule => rule.scope === 'global' && rule.rule?.enabled)
+            .map(rule => rule.name),
+        );
+        setLoadError('');
+        setStates(
+          Object.fromEntries(
+            inboxRulePresets.map(preset => [
+              preset.id,
+              { on: enabled.has(presetName(preset)), busy: false, error: '' },
+            ]),
+          ),
+        );
+      },
+      failure => {
+        if (active) setLoadError(errorDetail(failure));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [api, hostId, supported]);
   const toggle = async (preset: InboxRulePreset, on: boolean) => {
     setStates(previous => ({
       ...previous,
@@ -72,13 +104,12 @@ export function InboxStep({ api, computer }: Props) {
         Connect a computer with a current Nesvo host to choose Inbox rules.
       </InlineNotice>
     );
+  if (loadError) return <InlineNotice tone="error">{loadError}</InlineNotice>;
+  if (!states)
+    return <InlineNotice tone="loading">Loading Inbox rules…</InlineNotice>;
   return (
     <div className="space-y-3">
-      <p className="text-xs leading-5 text-muted-foreground">
-        Everything is off until you turn it on. Each choice writes a normal rule
-        file you can edit in Settings › Inbox rules.
-      </p>
-      <SettingsSection title="What should reach your Inbox?">
+      <SettingsSection title="Inbox rules">
         {inboxRulePresets.map(preset => {
           const state = states[preset.id];
           return (
@@ -102,6 +133,9 @@ export function InboxStep({ api, computer }: Props) {
           );
         })}
       </SettingsSection>
+      <p className="px-3 text-2xs text-subtle-foreground">
+        Edit these rules any time in Settings › Inbox rules.
+      </p>
     </div>
   );
 }

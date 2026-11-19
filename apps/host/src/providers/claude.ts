@@ -1345,7 +1345,9 @@ export function startClaude(options: {
                     ...(options.summaryInstructions
                       ? { autoMemoryEnabled: false, claudeMdExcludes: ['**'] }
                       : {}),
-                    ...(askRules.length ? { permissions: { ask: askRules } } : {}),
+                    ...(askRules.length
+                      ? { permissions: { ask: askRules } }
+                      : {}),
                   }),
                 ]
               : isolatedToolArgs),

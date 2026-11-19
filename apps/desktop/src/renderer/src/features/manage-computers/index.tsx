@@ -343,7 +343,6 @@ export function ManageComputers({
         }}
         title={`Remove ${removing?.name ?? 'computer'}?`}
         description="Nesvo forgets this computer and its offline snapshot. Work on the computer keeps running and its sessions stay there; add it again to reconnect."
-        surface={chooseLocalDirectory ? 'panel' : undefined}
         confirmLabel="Remove computer"
         pendingLabel="Removing…"
         onConfirm={() =>
@@ -351,9 +350,7 @@ export function ManageComputers({
         }
       />
       {adding && (
-        <SettingsSection
-          title="Add SSH computer"
-        >
+        <SettingsSection title="Add SSH computer">
           <form className="space-y-3 p-3" onSubmit={submit}>
             <div className="grid gap-3 sm:grid-cols-2">
               {field('name', 'Computer name', 'My VPS', true)}

@@ -146,8 +146,8 @@ export function WorkingRules({
         </div>
       )}
       <p className="text-2xs text-muted-foreground">
-        Nesvo keeps rules and lessons as files for every provider, learns from
-        your corrections and shows which rules keep failing.
+        Nesvo proposes lessons from recorded incidents for review in the Inbox.
+        Approved lessons guide matching work.
       </p>
     </section>
   );

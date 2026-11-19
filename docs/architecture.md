@@ -46,13 +46,15 @@ The desktop reads the folder for every connected computer with the capability af
 
 ### Getting started
 
-The app selects the full-window guide (`widgets/onboarding`) before mounting the workspace. Skip and either finish action store `nesvo.onboarding.v1` in `localStorage`. Getting started in the command palette and Settings › About open the same guide. Its four setup steps share a fixed top inset below the progress bar. Welcome and Finish are centered. The renderer uses dark tokens and Geist while the guide is active. Electron updates the window background and caption symbols without changing the saved appearance. Test mode skips first launch unless `NESVO_TEST_SHOW_ONBOARDING=1` is also set.
+The app selects the full-window guide (`widgets/onboarding`) before mounting the workspace. Skip and either finish action store `nesvo.onboarding.v1` in `localStorage`. Getting started in the command palette and Settings › About open the same guide. Its five setup steps share a fixed top inset below the progress bar. Welcome and Finish are centered. The renderer uses dark tokens and Geist while the guide is active. Electron updates the window background and caption symbols without changing the saved appearance. Test mode skips first launch unless `NESVO_TEST_SHOW_ONBOARDING=1` is also set.
 
 The guide reads computer events and Local provider status without loading session history. Computers reuses the SSH add and connection form from Settings. The authorized `chooseDirectory` IPC opens only a native directory picker and validates the returned path with the shared contract. The host validates the selected default. Remote default folders use the validated absolute path field, since the existing file explorer requires a session.
 
 The MCP and skill probes run against the Local default folder or an isolated draft folder. Each host queues up to 16 waiting requests per catalog behind two active probes. A queued request waits at most 20 seconds. The guide shows errors and partial-catalog reasons independently.
 
 The rules summary sends a bounded set of user and project `CLAUDE.md`, `AGENTS.md` and rules excerpts as untrusted data to the explicitly selected provider. The host reuses the installed provider adapters in an empty temporary folder, with Claude Code in Plan or Codex in a read-only sandbox with no network or approvals. Hooks and MCP are isolated. The review is ephemeral and creates no Nesvo session or lesson files. The provider receives the snippets for inference using its existing login.
+
+The Inbox step reads the current Local rules. Toggling a preset creates a global rule file or updates an existing file through the revision-checked Inbox rules API.
 
 Starter routines are opt-in. Morning summary and pull request review are saved paused and ask before starting. The pre-push gates workflow writes four editable steps and one workflow after folder confirmation. Existing project definitions cannot be overwritten by the guide. The finish step shows the routines added in this visit, the detected local agents, configured computers and Local default folder.
 
@@ -949,7 +951,7 @@ Draft changes are published to clients as `pull-request-review-changed` events. 
 
 ## Owner lessons
 
-A host that advertises `lessons` (the last capability in the list) records incidents, proposes lessons from them and adds approved lessons to prompts within their scope. Everything is host-owned per computer; an older desktop with strict capability parsing needs an update before it connects to such a host.
+A host that advertises `lessons` records incidents, proposes lessons from them and adds approved lessons to prompts within their scope. Everything is host-owned per computer; an older desktop with strict capability parsing needs an update before it connects to such a host.
 
 Incidents are recorded automatically and bounded: at most 500 rows in `lesson_incidents` (schema version 26), oldest dropped first, each recorded once by a fingerprint and linked to its session, provider run or workflow run. A deleted session deletes its incidents. Sources:
 
