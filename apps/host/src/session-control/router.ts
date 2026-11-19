@@ -22,6 +22,7 @@ import {
   type DecideSessionParentInput,
   type Session,
   type SessionControlChild,
+  type SessionControlEvent,
   type SessionControlRefusalCode,
   type SessionControlToolInput,
   type SessionControlToolName,
@@ -477,6 +478,7 @@ export class SessionControl {
         ? this.params.store
             .events(input.sessionId, wait.cursor)
             .events.filter(event => event.at >= wait.startedAt)
+            .map(event => this.visibleEvent(event))
             .slice(0, 20)
         : [];
     return this.params.sessions.continueCoordinator(
@@ -952,7 +954,9 @@ export class SessionControl {
   private summary(child: Session): SessionControlChild {
     const window = this.params.sessions.window(child, 1);
     const plan = child.plan?.status;
-    const open = pendingStageQuestion(child);
+    const held = !!(child.runId && this.params.gate(child.id, child.runId));
+    const open = held ? undefined : pendingStageQuestion(child);
+    const report = latestStageReport(child);
     const question = !!open;
     const running = child.status === 'running' || child.status === 'stopping';
     return {
@@ -964,7 +968,7 @@ export class SessionControl {
       mode: child.mode,
       directory: child.directory,
       status: child.status,
-      error: child.error,
+      error: held ? null : child.error,
       waitingFor:
         plan === 'plan-ready'
           ? 'plan'
@@ -985,9 +989,14 @@ export class SessionControl {
       runId: child.runId,
       steering: this.params.sessions.steeringAvailability(child),
       preciseHistory: true,
-      ...(child.plan?.status === 'plan-ready' ? { planId: child.plan.id } : {}),
+      ...(!held && child.plan?.status === 'plan-ready'
+        ? { planId: child.plan.id }
+        : {}),
       ...(open ? { questionId: open.id } : {}),
-      report: latestStageReport(child)?.report ?? null,
+      report:
+        report && !this.params.gate(child.id, report.runId)
+          ? report.report
+          : null,
       question: open?.question ?? null,
     };
   }
@@ -1074,6 +1083,17 @@ export class SessionControl {
           ? 'The child outcome is waiting for an Inbox decision.'
           : 'An Inbox decision declined delivery of this outcome.',
       );
+  }
+
+  private visibleEvent(event: SessionControlEvent): SessionControlEvent {
+    if (!event.runId || !this.params.gate(event.sessionId, event.runId))
+      return event;
+    return {
+      ...event,
+      summary: 'An Inbox decision controls delivery of this child outcome.',
+      detail: null,
+      decisionRecordId: undefined,
+    };
   }
 
   private staleDecision(
@@ -1418,6 +1438,7 @@ export class SessionControl {
     session_output: ({ coordinator, input }) => {
       const child = this.child(coordinator, input.sessionId);
       const reply = lastReply(child);
+      if (reply) this.requireVisibleRun(child.id, reply.runId);
       const body = reply?.body ?? '';
       return success({
         sessionId: child.id,
@@ -1456,6 +1477,7 @@ export class SessionControl {
           'invalid',
           'This session has no plan waiting for a decision.',
         );
+      if (plan.runId) this.requireVisibleRun(child.id, plan.runId);
       if (input.decision === 'accept') {
         const refused = this.refuseMode(policy, plan.targetMode);
         if (refused) return refused;
@@ -1643,13 +1665,16 @@ export class SessionControl {
               })
             )
               return refusal('unsupported', 'The original turn ended.');
+            const events = page.events.map(event => this.visibleEvent(event));
             this.params.store.touchSeen(
               coordinator.id,
               coordinator.runId!,
-              page.events.map(event => event.seq),
+              page.events.flatMap((event, index) =>
+                events[index] === event ? [event.seq] : [],
+              ),
             );
             return success({
-              events: page.events,
+              events,
               cursor: page.events.at(-1)!.seq,
               more: page.more,
             });
@@ -1701,6 +1726,7 @@ export class SessionControl {
           'human-only',
           'Product questions belong to the computer owner. Wait for their answer with events_wait.',
         );
+      this.requireVisibleRun(child.id, question.runId);
       const decisionId = derivedId(actionId, 'answer');
       const answered = this.params.sessions.answerStageQuestion(
         {

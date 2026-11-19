@@ -30265,6 +30265,102 @@ test('D87 debounces and respects the persisted coordinator and computer wake lim
   }
 });
 
+test('D87 honors a child Inbox hold on wake and all coordinator reads', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-inbox-hold-')),
+  );
+  const root = join(directory, 'agents');
+  const rules = join(root, 'inbox-rules');
+  await mkdir(rules, { recursive: true });
+  await writeFile(
+    join(rules, 'hold-child-outcome.md'),
+    [
+      '---',
+      'name: hold-child-outcome',
+      'trigger: session-finished',
+      'action: hold',
+      'kinds: [child]',
+      '---',
+      '',
+    ].join('\n'),
+  );
+  const host = launch(directory, join(directory, 'fixture.pid'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+  });
+  t.after(async () => {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Claude Code',
+      model: 'default',
+      directory,
+    })
+  ).session;
+  const marker = 'Outcome awaiting the Inbox decision.';
+  const [created] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: { title: 'Child', prompt: 'fixture:say ' + marker },
+    },
+  ]);
+  const child = await finishedChild(host, created.result.sessionId);
+  const input = { sessionId: child.id };
+  const recent = [
+    { tool: 'session_output', arguments: input },
+    {
+      tool: 'session_read',
+      arguments: { ...input, view: 'transcript', runId: child.runId },
+    },
+    { tool: 'session_result', arguments: { ...input, runId: child.runId } },
+    { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 1 } },
+  ];
+  const [output, read, result, page] = await controlTurn(
+    host,
+    parent.id,
+    recent,
+  );
+  assert.deepEqual(
+    [output, read, result].map(item => item.result.code),
+    ['busy', 'busy', 'busy'],
+  );
+  const outcome = page.result.events.find(event => event.type === 'finished');
+  assert.equal(outcome?.runId, child.runId);
+  assert.equal(outcome.detail, null);
+  assert.match(outcome.summary, /Inbox decision/);
+  const [, ack] = await controlTurn(host, parent.id, [
+    recent[3],
+    { tool: 'events_ack', arguments: { events: [outcome.seq] } },
+  ]);
+  assert.equal(ack.result.code, 'invalid');
+  assert.equal(
+    (await host.request('read-coordinator-wake', { sessionId: parent.id }))
+      .state.pending,
+    1,
+  );
+  const hold = (await host.request('list-inbox-items')).items.find(
+    item => item.sessionId === child.id && item.action === 'hold',
+  );
+  assert.ok(hold);
+  const decided = await host.request('decide-inbox-item', {
+    itemId: hold.id,
+    decision: 'decline',
+  });
+  assert.equal(decided.item.status, 'declined');
+  const [declined] = await controlTurn(host, parent.id, [recent[2]]);
+  assert.equal(declined.result.code, 'forbidden-by-policy');
+  const latest = (await host.request('get-session', { sessionId: parent.id }))
+    .session;
+  assert.equal(
+    latest.messages.some(message => message.origin === 'coordinator-wake'),
+    false,
+  );
+});
+
 test('D87 recovery keeps a committed child update pending until Continue', async t => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-d87-recovery-')),

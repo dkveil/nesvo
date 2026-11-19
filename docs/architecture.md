@@ -720,6 +720,8 @@ The child work cursor is signed for the host, coordinator, child, view, optional
 
 If a child message must wait in the queue, its coordinator card records the message ID. When the child starts, the host commits the exact child run on that card alongside the prepared turn. Historical links keep the same run after later messages and corrections.
 
+An Inbox hold protects the same child run across automatic delivery, result and transcript reads, and recorded session-control tools. The event log advances its cursor over a held outcome and presents a hold notice without granting the turn an acknowledgement for that outcome.
+
 ## Subsession activity
 
 The conversation shows one quiet line directly above the composer while the session waits on other work: a spinner and `2 workers running · 1 command`, naming only the parts that exist with singular or plural nouns (`1 command running` when only commands run). It has no Stop of its own: the composer's Stop group stays the single group Stop. Subsessions are the session's workers (`parentId`) and, for a workflow author session, the step sessions of its workflow run (`workflowStepId` with the same `workflowRunId`), the same descendants the host uses for archiving. Commands are the running `command` and `tool` activities of the session's current run, except the Delegate workers call that waits on the workers themselves; host and clients share its title through `delegationActivityTitle`. The bar is hidden when nothing runs.
