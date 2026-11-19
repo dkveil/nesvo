@@ -174,17 +174,18 @@ export function InboxRuleDecisions({
         external ? 'w-[min(38vw,22rem)]' : 'max-w-56',
       )}
     >
-      {item.action === 'hold' && (
-        <Input
-          aria-label={`Note for ${item.rule?.name}`}
-          placeholder="Optional note"
-          maxLength={inboxRuleLimits.note}
-          value={note}
-          disabled={disabled}
-          onChange={event => setNote(event.target.value)}
-        />
-      )}
       <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {item.action === 'hold' && (
+          <Input
+            aria-label={`Note for ${item.rule?.name}`}
+            placeholder="Optional note"
+            className="w-32"
+            maxLength={inboxRuleLimits.note}
+            value={note}
+            disabled={disabled}
+            onChange={event => setNote(event.target.value)}
+          />
+        )}
         {external && (
           <Textarea
             aria-label="Operator comment"

@@ -601,6 +601,9 @@ export function ReviewInbox({
         at: proposal.createdAt,
         id: hostKey(proposal.id, hostId),
       });
+  const decisionCount = rows.filter(
+    row => row.type !== 'gate-rule-proposal' || row.row.status === 'pending',
+  ).length;
   if (
     filter !== 'history' &&
     gateFeedback &&
@@ -629,15 +632,15 @@ export function ReviewInbox({
     return online ? name : `${name} · Offline snapshot`;
   };
   return (
-    <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:h-full">
+    <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:h-full [&_[data-slot=scroll-area-viewport]]:scroll-pt-12">
       <section
         aria-label="Inbox"
-        className="group/inbox mx-auto flex min-h-full w-full max-w-5xl flex-col px-5 pb-6 xl:ml-5"
+        className="group/inbox mx-auto flex min-h-full w-full max-w-5xl flex-col px-5 pb-6 xl:ml-5 [&_article]:scroll-mt-2"
       >
         <div className="sticky top-0 z-10 mb-1 flex items-center justify-between gap-3 border-b bg-background px-2 py-2">
           <span className="text-xs text-muted-foreground tabular-nums">
-            {rows.length > 0 &&
-              `${rows.length} ${filter === 'history' ? 'past decisions' : filter === 'all' ? 'items' : 'pending'}`}
+            {decisionCount > 0 &&
+              `${decisionCount} ${filter === 'history' ? 'past decisions' : filter === 'all' ? 'items' : 'pending'}`}
           </span>
           <SegmentedControl<Filter>
             label="Inbox view"

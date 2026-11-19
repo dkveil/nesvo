@@ -82,6 +82,50 @@ export function AutomationTaskFields({ editor }: SectionProps) {
           onChange={directory => change({ directory })}
         />
       )}
+      {values.reviewMode ? null : values.workflow && !values.browser ? (
+        <Field id="automation-workflow" label="Workflow" as="span">
+          <p
+            data-field="workflow"
+            className="text-ui text-muted-foreground [overflow-wrap:anywhere]"
+          >
+            {values.workflow.name} · {values.workflow.specPath}
+          </p>
+        </Field>
+      ) : (
+        <Field
+          id="automation-prompt"
+          label="Prompt"
+          messages={errorMessages(visible('prompt'))}
+        >
+          <PromptTextarea
+            size="md"
+            id="automation-prompt"
+            data-field="prompt"
+            value={values.prompt}
+            skill={values.promptSkill}
+            scope={{
+              hostId: values.hostId,
+              provider: values.provider,
+              input: {
+                provider: values.provider,
+                directory: values.directory.trim(),
+              },
+            }}
+            available={computer?.status === 'connected'}
+            maxLength={9000}
+            placeholder="Summarize what changed since yesterday."
+            aria-invalid={!!visible('prompt')}
+            aria-describedby={messagesId(
+              'automation-prompt',
+              visible('prompt'),
+            )}
+            disabled={pending}
+            onChange={(prompt, promptSkill) => change({ prompt, promptSkill })}
+            onBlur={() => touch('prompt')}
+            className="min-h-24"
+          />
+        </Field>
+      )}
       {supportsRituals &&
         !values.reviewMode &&
         !values.writable &&
@@ -144,50 +188,6 @@ export function AutomationTaskFields({ editor }: SectionProps) {
             />
           </Field>
         </>
-      )}
-      {values.reviewMode ? null : values.workflow && !values.browser ? (
-        <Field id="automation-workflow" label="Workflow" as="span">
-          <p
-            data-field="workflow"
-            className="text-ui text-muted-foreground [overflow-wrap:anywhere]"
-          >
-            {values.workflow.name} · {values.workflow.specPath}
-          </p>
-        </Field>
-      ) : (
-        <Field
-          id="automation-prompt"
-          label="Prompt"
-          messages={errorMessages(visible('prompt'))}
-        >
-          <PromptTextarea
-            size="md"
-            id="automation-prompt"
-            data-field="prompt"
-            value={values.prompt}
-            skill={values.promptSkill}
-            scope={{
-              hostId: values.hostId,
-              provider: values.provider,
-              input: {
-                provider: values.provider,
-                directory: values.directory.trim(),
-              },
-            }}
-            available={computer?.status === 'connected'}
-            maxLength={9000}
-            placeholder="Summarize what changed since yesterday."
-            aria-invalid={!!visible('prompt')}
-            aria-describedby={messagesId(
-              'automation-prompt',
-              visible('prompt'),
-            )}
-            disabled={pending}
-            onChange={(prompt, promptSkill) => change({ prompt, promptSkill })}
-            onBlur={() => touch('prompt')}
-            className="min-h-24"
-          />
-        </Field>
       )}
     </>
   );

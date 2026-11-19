@@ -349,6 +349,20 @@ export function AutomationDetail({
                               {reviewStates[review.status]}
                             </span>
                           )}
+                          {run.sessionId && (
+                            <Button
+                              type="button"
+                              size="inline"
+                              variant="link"
+                              onClick={() =>
+                                run.sessionId &&
+                                onSession(hostKey(run.sessionId, run.hostId))
+                              }
+                            >
+                              Open session
+                              <ArrowUpRight />
+                            </Button>
+                          )}
                         </span>
                       }
                       actionsPlacement="visible"
@@ -367,20 +381,6 @@ export function AutomationDetail({
                                 Stop
                               </Button>
                             )}
-                          {run.sessionId && (
-                            <Button
-                              type="button"
-                              size="xs"
-                              variant="ghost"
-                              onClick={() =>
-                                run.sessionId &&
-                                onSession(hostKey(run.sessionId, run.hostId))
-                              }
-                            >
-                              Open session
-                              <ArrowUpRight />
-                            </Button>
-                          )}
                         </span>
                       }
                     />

@@ -3646,7 +3646,15 @@ try {
     .getByText('Interrupted when Nesvo closed', { exact: true })
     .waitFor();
   await interruptedNotice
-    .getByRole('button', { name: 'Write a follow-up', exact: true })
+    .getByText('Use Continue in the session header to resume this group.', {
+      exact: true,
+    })
+    .waitFor();
+  await restartedPage
+    .getByRole('button', { name: 'Continue', exact: true })
+    .waitFor();
+  await restartedPage
+    .getByRole('textbox', { name: 'Message', exact: true })
     .click();
   assert.equal(
     await restartedPage

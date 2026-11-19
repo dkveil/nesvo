@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { RuleEntryMetrics } from '@nesvo/contracts';
+import { cn } from '@/shared/lib/cn';
 import { formatDate } from '@/shared/lib/format-date';
 import { Badge } from '@/shared/ui/badge';
 
@@ -8,11 +9,18 @@ type Props = {
   kind: 'instruction' | 'check';
   since: string;
   now?: number;
+  stacked?: boolean;
 };
 
 const UNUSED_MS = 60 * 86_400_000;
 
-export function RuleUsage({ metrics, kind, since, now }: Props) {
+export function RuleUsage({
+  metrics,
+  kind,
+  since,
+  now,
+  stacked = false,
+}: Props) {
   const [mountedAt] = useState(() => Date.now());
   const unusedAt = Date.parse(metrics?.lastDelivered ?? since);
   const unused =
@@ -20,10 +28,15 @@ export function RuleUsage({ metrics, kind, since, now }: Props) {
   const repeatedlyCited = kind === 'instruction' && (metrics?.cited ?? 0) >= 2;
   return (
     <div className="mt-2 space-y-1.5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-y-1 text-xs text-muted-foreground tabular-nums',
+          stacked ? 'gap-x-2' : 'gap-x-3',
+        )}
+      >
         <span>Delivered {metrics?.delivered ?? 0}</span>
         <span>Cited {metrics?.cited ?? 0}</span>
-        <span>
+        <span className={stacked ? 'basis-full' : undefined}>
           Last cited{' '}
           {metrics?.lastCited ? (
             <time dateTime={metrics.lastCited}>

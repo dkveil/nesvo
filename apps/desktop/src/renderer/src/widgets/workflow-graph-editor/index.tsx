@@ -310,7 +310,7 @@ export default function WorkflowGraphEditor({
             </div>
             <div
               data-slot="editor-dock"
-              className="absolute right-3 bottom-3 z-10 has-[[data-assistant-dock]]:static has-[[data-assistant-dock]]:shrink-0 has-[[data-assistant-dock]]:border-t [&_[data-assistant-dock]]:max-h-[min(35vh,20rem)] [&_[data-assistant-dock]]:w-full! [&_[data-assistant-dock]]:max-w-none [&_[data-assistant-dock]]:rounded-none [&_[data-assistant-dock]]:border-0"
+              className="absolute right-3 bottom-3 z-10 has-[[data-assistant-dock]]:static has-[[data-assistant-dock]]:shrink-0 has-[[data-assistant-dock]]:border-t [&_[data-assistant-dock]]:max-h-[min(43vh,23rem)] [&_[data-assistant-dock]]:w-full! [&_[data-assistant-dock]]:max-w-none [&_[data-assistant-dock]]:rounded-none [&_[data-assistant-dock]]:border-0"
             >
               {dock && (
                 <EditorDock

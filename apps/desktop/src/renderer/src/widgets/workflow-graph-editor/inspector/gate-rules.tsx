@@ -95,6 +95,7 @@ export function InspectorGateRules({
                 {rule.body.rule}
               </p>
               <RuleUsage
+                stacked
                 metrics={rule.metrics}
                 kind={rule.kind}
                 since={rule.provenance.date}
