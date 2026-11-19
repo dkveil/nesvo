@@ -4,6 +4,7 @@ export const workLaptopPolicySchema = z.strictObject({
   enabled: z.boolean(),
   requested: z.boolean(),
   enforced: z.boolean(),
+  automaticallyEnabled: z.boolean(),
 });
 export type WorkLaptopPolicy = z.infer<typeof workLaptopPolicySchema>;
 

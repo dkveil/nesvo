@@ -80,9 +80,11 @@ export function DataPrivacySettings({
                 Blocks Phone access and remote computers. Desktop notifications
                 use generic text.
               </p>
-              {policy?.enforced && <p>On · Enforced by policy</p>}
-              {policy && !policy.enforced && (
-                <p>{policy.enabled ? 'On' : 'Off'}</p>
+              {policy?.enforced && <p>Enforced by policy</p>}
+              {policy?.automaticallyEnabled && (
+                <p>
+                  Turned on because this computer is managed by an organization.
+                </p>
               )}
               {policy && policy.enabled !== policy.requested && (
                 <p>

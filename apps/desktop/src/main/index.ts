@@ -347,7 +347,7 @@ void app.whenReady().then(async () => {
       });
     return host;
   };
-  const policy = workLaptopPolicy(app.getPath('userData'));
+  const policy = await workLaptopPolicy(app.getPath('userData'));
   const computers = new ComputerManager(
     app.getPath('userData'),
     startLocalHost,
