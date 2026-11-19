@@ -283,7 +283,7 @@ export function EditorCanvas({
       onPaneClick={() => state.select({ kind: 'none' })}
       fitView
       fitViewOptions={fitViewOptions}
-      minZoom={0.25}
+      minZoom={0.15}
       maxZoom={2}
       panOnDrag={[0, 1, 2]}
       panActivationKeyCode="Space"

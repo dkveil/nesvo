@@ -4350,9 +4350,15 @@ try {
     exact: true,
   });
   await timeoutField.fill('0');
+  await timeoutField.press('Tab');
   await durationMessage.waitFor();
   assert.equal(await timeoutField.getAttribute('aria-invalid'), 'true');
-  assert.equal(await createStep.isDisabled(), true);
+  await createStep.click();
+  await editor.locator('[data-editor-inspector="draft"]').waitFor();
+  assert.equal(
+    await editor.locator('[data-editor-node="smoke-timeout"]').count(),
+    0,
+  );
   await editorShot('inspector-step-error-dark');
   await timeoutField.fill('90');
   await durationMessage.waitFor({ state: 'hidden' });
