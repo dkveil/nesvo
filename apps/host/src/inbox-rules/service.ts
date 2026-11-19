@@ -52,6 +52,7 @@ import type {
   StepOutcome,
 } from '../workflows/runner';
 import { hostResult } from '../workflows/steps/host-result';
+import { hasIsolatedWorkflowsRoot } from '../workflows/definitions';
 import {
   absentConfigurationVersion,
   configurationHash,
@@ -300,11 +301,9 @@ export class InboxRules {
             'invalid-request',
             'Choose an absolute project root.',
           );
-        const globalAnchor =
-          process.env.NESVO_TEST_MODE === '1' &&
-          process.env.NESVO_WORKFLOWS_HOME
-            ? dirname(globalRulesRoot())
-            : homedir();
+        const globalAnchor = hasIsolatedWorkflowsRoot()
+          ? dirname(globalRulesRoot())
+          : homedir();
         const anchor = await realpath(project ?? globalAnchor).catch(() => {
           throw new ConfigurationRefusal(
             'conflict',

@@ -411,11 +411,20 @@ async function projectRoot(
 
 export function globalRoot(): string {
   const override = process.env.NESVO_WORKFLOWS_HOME;
-  return process.env.NESVO_TEST_MODE === '1' && override && isAbsolute(override)
+  return hasIsolatedWorkflowsRoot() && override && isAbsolute(override)
     ? override
     : join(homedir(), ...definitionsFolder);
 }
 
+export function hasIsolatedWorkflowsRoot(): boolean {
+  const override = process.env.NESVO_WORKFLOWS_HOME;
+  return (
+    (process.env.NESVO_TEST_MODE === '1' ||
+      process.env.NESVO_ISOLATED_PROFILE === '1') &&
+    !!override &&
+    isAbsolute(override)
+  );
+}
 function legacyRootBeside(root: string): string {
   return join(dirname(root), legacyDefinitionsFolder[1]);
 }
