@@ -312,8 +312,6 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to classify its running apps.',
   'gate-rules':
     'Update this computer’s Nesvo host and reconnect to use gate rules.',
-  configuration:
-    'Update this computer’s Nesvo host and reconnect to use configuration changes.',
   'external-inbox':
     'Update this computer’s Nesvo host and reconnect to manage external Inbox devices.',
   'claude-autonomy':
@@ -328,6 +326,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host to use session group budgets.',
   'manager-import':
     'Update this computer’s Nesvo host and reconnect to import from other apps.',
+  configuration:
+    'Update this computer’s Nesvo host and reconnect to use configuration changes.',
 };
 
 const hasFileAttachments = (input: unknown) =>

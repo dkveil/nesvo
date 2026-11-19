@@ -9999,7 +9999,7 @@ test(
       }
     });
 
-    await t.test('a version 32 database is refused', async () => {
+    await t.test('a newer database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
