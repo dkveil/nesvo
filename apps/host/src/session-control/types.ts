@@ -5,6 +5,11 @@ import type {
   stageToolDefinitions,
 } from '@nesvo/contracts';
 
+export type LiveSteerOutcome =
+  | { status: 'steered'; deliveredAt: string }
+  | { status: 'unsupported'; reason: string }
+  | { status: 'busy' | 'stale-run' | 'delivery-unknown' };
+
 export type SessionControlCaller = { sessionId: string; runId: string };
 
 export type SessionControlCall = {

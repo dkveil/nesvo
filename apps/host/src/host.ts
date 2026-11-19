@@ -4079,6 +4079,52 @@ export const serveHost = ({
           yield* Effect.tryPromise(() => send(response));
           continue;
         }
+        if (
+          request.method === 'steer-child-session' ||
+          request.method === 'decide-child-steering'
+        ) {
+          const operation = async (): Promise<HostReply> => {
+            const signal = probes.controller.signal;
+            try {
+              if (request.method === 'steer-child-session') {
+                const { actionId, ...input } = request.input;
+                return {
+                  type: 'child-steering',
+                  id: request.id,
+                  receipt: await sessionControl.steering.steer(
+                    input,
+                    actionId,
+                    null,
+                    signal,
+                  ),
+                };
+              }
+              return {
+                type: 'child-steering',
+                id: request.id,
+                receipt: await sessionControl.steering.decide(
+                  request.input,
+                  signal,
+                ),
+              };
+            } catch (error) {
+              return {
+                type: 'error',
+                id: request.id,
+                ...worktreeFailure(
+                  error,
+                  'Nesvo could not deliver this feedback.',
+                ),
+              };
+            }
+          };
+          const pending = operation()
+            .then(send)
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
         const response = yield* Effect.sync((): HostReply => {
           try {
             if (

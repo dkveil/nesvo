@@ -4,6 +4,9 @@ import {
   defaultCoordinatorPolicy,
   sessionControlEventSchema,
   sessionControlLimits,
+  sessionSteerInputSchema,
+  sessionSteerResultSchema,
+  type SessionSteerInput,
   sessionModeSchema,
   type CoordinatorPolicy,
   type CoordinatorDeliveryReceipt,
@@ -27,7 +30,11 @@ export type ControlledChild = {
   plan: string | null;
 };
 
-export type StoredAction = { tool: string; result: string; inputHash: string | null };
+export type StoredAction = {
+  tool: string;
+  result: string;
+  inputHash: string | null;
+};
 
 const EVENTS_KEPT_PER_PARENT = 1000;
 const PENDING_LIMIT = 1000;
@@ -61,11 +68,21 @@ export const installSessionControlTables = (database: DatabaseSync) => {
   if (!columns.includes('detail'))
     database.exec('ALTER TABLE session_control_events ADD COLUMN detail TEXT');
   if (!columns.includes('decision_id'))
-    database.exec('ALTER TABLE session_control_events ADD COLUMN decision_id TEXT');
-  const actions = database.prepare('PRAGMA table_info(session_control_actions)').all();
+    database.exec(
+      'ALTER TABLE session_control_events ADD COLUMN decision_id TEXT',
+    );
+  const actions = database
+    .prepare('PRAGMA table_info(session_control_actions)')
+    .all();
   if (!actions.some(column => column.name === 'input_hash'))
-    database.exec('ALTER TABLE session_control_actions ADD COLUMN input_hash TEXT');
+    database.exec(
+      'ALTER TABLE session_control_actions ADD COLUMN input_hash TEXT',
+    );
   database.exec(`
+    CREATE TABLE IF NOT EXISTS session_steering (
+      id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, document TEXT NOT NULL,
+      request_id TEXT UNIQUE, request TEXT
+    );
     CREATE TABLE IF NOT EXISTS coordinator_wake_settings (
       scope TEXT PRIMARY KEY, enabled INTEGER NOT NULL, revision INTEGER NOT NULL
     );
@@ -112,6 +129,58 @@ const toChild = (row: Row): ControlledChild => ({
 export class SessionControlStore {
   constructor(private readonly database: DatabaseSync) {}
 
+  steering(id: string) {
+    return this.database
+      .prepare(
+        'SELECT fingerprint, document FROM session_steering WHERE id = ?',
+      )
+      .get(id);
+  }
+
+  steeringRequest(requestId: string) {
+    const row = this.database
+      .prepare(
+        'SELECT document, request FROM session_steering WHERE request_id = ?',
+      )
+      .get(requestId);
+    if (!row) return null;
+    const receipt = sessionSteerResultSchema.parse(
+      JSON.parse(String(row.document)),
+    );
+    const { input, task } = JSON.parse(String(row.request)) as {
+      input: unknown;
+      task: string;
+    };
+    return {
+      input: sessionSteerInputSchema.parse(input),
+      task,
+      messageId: receipt.messageId,
+    };
+  }
+
+  saveSteering(
+    id: string,
+    fingerprint: string,
+    document: unknown,
+    request?: { input: SessionSteerInput; task: string },
+  ) {
+    const requestId = request ? sessionSteerResultSchema.parse(document) : null;
+    this.database
+      .prepare(
+        `
+      INSERT INTO session_steering (id, fingerprint, document, request_id, request)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document
+    `,
+      )
+      .run(
+        id,
+        fingerprint,
+        JSON.stringify(document),
+        requestId?.status === 'awaiting-owner' ? requestId.requestId : null,
+        request ? JSON.stringify(request) : null,
+      );
+  }
+
   policy(): CoordinatorPolicy {
     const row = this.database
       .prepare('SELECT document FROM session_control_policy WHERE id = 1')
@@ -143,7 +212,13 @@ export class SessionControlStore {
         'SELECT tool, result, input_hash FROM session_control_actions WHERE action_id = ?',
       )
       .get(actionId);
-    return row ? { tool: String(row.tool), result: String(row.result), inputHash: typeof row.input_hash === 'string' ? row.input_hash : null } : undefined;
+    return row
+      ? {
+          tool: String(row.tool),
+          result: String(row.result),
+          inputHash: typeof row.input_hash === 'string' ? row.input_hash : null,
+        }
+      : undefined;
   }
 
   saveAction(
@@ -157,7 +232,14 @@ export class SessionControlStore {
       .prepare(
         'INSERT OR IGNORE INTO session_control_actions (action_id, session_id, tool, result, created_at, input_hash) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(actionId, sessionId, tool, result, new Date().toISOString(), inputHash);
+      .run(
+        actionId,
+        sessionId,
+        tool,
+        result,
+        new Date().toISOString(),
+        inputHash,
+      );
   }
 
   child(sessionId: string): ControlledChild | undefined {
@@ -191,17 +273,25 @@ export class SessionControlStore {
       );
   }
 
-  appendEvent(event: {
-    parentId: string;
-    sessionId: string;
-    runId: string | null;
-    type: SessionControlEventType;
-    status: SessionState | null;
-    summary: string;
-    detail?: string | null;
-    decisionRecordId?: string;
-  }, wake?: { key: string; enabled: boolean; now: number }): number | null {
-    if (wake && this.database.prepare('SELECT 1 FROM coordinator_wake_events WHERE event_key = ?').get(wake.key))
+  appendEvent(
+    event: {
+      parentId: string;
+      sessionId: string;
+      runId: string | null;
+      type: SessionControlEventType;
+      status: SessionState | null;
+      summary: string;
+      detail?: string | null;
+      decisionRecordId?: string;
+    },
+    wake?: { key: string; enabled: boolean; now: number },
+  ): number | null {
+    if (
+      wake &&
+      this.database
+        .prepare('SELECT 1 FROM coordinator_wake_events WHERE event_key = ?')
+        .get(wake.key)
+    )
       return null;
     const at = new Date(wake?.now ?? Date.now()).toISOString();
     const result = this.database
@@ -235,21 +325,44 @@ export class SessionControlStore {
     wake: { key: string; enabled: boolean },
     at: string,
   ) {
-    const overflow = wake.enabled && this.pendingCount(event.parentId) >= PENDING_LIMIT;
-    const document = wake.enabled && !overflow ? JSON.stringify({
-      seq, at, sessionId: event.sessionId, runId: event.runId, type: event.type,
-      status: event.status, summary: event.summary.slice(0, 2000), detail: null,
-      decisionRecordId: event.decisionRecordId,
-    }) : null;
-    this.database.prepare(
-      'INSERT INTO coordinator_wake_events (seq, event_key, parent_id, document, handled, recovery) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(seq, wake.key, event.parentId, document, document ? 0 : 1, this.paused(event.parentId));
+    const overflow =
+      wake.enabled && this.pendingCount(event.parentId) >= PENDING_LIMIT;
+    const document =
+      wake.enabled && !overflow
+        ? JSON.stringify({
+            seq,
+            at,
+            sessionId: event.sessionId,
+            runId: event.runId,
+            type: event.type,
+            status: event.status,
+            summary: event.summary.slice(0, 2000),
+            detail: null,
+            decisionRecordId: event.decisionRecordId,
+          })
+        : null;
+    this.database
+      .prepare(
+        'INSERT INTO coordinator_wake_events (seq, event_key, parent_id, document, handled, recovery) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        seq,
+        wake.key,
+        event.parentId,
+        document,
+        document ? 0 : 1,
+        this.paused(event.parentId),
+      );
     if (overflow) {
       this.pause(event.parentId, 'overflow');
-      this.database.prepare(`
+      this.database
+        .prepare(
+          `
         INSERT INTO coordinator_wake_overflow (parent_id, child_id, omitted) VALUES (?, ?, 1)
         ON CONFLICT(parent_id, child_id) DO UPDATE SET omitted = omitted + 1
-      `).run(event.parentId, event.sessionId);
+      `,
+        )
+        .run(event.parentId, event.sessionId);
     }
   }
 
@@ -266,94 +379,150 @@ export class SessionControlStore {
   }
 
   wakeSetting(sessionId: string | null, defaultEnabled: boolean) {
-    const row = this.database.prepare(
-      'SELECT enabled, revision FROM coordinator_wake_settings WHERE scope = ?',
-    ).get(sessionId ?? 'computer');
-    return { enabled: row ? row.enabled === 1 : defaultEnabled, revision: Number(row?.revision ?? 0) };
+    const row = this.database
+      .prepare(
+        'SELECT enabled, revision FROM coordinator_wake_settings WHERE scope = ?',
+      )
+      .get(sessionId ?? 'computer');
+    return {
+      enabled: row ? row.enabled === 1 : defaultEnabled,
+      revision: Number(row?.revision ?? 0),
+    };
   }
 
-  saveWakeSetting(sessionId: string | null, enabled: boolean, revision: number) {
-    this.database.prepare(`
+  saveWakeSetting(
+    sessionId: string | null,
+    enabled: boolean,
+    revision: number,
+  ) {
+    this.database
+      .prepare(
+        `
       INSERT INTO coordinator_wake_settings (scope, enabled, revision) VALUES (?, ?, ?)
       ON CONFLICT(scope) DO UPDATE SET enabled = excluded.enabled, revision = excluded.revision
-    `).run(sessionId ?? 'computer', Number(enabled), revision);
+    `,
+      )
+      .run(sessionId ?? 'computer', Number(enabled), revision);
   }
 
   settingReceipt(id: string) {
-    return this.database.prepare('SELECT input, state FROM coordinator_wake_settings_actions WHERE id = ?').get(id);
+    return this.database
+      .prepare(
+        'SELECT input, state FROM coordinator_wake_settings_actions WHERE id = ?',
+      )
+      .get(id);
   }
 
   saveSettingReceipt(id: string, input: string, state: CoordinatorWakeState) {
-    this.database.prepare('INSERT INTO coordinator_wake_settings_actions VALUES (?, ?, ?)').run(id, input, JSON.stringify(state));
+    this.database
+      .prepare('INSERT INTO coordinator_wake_settings_actions VALUES (?, ?, ?)')
+      .run(id, input, JSON.stringify(state));
   }
 
   pause(parentId: string | null, reason: WakeReason) {
-    this.database.prepare(`
+    this.database
+      .prepare(
+        `
       UPDATE coordinator_wake_events SET recovery = ?
       WHERE handled = 0 AND batch_id IS NULL AND (? IS NULL OR parent_id = ?)
-    `).run(reason, parentId, parentId);
+    `,
+      )
+      .run(reason, parentId, parentId);
   }
 
   pauseFuture(parentId: string, reason: WakeReason) {
-    this.database.prepare('INSERT OR REPLACE INTO coordinator_wake_paused VALUES (?, ?)').run(parentId, reason);
+    this.database
+      .prepare('INSERT OR REPLACE INTO coordinator_wake_paused VALUES (?, ?)')
+      .run(parentId, reason);
     this.pause(parentId, reason);
   }
 
   paused(parentId: string): WakeReason | null {
-    const row = this.database.prepare('SELECT reason FROM coordinator_wake_paused WHERE parent_id = ?').get(parentId);
-    return row ? row.reason as WakeReason : null;
+    const row = this.database
+      .prepare('SELECT reason FROM coordinator_wake_paused WHERE parent_id = ?')
+      .get(parentId);
+    return row ? (row.reason as WakeReason) : null;
   }
 
   resume(parentId: string) {
-    this.database.prepare('DELETE FROM coordinator_wake_paused WHERE parent_id = ?').run(parentId);
+    this.database
+      .prepare('DELETE FROM coordinator_wake_paused WHERE parent_id = ?')
+      .run(parentId);
   }
 
   pendingCount(parentId: string): number {
-    return Number(this.database.prepare(
-      'SELECT COUNT(*) AS total FROM coordinator_wake_events WHERE parent_id = ? AND handled = 0',
-    ).get(parentId)?.total ?? 0);
+    return Number(
+      this.database
+        .prepare(
+          'SELECT COUNT(*) AS total FROM coordinator_wake_events WHERE parent_id = ? AND handled = 0',
+        )
+        .get(parentId)?.total ?? 0,
+    );
   }
 
   pendingParents(): string[] {
-    return this.database.prepare(
-      'SELECT parent_id FROM coordinator_wake_events WHERE handled = 0 GROUP BY parent_id ORDER BY MIN(seq)',
-    ).all().map(row => String(row.parent_id));
+    return this.database
+      .prepare(
+        'SELECT parent_id FROM coordinator_wake_events WHERE handled = 0 GROUP BY parent_id ORDER BY MIN(seq)',
+      )
+      .all()
+      .map(row => String(row.parent_id));
   }
 
   pending(parentId: string): WakeEvent[] {
-    return this.database.prepare(
-      'SELECT document, recovery FROM coordinator_wake_events WHERE parent_id = ? AND handled = 0 ORDER BY (recovery IS NULL), seq',
-    ).all(parentId).map(row => ({
-      ...sessionControlEventSchema.parse(JSON.parse(String(row.document))),
-      recovery: row.recovery as WakeReason | null,
-    }));
+    return this.database
+      .prepare(
+        'SELECT document, recovery FROM coordinator_wake_events WHERE parent_id = ? AND handled = 0 ORDER BY (recovery IS NULL), seq',
+      )
+      .all(parentId)
+      .map(row => ({
+        ...sessionControlEventSchema.parse(JSON.parse(String(row.document))),
+        recovery: row.recovery as WakeReason | null,
+      }));
   }
 
   overflow(parentId: string) {
-    return this.database.prepare(
-      'SELECT child_id, omitted FROM coordinator_wake_overflow WHERE parent_id = ? ORDER BY child_id',
-    ).all(parentId).map(row => ({ sessionId: String(row.child_id), count: Number(row.omitted) }));
+    return this.database
+      .prepare(
+        'SELECT child_id, omitted FROM coordinator_wake_overflow WHERE parent_id = ? ORDER BY child_id',
+      )
+      .all(parentId)
+      .map(row => ({
+        sessionId: String(row.child_id),
+        count: Number(row.omitted),
+      }));
   }
 
   touchSeen(parentId: string, runId: string, ids: readonly number[]) {
-    const seen = this.database.prepare('INSERT OR IGNORE INTO coordinator_event_seen (parent_id, run_id, seq) VALUES (?, ?, ?)');
+    const seen = this.database.prepare(
+      'INSERT OR IGNORE INTO coordinator_event_seen (parent_id, run_id, seq) VALUES (?, ?, ?)',
+    );
     for (const id of ids) seen.run(parentId, runId, id);
   }
 
   clearSeen(runId: string) {
-    this.database.prepare('DELETE FROM coordinator_event_seen WHERE run_id = ?').run(runId);
+    this.database
+      .prepare('DELETE FROM coordinator_event_seen WHERE run_id = ?')
+      .run(runId);
   }
 
   acknowledge(parentId: string, runId: string, ids: readonly number[]) {
-    const read = this.database.prepare('SELECT acknowledged FROM coordinator_event_seen WHERE parent_id = ? AND run_id = ? AND seq = ?');
+    const read = this.database.prepare(
+      'SELECT acknowledged FROM coordinator_event_seen WHERE parent_id = ? AND run_id = ? AND seq = ?',
+    );
     const rows = ids.map(id => read.get(parentId, runId, id));
     if (rows.some(row => !row)) return null;
     const acknowledged: number[] = [];
     const alreadyHandled: number[] = [];
-    const update = this.database.prepare('UPDATE coordinator_event_seen SET acknowledged = 1 WHERE run_id = ? AND seq = ?');
-    const handled = this.database.prepare('UPDATE coordinator_wake_events SET handled = 1 WHERE parent_id = ? AND seq = ? AND handled = 0');
+    const update = this.database.prepare(
+      'UPDATE coordinator_event_seen SET acknowledged = 1 WHERE run_id = ? AND seq = ?',
+    );
+    const handled = this.database.prepare(
+      'UPDATE coordinator_wake_events SET handled = 1 WHERE parent_id = ? AND seq = ? AND handled = 0',
+    );
     for (const [index, id] of ids.entries()) {
-      if (rows[index]?.acknowledged || !handled.run(parentId, id).changes) alreadyHandled.push(id);
+      if (rows[index]?.acknowledged || !handled.run(parentId, id).changes)
+        alreadyHandled.push(id);
       else acknowledged.push(id);
       update.run(runId, id);
     }
@@ -361,38 +530,89 @@ export class SessionControlStore {
   }
 
   suppress(parentId: string, seq: number) {
-    this.database.prepare('UPDATE coordinator_wake_events SET handled = 1 WHERE parent_id = ? AND seq = ? AND batch_id IS NULL').run(parentId, seq);
+    this.database
+      .prepare(
+        'UPDATE coordinator_wake_events SET handled = 1 WHERE parent_id = ? AND seq = ? AND batch_id IS NULL',
+      )
+      .run(parentId, seq);
   }
 
   batch(id: string, parentId: string): CoordinatorDeliveryReceipt | null {
-    const row = this.database.prepare('SELECT message_id, run_id FROM coordinator_wake_batches WHERE id = ? AND parent_id = ?').get(id, parentId);
-    return row ? { batchId: id, messageId: String(row.message_id), runId: String(row.run_id) } : null;
+    const row = this.database
+      .prepare(
+        'SELECT message_id, run_id FROM coordinator_wake_batches WHERE id = ? AND parent_id = ?',
+      )
+      .get(id, parentId);
+    return row
+      ? {
+          batchId: id,
+          messageId: String(row.message_id),
+          runId: String(row.run_id),
+        }
+      : null;
   }
 
   preparedRun(parentId: string, runId: string): string | null {
-    const row = this.database.prepare('SELECT id FROM coordinator_wake_batches WHERE parent_id = ? AND run_id = ?').get(parentId, runId);
+    const row = this.database
+      .prepare(
+        'SELECT id FROM coordinator_wake_batches WHERE parent_id = ? AND run_id = ?',
+      )
+      .get(parentId, runId);
     return row ? String(row.id) : null;
   }
 
   batchEvents(batchId: string): WakeEvent[] {
-    return this.database.prepare('SELECT document FROM coordinator_wake_events WHERE batch_id = ? ORDER BY seq').all(batchId).map(row => ({ ...sessionControlEventSchema.parse(JSON.parse(String(row.document))), recovery: null }));
+    return this.database
+      .prepare(
+        'SELECT document FROM coordinator_wake_events WHERE batch_id = ? ORDER BY seq',
+      )
+      .all(batchId)
+      .map(row => ({
+        ...sessionControlEventSchema.parse(JSON.parse(String(row.document))),
+        recovery: null,
+      }));
   }
 
   wakeRunsAfter(parentId: string | null, start: number): number[] {
-    return this.database.prepare(
-      'SELECT prepared_at FROM coordinator_wake_batches WHERE prepared_at > ? AND (? IS NULL OR parent_id = ?) ORDER BY prepared_at',
-    ).all(start, parentId, parentId).map(row => Number(row.prepared_at));
+    return this.database
+      .prepare(
+        'SELECT prepared_at FROM coordinator_wake_batches WHERE prepared_at > ? AND (? IS NULL OR parent_id = ?) ORDER BY prepared_at',
+      )
+      .all(start, parentId, parentId)
+      .map(row => Number(row.prepared_at));
   }
 
-  prepareBatch(parentId: string, receipt: CoordinatorDeliveryReceipt, epoch: string, now: number, ids: number[], clearOverflow: boolean) {
-    this.database.prepare('INSERT INTO coordinator_wake_batches VALUES (?, ?, ?, ?, ?, ?, ?)').run(receipt.batchId, parentId, epoch, JSON.stringify(ids), receipt.messageId, receipt.runId, now);
+  prepareBatch(
+    parentId: string,
+    receipt: CoordinatorDeliveryReceipt,
+    epoch: string,
+    now: number,
+    ids: number[],
+    clearOverflow: boolean,
+  ) {
+    this.database
+      .prepare(
+        'INSERT INTO coordinator_wake_batches VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        receipt.batchId,
+        parentId,
+        epoch,
+        JSON.stringify(ids),
+        receipt.messageId,
+        receipt.runId,
+        now,
+      );
     const bind = this.database.prepare(
       'UPDATE coordinator_wake_events SET batch_id = ?, handled = 1 WHERE seq = ? AND parent_id = ? AND handled = 0 AND batch_id IS NULL',
     );
     for (const id of ids)
-      if (!bind.run(receipt.batchId, id, parentId).changes) throw Error('Wake event is no longer pending');
+      if (!bind.run(receipt.batchId, id, parentId).changes)
+        throw Error('Wake event is no longer pending');
     if (clearOverflow)
-      this.database.prepare('DELETE FROM coordinator_wake_overflow WHERE parent_id = ?').run(parentId);
+      this.database
+        .prepare('DELETE FROM coordinator_wake_overflow WHERE parent_id = ?')
+        .run(parentId);
   }
 
   events(
@@ -404,21 +624,19 @@ export class SessionControlStore {
         'SELECT seq, session_id, run_id, type, status, summary, detail, at, decision_id FROM session_control_events WHERE parent_id = ? AND seq > ? ORDER BY seq LIMIT ?',
       )
       .all(parentId, cursor, sessionControlLimits.events + 1);
-    const events = rows
-      .slice(0, sessionControlLimits.events)
-      .map(row =>
-        sessionControlEventSchema.parse({
-          seq: Number(row.seq),
-          at: row.at,
-          sessionId: row.session_id,
-          runId: row.run_id ?? null,
-          type: row.type,
-          status: row.status ?? null,
-          summary: row.summary,
-          detail: row.detail ?? null,
-          ...(row.decision_id ? { decisionRecordId: row.decision_id } : {}),
-        }),
-      );
+    const events = rows.slice(0, sessionControlLimits.events).map(row =>
+      sessionControlEventSchema.parse({
+        seq: Number(row.seq),
+        at: row.at,
+        sessionId: row.session_id,
+        runId: row.run_id ?? null,
+        type: row.type,
+        status: row.status ?? null,
+        summary: row.summary,
+        detail: row.detail ?? null,
+        ...(row.decision_id ? { decisionRecordId: row.decision_id } : {}),
+      }),
+    );
     return { events, more: rows.length > sessionControlLimits.events };
   }
 }

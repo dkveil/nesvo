@@ -997,6 +997,35 @@ if (args.length === 1 && args[0] === '--version') {
         sandbox: policy(),
         cwd: thread.cwd,
       });
+    } else if (method === 'turn/steer') {
+      assert.deepEqual(Object.keys(params).sort(), [
+        'expectedTurnId',
+        'input',
+        'threadId',
+      ]);
+      assert.deepEqual(
+        params.input.map(item => item.type),
+        ['text'],
+      );
+      if (
+        params.threadId !== thread?.id ||
+        params.expectedTurnId !== current?.id ||
+        current.completed
+      ) {
+        emit({ id, error: { code: -32602, message: 'Turn ID mismatch' } });
+      } else if (current.steerMode === 'fixture:steer-unsupported') {
+        emit({ id, error: { code: -32601, message: 'Method not found' } });
+        setTimeout(
+          () => complete('Unsupported steering fixture settled.'),
+          300,
+        );
+      } else if (current.steerMode === 'fixture:steer-unknown') {
+        response(id, { turnId: 'unconfirmed' });
+        complete('Unknown steering fixture settled.');
+      } else {
+        response(id, { turnId: current.id });
+        complete('Steered: ' + params.input[0].text);
+      }
     } else if (method === 'turn/start') {
       assert.equal(params.threadId, thread.id);
       assert.equal(params.cwd, thread.cwd);
@@ -1460,6 +1489,9 @@ if (args.length === 1 && args[0] === '--version') {
           delta('.');
         }
         complete('Codex fixture finished a long active turn.');
+      } else if (command.startsWith('fixture:steer-')) {
+        current.steerMode = command;
+        delta('Waiting for feedback.');
       } else if (command === 'fixture:hold') {
         await hold();
       } else if (command === 'fixture:verdict-pass') {

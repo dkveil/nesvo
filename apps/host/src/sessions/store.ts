@@ -596,6 +596,7 @@ export class SessionStore {
         }
         changed = true;
       }
+      delete session.steeringRequests;
       if (session.coordinatorWait && !session.coordinatorWait.away) {
         session.coordinatorWait.away = true;
         changed = true;

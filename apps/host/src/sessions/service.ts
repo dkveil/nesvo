@@ -124,6 +124,7 @@ import {
   questionAnswerMessage,
 } from './stages';
 import type {
+  LiveSteerOutcome,
   SessionControlBridge,
   SessionControlCall,
 } from '../session-control/types';
@@ -135,6 +136,7 @@ import {
   profileEnvironment,
   type ProviderProfiles,
 } from '../providers/profiles';
+import { SteeringRefusal } from '../session-control/steering';
 import { SessionError } from './session-error';
 import {
   FolderLocks,
@@ -409,6 +411,7 @@ type ActiveRun = {
   persistTimer?: ReturnType<typeof setTimeout>;
   persistenceError?: boolean;
   finalizing?: boolean;
+  steering?: Promise<unknown>;
   release?: () => void;
 };
 
@@ -1514,6 +1517,7 @@ export class SessionService {
     };
     session.runId = randomUUID();
     session.status = 'running';
+    delete session.steeringRequests;
     session.error = null;
     session.interruption = null;
     session.pendingApprovals = [];
@@ -3275,7 +3279,11 @@ export class SessionService {
 
   queue(
     input: SendMessageInput,
-    placement: { session?: Session; front?: boolean } = {},
+    placement: {
+      session?: Session;
+      front?: boolean;
+      writeRelated?: () => void;
+    } = {},
   ): Session {
     const session = placement.session ?? this.acceptingSession(input.sessionId);
     if (session.externalAttachment)
@@ -3330,13 +3338,193 @@ export class SessionService {
     const waited = this.waiting.has(session.id);
     if (!running) this.waiting.set(session.id, '');
     try {
-      this.publish(session);
+      this.publish(session, placement.writeRelated);
     } catch (error) {
       session.queue = session.queue.filter(item => item.id !== input.messageId);
       if (!waited) this.waiting.delete(session.id);
       throw error;
     }
     return structuredClone(session);
+  }
+
+  steeringAvailability(
+    child: Session,
+  ): 'live' | 'queue-only' | 'busy' | 'idle' {
+    const active = this.active.get(child.id);
+    if (!active || active.finalizing || child.status !== 'running')
+      return 'idle';
+    if (
+      child.pendingApprovals.length ||
+      active.steering ||
+      child.plan?.status === 'plan-ready' ||
+      pendingStageQuestion(child)
+    )
+      return 'busy';
+    return child.provider === 'Codex' ? 'live' : 'queue-only';
+  }
+
+  private steerableRun(sessionId: string, runId: string) {
+    const active = this.active.get(sessionId);
+    if (
+      !active ||
+      active.finalizing ||
+      active.session.status !== 'running' ||
+      active.session.runId !== runId
+    )
+      throw new SteeringRefusal(
+        'stale-run',
+        'The original child run has ended.',
+      );
+    const child = active.session;
+    this.ensureWorktreeOpen(child);
+    try {
+      this.ensureNoStageDecision(child);
+    } catch {
+      throw new SteeringRefusal('busy', 'The child is waiting for a decision.');
+    }
+    if (child.pendingApprovals.length || child.externalAttachment)
+      throw new SteeringRefusal(
+        'busy',
+        'The child is waiting for operator input.',
+      );
+    return active;
+  }
+
+  async withSteering<T>(
+    sessionId: string,
+    runId: string,
+    execute: (
+      child: Session,
+      steer: (text: string, signal: AbortSignal) => Promise<LiveSteerOutcome>,
+    ) => Promise<T>,
+  ): Promise<T> {
+    const active = this.steerableRun(sessionId, runId);
+    if (active.steering)
+      throw new SteeringRefusal(
+        'busy',
+        'Wait for the previous steering request to settle.',
+      );
+    this.ensureConversationCapacity(active.session);
+    const steer = async (
+      text: string,
+      signal: AbortSignal,
+    ): Promise<LiveSteerOutcome> => {
+      if (active.session.provider !== 'Codex')
+        return {
+          status: 'unsupported',
+          reason:
+            'Claude Code streaming input can start a separate turn.',
+        };
+      return 'steer' in active.handle && active.handle.steer
+        ? active.handle.steer(text, signal)
+        : { status: 'busy' };
+    };
+    const pending = execute(active.session, steer);
+    active.steering = pending;
+    try {
+      return await pending;
+    } finally {
+      if (active.steering === pending) delete active.steering;
+    }
+  }
+
+  rememberSteeringRequest(
+    sessionId: string,
+    runId: string,
+    request: NonNullable<Session['steeringRequests']>[number],
+    writeRelated: () => void,
+  ) {
+    const active = this.steerableRun(sessionId, runId);
+    const previous = active.session.steeringRequests ?? [];
+    if (previous.length >= 3)
+      throw new SteeringRefusal(
+        'busy',
+        'Resolve existing feedback requests first.',
+      );
+    active.session.steeringRequests = [...previous, request];
+    try {
+      this.publish(active.session, writeRelated);
+    } catch (error) {
+      active.session.steeringRequests = previous;
+      throw error;
+    }
+  }
+
+  removeSteeringRequest(
+    sessionId: string,
+    requestId: string,
+    writeRelated: () => void,
+  ) {
+    const child = this.acceptingSession(sessionId);
+    const previous = child.steeringRequests ?? [];
+    if (!previous.some(item => item.id === requestId))
+      throw new SteeringRefusal(
+        'stale-decision',
+        'This feedback request has already settled.',
+      );
+    child.steeringRequests = previous.filter(item => item.id !== requestId);
+    try {
+      this.publish(child, writeRelated);
+    } catch (error) {
+      child.steeringRequests = previous;
+      throw error;
+    }
+  }
+
+  queueSteeredMessage(
+    child: Session,
+    runId: string,
+    messageId: string,
+    text: string,
+    writeRelated: () => void,
+  ) {
+    const active = this.steerableRun(child.id, runId);
+    if (active.session !== child)
+      throw new SteeringRefusal(
+        'stale-run',
+        'The child moved to a different run.',
+      );
+    this.queue(
+      { sessionId: child.id, messageId, text },
+      { session: child, writeRelated },
+    );
+  }
+
+  recordSteeredMessage(
+    child: Session,
+    messageId: string,
+    senderSessionId: string | null,
+    text: string,
+    deliveredAt: string,
+    writeRelated: () => void,
+  ) {
+    const previous = child.messages;
+    child.messages = [
+      ...previous.slice(0, -1),
+      {
+        id: messageId,
+        runId: child.runId!,
+        author: 'operator',
+        body: text,
+        state: 'completed',
+        createdAt: deliveredAt,
+        completedAt: deliveredAt,
+        usage: null,
+        origin: 'steering',
+        model: child.model,
+        effort: child.effort,
+        mode: child.mode,
+        mcp: null,
+        steering: { senderSessionId, deliveredAt, insertedRevision: child.revision + 1 },
+      },
+      ...previous.slice(-1),
+    ];
+    try {
+      this.publish(child, writeRelated);
+    } catch (error) {
+      child.messages = previous;
+      throw error;
+    }
   }
 
   private readonly allowCandidates = new WeakMap<
@@ -5294,6 +5482,10 @@ export class SessionService {
         controller.abort();
         await provider?.stop();
       },
+      steer: (text, signal) =>
+        provider && 'steer' in provider && provider.steer
+          ? provider.steer(text, signal)
+          : Promise.resolve({ status: 'busy' }),
       respondApproval: (id, decision, message) => {
         if (!provider || !('respondApproval' in provider))
           throw new Error('Provider is not awaiting approval');
@@ -5311,6 +5503,8 @@ export class SessionService {
     active.finished = handle.done
       .then(async result => {
         active.finalizing = true;
+        await active.steering?.catch(() => undefined);
+        delete session.steeringRequests;
         const { limit, modeUnavailable, effortUnavailable } =
           result as ClaudeResult;
         if ((modeUnavailable || effortUnavailable) && previousSelection) {

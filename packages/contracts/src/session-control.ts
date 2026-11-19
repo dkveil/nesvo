@@ -265,6 +265,54 @@ const sessionSendInputSchema = z.strictObject({
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
 });
+export const sessionSteerInputSchema = z.strictObject({
+  sessionId: sessionIdSchema,
+  expectedRunId: sessionIdSchema,
+  text: z.string().trim().min(1).max(32_000),
+  fallback: z.enum(['queue', 'refuse']).default('queue'),
+});
+export const ownerSteerInputSchema = sessionSteerInputSchema.extend({
+  actionId: sessionIdSchema,
+});
+export const decideSteeringInputSchema = z.strictObject({
+  sessionId: sessionIdSchema,
+  expectedRunId: sessionIdSchema,
+  requestId: sessionIdSchema,
+  actionId: sessionIdSchema,
+  decision: z.enum(['accept', 'decline']),
+});
+const steeringReceiptIdentity = {
+  actionId: z.string().min(1).max(64),
+  messageId: sessionIdSchema,
+  targetRunId: sessionIdSchema,
+};
+export const sessionSteerResultSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    ...steeringReceiptIdentity,
+    status: z.literal('steered'),
+    deliveredAt: z.iso.datetime(),
+  }),
+  z.strictObject({
+    ...steeringReceiptIdentity,
+    status: z.literal('queued'),
+    position: z.number().int().positive(),
+    reason: z.string().max(300),
+  }),
+  z.strictObject({
+    ...steeringReceiptIdentity,
+    status: z.literal('awaiting-owner'),
+    requestId: sessionIdSchema,
+  }),
+  z.strictObject({
+    ...steeringReceiptIdentity,
+    status: z.literal('delivery-unknown'),
+  }),
+  z.strictObject({ ...steeringReceiptIdentity, status: z.literal('declined') }),
+]);
+export type SessionSteerInput = z.infer<typeof sessionSteerInputSchema>;
+export type OwnerSteerInput = z.infer<typeof ownerSteerInputSchema>;
+export type DecideSteeringInput = z.infer<typeof decideSteeringInputSchema>;
+export type SessionSteerResult = z.infer<typeof sessionSteerResultSchema>;
 const sessionTargetSchema = z.strictObject({ sessionId: sessionIdSchema });
 const sessionStatusInputSchema = z.strictObject({
   sessionIds: z
@@ -326,6 +374,13 @@ export const sessionControlTools = {
     input: sessionSendInputSchema,
     description:
       'Send a message to one of your child sessions. When the child is busy or its folder is in use, the message waits in its queue and the result says so. model, effort and mode apply from this turn.',
+  },
+  session_steer: {
+    title: 'Steer child session',
+    mutation: true,
+    input: sessionSteerInputSchema,
+    description:
+      'Send text to the exact active child run. An unsupported provider can queue it with fallback queue. Delivery unknown requires a new deliberate send. Task-bound workers require the operator to confirm the exact text.',
   },
   session_status: {
     title: 'Read session status',
@@ -549,6 +604,8 @@ export const sessionControlChildSchema = z.strictObject({
   report: stageReportSchema.nullable().default(null),
   question: stageQuestionSchema.nullable().default(null),
   runId: z.uuid().nullable().optional(),
+  steering: z.enum(['live', 'queue-only', 'busy', 'idle']).optional(),
+  preciseHistory: z.literal(true).optional(),
   planId: z.uuid().optional(),
   questionId: z.uuid().optional(),
 });

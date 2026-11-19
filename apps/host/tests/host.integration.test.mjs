@@ -30130,6 +30130,140 @@ test('D87 wakes an idle coordinator once with exact direct child runs and the re
   );
 });
 
+test('D87 steering stays bound to a child run and queues only after definite refusal', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-steer-')),
+  );
+  const host = launch(directory, join(directory, 'fixture.pid'));
+  t.after(async () => {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  await host.request('set-coordinator-wake', {
+    sessionId: null,
+    actionId: randomUUID(),
+    expectedRevision: 0,
+    enabled: false,
+  });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Claude Code',
+      model: 'default',
+      directory,
+    })
+  ).session;
+  const [created] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: {
+        title: 'Child',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        prompt: 'fixture:steer-native',
+      },
+    },
+  ]);
+  assert.equal(created.isError, false, JSON.stringify(created));
+  const child = created.result.sessionId;
+  const ready = runId =>
+    host.event(
+      item =>
+        item.id === child &&
+        (!runId || item.runId === runId) &&
+        item.status === 'running' &&
+        agent(item).body.includes('Waiting for feedback.'),
+    );
+  const first = await ready(null);
+  const args = {
+    sessionId: child,
+    expectedRunId: first.runId,
+    text: 'Consider the boundary case.',
+  };
+  const [delivered, duplicate, changed] = await controlTurn(host, parent.id, [
+    { tool: 'session_steer', id: 'steer-call', arguments: args },
+    { tool: 'session_steer', id: 'steer-call', arguments: args },
+    {
+      tool: 'session_steer',
+      id: 'steer-call',
+      arguments: { ...args, text: 'Other contents.' },
+    },
+  ]);
+  assert.equal(delivered.result.status, 'steered', JSON.stringify(delivered));
+  assert.deepEqual(duplicate.result, delivered.result);
+  assert.equal(changed.result.code, 'invalid');
+  const settled = await finishedChild(host, child);
+  assert.equal(settled.runId, first.runId);
+  const messages = settled.messages.filter(
+    message => message.origin === 'steering',
+  );
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].id, delivered.result.messageId);
+  assert.equal(messages[0].steering.senderSessionId, parent.id);
+  assert.equal(agent(settled).body, 'Steered: Consider the boundary case.');
+
+  const startedSecond = await host.request('send-message', {
+    sessionId: child,
+    messageId: randomUUID(),
+    text: 'fixture:steer-unsupported',
+  });
+  const second = await ready(startedSecond.session.runId);
+  const stale = await host.request('steer-child-session', {
+    ...args,
+    actionId: randomUUID(),
+  });
+  assert.equal(stale.type, 'error');
+  const queued = await host.request('steer-child-session', {
+    ...args,
+    expectedRunId: second.runId,
+    actionId: randomUUID(),
+  });
+  assert.equal(queued.receipt?.status, 'queued', JSON.stringify(queued));
+  const next = await host.event(
+    item =>
+      item.id === child &&
+      item.runId !== second.runId &&
+      item.status === 'completed' &&
+      item.messages.some(message => message.id === queued.receipt.messageId),
+  );
+  assert.equal(
+    next.messages.find(message => message.id === queued.receipt.messageId)
+      .runId,
+    next.runId,
+  );
+
+  const startedThird = await host.request('send-message', {
+    sessionId: child,
+    messageId: randomUUID(),
+    text: 'fixture:steer-unknown',
+  });
+  const third = await ready(startedThird.session.runId);
+  const ambiguous = {
+    ...args,
+    expectedRunId: third.runId,
+    actionId: randomUUID(),
+  };
+  const unknown = await host.request('steer-child-session', ambiguous);
+  assert.equal(
+    unknown.receipt?.status,
+    'delivery-unknown',
+    JSON.stringify(unknown),
+  );
+  const retry = await host.request('steer-child-session', ambiguous);
+  assert.deepEqual(retry.receipt, unknown.receipt);
+  const final = await host.event(
+    item =>
+      item.id === child &&
+      item.runId === third.runId &&
+      item.status === 'completed',
+  );
+  assert.equal(final.queue.length, 0);
+  assert.ok(
+    !final.messages.some(message => message.id === unknown.receipt.messageId),
+  );
+});
+
 test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on resume', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nesvo-control-codex-'));
   const pidFile = join(directory, 'fixture.pid');

@@ -58,6 +58,7 @@ import {
 } from './turn-usage';
 import { recordProviderProcess } from '../process/provider-processes';
 import type {
+  LiveSteerOutcome,
   SessionControlHandler,
   SessionControlToolDefinition,
 } from '../session-control/types';
@@ -1690,6 +1691,7 @@ type CodexRunOptions = {
 
 export function startCodex(options: CodexRunOptions): {
   done: Promise<CodexResult>;
+  steer?: (text: string, signal: AbortSignal) => Promise<LiveSteerOutcome>;
   stop: () => Promise<void>;
   respondApproval: (
     requestId: string,
@@ -2891,6 +2893,51 @@ export function startCodex(options: CodexRunOptions): {
   })();
   return {
     done,
+    steer: async (text, signal) => {
+      const expectedTurnId = turnId;
+      const activePeer = peer;
+      if (stopped || finished || outcome.confirmed || signal.aborted)
+        return { status: 'stale-run' };
+      if (options.compact || options.fork)
+        return {
+          status: 'unsupported',
+          reason: 'This Codex operation does not accept steering.',
+        };
+      if (
+        !activePeer ||
+        !threadId ||
+        !expectedTurnId ||
+        startingTurn ||
+        approvals.size
+      )
+        return { status: 'busy' };
+      try {
+        const result = await activePeer.request('turn/steer', {
+          threadId,
+          expectedTurnId,
+          input: [{ type: 'text', text, text_elements: [] }],
+        });
+        return result.turnId === expectedTurnId
+          ? { status: 'steered', deliveredAt: new Date().toISOString() }
+          : { status: 'delivery-unknown' };
+      } catch (error) {
+        if (error instanceof CodexRpcError) {
+          if (error.code === -32601)
+            return {
+              status: 'unsupported',
+              reason:
+                'The installed Codex app-server does not implement turn/steer.',
+            };
+          if (
+            /^\s*(?:no active turn|active turn id .* does not match expected turn id|expected turn id .* but got|turn id mismatch)\b/i.test(
+              error.message,
+            )
+          )
+            return { status: 'stale-run' };
+        }
+        return { status: 'delivery-unknown' };
+      }
+    },
     stop: () => {
       stopTask ??= (async () => {
         stopped = true;

@@ -566,6 +566,9 @@ import {
   coordinatorPolicySchema,
   decideSessionParentSchema,
   workerWorktreeInputSchema,
+  ownerSteerInputSchema,
+  decideSteeringInputSchema,
+  sessionSteerResultSchema,
   coordinatorWakeTargetSchema,
   coordinatorWakeStateSchema,
   setCoordinatorWakeSchema,
@@ -1452,6 +1455,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('steer-child-session'),
+    input: ownerSteerInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-child-steering'),
+    input: decideSteeringInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('read-coordinator-wake'),
     input: coordinatorWakeTargetSchema,
   }),
@@ -1982,6 +1995,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('worker-worktree'),
     id: z.uuid(),
     result: workerWorktreeResultSchema,
+  }),
+  z.strictObject({
+    type: z.literal('child-steering'),
+    id: z.uuid(),
+    receipt: sessionSteerResultSchema,
   }),
   z.strictObject({
     type: z.literal('coordinator-wake'),

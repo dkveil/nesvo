@@ -43,6 +43,7 @@ import {
   QUESTION_RECORDED_MESSAGE,
 } from '../sessions/stages';
 import type { SessionControlStore } from './store';
+import { ChildSteering, SteeringRefusal } from './steering';
 import { CoordinatorWake } from './wake';
 import { WorkspaceIsolationError } from '../workspace/isolation';
 import type {
@@ -105,7 +106,7 @@ const refusalFor = (error: unknown): SessionControlReply => {
     };
   if (error instanceof WorkspaceIsolationError)
     return refusal('invalid', error.message);
-  if (error instanceof ChildRefusal)
+  if (error instanceof ChildRefusal || error instanceof SteeringRefusal)
     return refusal(error.refusal, error.message);
   if (!(error instanceof SessionError))
     return refusal('unsupported', 'Nesvo could not complete this call.');
@@ -179,11 +180,13 @@ export class SessionControl {
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly inFlight = new Map<string, Promise<SessionControlReply>>();
   readonly wake: CoordinatorWake;
+  readonly steering: ChildSteering;
   private readonly inFlightInputs = new Map<string, string>();
   private readonly creating = new Map<string, number>();
   private readonly seenApprovals = new Set<string>();
 
   constructor(private readonly params: SessionControlParams) {
+    this.steering = new ChildSteering(params);
     this.wake = new CoordinatorWake({
       ...params,
       eligible: session => {
@@ -732,7 +735,7 @@ export class SessionControl {
         'disabled',
         'Session control is turned off in Settings on this computer.',
       );
-    const coordinator = this.params.sessions.snapshot(caller.sessionId);
+    const coordinator = this.params.sessions.liveControlCaller(caller);
     if (
       !coordinator ||
       coordinator.runId !== caller.runId ||
@@ -868,6 +871,7 @@ export class SessionControl {
       lastActivityAt: child.updatedAt,
       pullRequest: child.pullRequest,
       runId: child.runId,
+      steering: this.params.sessions.steeringAvailability(child),
       ...(child.plan?.status === 'plan-ready' ? { planId: child.plan.id } : {}),
       ...(open ? { questionId: open.id } : {}),
       report: latestStageReport(child)?.report ?? null,
@@ -1209,6 +1213,20 @@ export class SessionControl {
         messageId,
         ...this.delivery(child, messageId),
       });
+    },
+    session_steer: async ({ coordinator, input, actionId, policy, signal }) => {
+      const child = this.child(coordinator, input.sessionId);
+      if (
+        !policy.providers.includes(child.provider) ||
+        !policy.childModes.includes(child.mode)
+      )
+        return refusal(
+          'forbidden-by-policy',
+          'The child provider or permission mode is outside the coordinator policy.',
+        );
+      return success(
+        await this.steering.steer(input, actionId, coordinator, signal),
+      );
     },
     session_status: ({ coordinator, input }) => {
       const sessions = input.sessionIds
