@@ -94,6 +94,14 @@ Settings › Worktree recipes lists the recipes of the selected computer, edits 
 
 Settings › Data › Worktree cleanup lists up to 100 on-disk managed checkouts per computer for sessions finished with Keep or for which no session was saved. The host records ownership before creating a checkout. Retained checkouts recorded in older session history are also eligible. Cleanup rechecks that no live session uses the checkout and that it is still registered with the recorded repository. The operator confirms removal and separately confirms discarding any tracked changes, untracked files or ignored local files. Removal leaves the Git branch and session history intact.
 
+### Custom worktree providers
+
+Settings › Worktrees configures an exact Git repository override, a remote pattern, or the selected computer's default. Exact overrides take precedence. Pattern selection uses the most specific single match. The built-in Git path is used when no rule applies. The worktree branch field accepts an explicit Git branch or a policy template with task fields. A writable child starts at the coordinator commit and keeps its merge target independent of its worktree branch.
+
+An external command uses an absolute executable, direct argv and a limited process environment. The host resolves and reads each executable and declared command artifact before approval and again before execution. The approval fingerprint includes the scope, roots, command templates and limits. SQLite records execution intent before dispatch. An interrupted or invalid mutation result remains uncertain for reconciliation. Only the final nonempty stdout line is read as a version 1 result. The host verifies canonical location, branch, base commit and Git registration before storing the checkout binding.
+
+Removal uses the pinned provider revision and refuses a changed or revoked definition. Git checks protect dirty folders and verify that removal left the branch. Merged pull request cleanup uses the same binding and keeps these branches. Worktree attachment can open an existing folder or explicitly adopt it with a reviewed provider. Adoption fixes the base to the observed checkout commit. A verified Git checkout can be adopted through the built-in provider. External ownership depends on the provider's verified listing. Legacy shell recipes are unavailable for bound checkouts; the host still copies bounded .worktreeinclude files on new external checkouts.
+
 ## Mobile companion
 
 D66 adds an Expo React Native client in `apps/mobile-client` and a narrow opt-in HTTP/WebSocket gateway. The reusable gateway belongs to `apps/host/src/mobile`; Electron supplies its lifetime and an adapter to the existing ComputerManager. It routes to Local or an already-connected SSH host without creating another host runtime or database. Mobile and desktop share Zod contracts, session revisions and action identities; native views remain separate from the desktop component library.

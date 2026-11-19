@@ -1975,7 +1975,8 @@ async function smokeDesktop() {
   await trustSettings
     .getByText('git.example.test/team/*', { exact: true })
     .waitFor();
-  if (d88Screenshots) {
+  const captureD88 = async name => {
+    if (!d88Screenshots) return;
     await mkdir(d88Screenshots, { recursive: true });
     const previous = await page.evaluate(() => ({
       width: innerWidth,
@@ -2014,17 +2015,15 @@ async function smokeDesktop() {
       );
       assert.deepEqual(screenshot.size, size);
       await writeFile(
-        join(
-          d88Screenshots,
-          `d88-a-repository-trust-${size.width}x${size.height}.png`,
-        ),
+        join(d88Screenshots, `d88-${name}-${size.width}x${size.height}.png`),
         Buffer.from(screenshot.png, 'base64'),
       );
     }
     await application.evaluate(({ BrowserWindow }, size) => {
       BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height);
     }, previous);
-  }
+  };
+  await captureD88('a-repository-trust');
   await trustSettings
     .getByRole('button', { name: 'Revoke', exact: true })
     .click();
@@ -2043,6 +2042,48 @@ async function smokeDesktop() {
   await initialContext
     .getByRole('button', { name: 'Close repository trust history' })
     .click();
+  await settingsNav
+    .getByRole('button', { name: 'Worktrees', exact: true })
+    .click();
+  const providerSettings = initialContext.getByRole('region', {
+    name: 'Worktree providers',
+    exact: true,
+  });
+  await providerSettings.getByRole('button', { name: 'Add provider' }).click();
+  const providerEditor = page.getByRole('dialog', {
+    name: 'Add worktree provider',
+  });
+  await providerEditor.getByLabel('Provider definition').fill(
+    JSON.stringify({
+      version: 1,
+      kind: 'builtin',
+      name: 'Fixture branch policy',
+      scope: { kind: 'pattern', pattern: 'git.example.test/team/*' },
+      branchPolicy: {
+        template: '<type>/<TICKET>-<slug>',
+        validation: '^fix/[A-Z0-9]+-[a-z0-9-]+$',
+      },
+    }),
+  );
+  await providerEditor.getByRole('button', { name: 'Review provider' }).click();
+  await page
+    .getByRole('dialog', { name: 'Review worktree provider' })
+    .getByRole('button', { name: 'Approve provider' })
+    .click();
+  await providerSettings
+    .getByText('Fixture branch policy', { exact: true })
+    .waitFor();
+  await captureD88('b-worktree-providers');
+  await providerSettings
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await page
+    .getByRole('alertdialog', { name: 'Revoke worktree provider?' })
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await providerSettings
+    .getByText('Fixture branch policy', { exact: true })
+    .waitFor({ state: 'hidden' });
   await page.keyboard.press('Escape');
   await initialContext.waitFor({ state: 'hidden' });
   const scheduledJobCall = (method, ...args) =>
@@ -2124,6 +2165,7 @@ async function smokeDesktop() {
     'manager-import',
     'configuration',
     'repository-trust-rules',
+    'custom-worktree-providers',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

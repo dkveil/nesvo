@@ -903,16 +903,8 @@ export class SessionControl {
             ? {
                 isolation: {
                   kind: 'worktree',
-                  ...(workerBase
-                    ? {
-                        branch: this.params.sessions.workerBranch(
-                          workerBase.branch,
-                          actionId,
-                        ),
-                      }
-                    : input.worktree?.branch
-                      ? { branch: input.worktree.branch }
-                      : {}),
+                  branch: input.worktree?.branch,
+                  task: input.worktree?.task,
                 },
               }
             : {}),
@@ -928,7 +920,13 @@ export class SessionControl {
           create.data,
           signal,
           coordinator.id,
-          workerBase,
+          workerBase && {
+            ...workerBase,
+            suggestedBranch: this.params.sessions.workerBranch(
+              workerBase.branch,
+              actionId,
+            ),
+          },
         );
         if (!this.params.store.child(child.id))
           this.params.store.saveChild({

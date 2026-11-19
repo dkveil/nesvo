@@ -178,6 +178,7 @@ import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
 import { ClaudeTerminal } from '@/widgets/claude-terminal';
 import { SessionDetails } from '@/widgets/session-details';
 import { WorktreeRecipesSettings } from '@/widgets/worktree-recipes-settings';
+import { WorktreeProviderSettings } from '@/widgets/settings/worktree-provider-settings';
 import {
   useSessionWorktreeRecipe,
   WorktreeRecipeCard,
@@ -6143,6 +6144,16 @@ ${text}`
             ) : page === 'worktree-recipes' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}
+                <WorktreeProviderSettings
+                  key={settingsHostId}
+                  hostId={settingsHostId}
+                  ready={
+                    store.hostReady(settingsHostId) &&
+                    !!settingsComputer?.capabilities.includes(
+                      'custom-worktree-providers',
+                    )
+                  }
+                />
                 <WorktreeRecipesSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}

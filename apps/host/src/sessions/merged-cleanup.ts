@@ -35,7 +35,7 @@ type MergedCleanupParams = {
   finishWorktree: (
     input: FinishSessionWorktreeInput,
     signal: AbortSignal,
-    removal: { allowsIgnoredFiles?: boolean },
+    removal: { allowsIgnoredFiles?: boolean; actionId?: string },
   ) => Promise<Session>;
   archive: (sessionId: string) => Session;
 };
@@ -94,10 +94,11 @@ export class MergedWorktreeCleanups {
   finish(
     input: FinishMergedWorktreeInput,
     signal: AbortSignal,
+    actionId?: string,
   ): Promise<MergedWorktreeFinish> {
     const pending = this.finishing.get(input.sessionId);
     if (pending) return pending;
-    const run = this.run(input, signal).finally(() =>
+    const run = this.run(input, signal, actionId).finally(() =>
       this.finishing.delete(input.sessionId),
     );
     this.finishing.set(input.sessionId, run);
@@ -107,6 +108,7 @@ export class MergedWorktreeCleanups {
   private async run(
     input: FinishMergedWorktreeInput,
     signal: AbortSignal,
+    actionId?: string,
   ): Promise<MergedWorktreeFinish> {
     const target = this.target(input.sessionId);
     if (
@@ -132,10 +134,11 @@ export class MergedWorktreeCleanups {
           action: { kind: 'remove', force: false },
         },
         signal,
-        { allowsIgnoredFiles: true },
+        { allowsIgnoredFiles: true, actionId },
       );
     const branchDeleted =
       cleanup.branch === 'delete' &&
+      !target.worktree.binding &&
       pullRequest.state === 'merged' &&
       (await deleteMergedSessionBranch({
         projectDirectory: target.worktree.projectDirectory,
@@ -193,6 +196,7 @@ export class MergedWorktreeCleanups {
         dataDirectory: this.params.dataDirectory,
         worktree: session.directory,
         gitDirectory: this.gitDirectory(session.id),
+        binding: worktree.binding,
         branch: worktree.branch,
         mergedHead: pullRequest.headSha,
         signal,
@@ -221,7 +225,9 @@ export class MergedWorktreeCleanups {
       unpushed: inspection.unpushed,
       unpushedTruncated: inspection.unpushedTruncated,
       localFiles: inspection.localFiles,
-      branch: branchPlan(pullRequest, worktree.branch, inspection),
+      branch: worktree.binding
+        ? 'keep'
+        : branchPlan(pullRequest, worktree.branch, inspection),
       blockers: unavailable ? [...blockers, 'worktree-unavailable'] : blockers,
     };
     return { cleanup, pullRequest };

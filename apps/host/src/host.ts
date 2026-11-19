@@ -31,6 +31,7 @@ import { AttachmentError } from './sessions/attachments';
 import { SessionStore } from './sessions/store';
 import { ConversationImport } from './sessions/conversation-import';
 import { ManagerImport } from './sessions/manager-import';
+import { CustomWorktreeProviders } from './workspace/custom-worktree-providers';
 import { HistorySearch } from './sessions/history-search';
 import { TranscriptIndex } from './sessions/transcript-index';
 import { SessionGroupStore } from './sessions/group-store';
@@ -427,6 +428,7 @@ export const serveHost = ({
       const control: { current?: SessionControl } = {};
       const controlStore = new SessionControlStore(database);
       const mcpPolicy = new McpPolicy(database);
+      const customWorktrees = new CustomWorktreeProviders(database, directory);
       const inbox: { current?: InboxRules } = {};
       const emitSessionEvent = (
         message: DesktopEvent,
@@ -470,6 +472,7 @@ export const serveHost = ({
                 },
                 profiles,
                 mcp: mcpPolicy,
+                customWorktrees,
                 inbox: {
                   prepareTurn: (session, turn, signal) =>
                     inbox.current
@@ -2170,7 +2173,11 @@ export const serveHost = ({
               return {
                 type: 'merged-worktree-finish',
                 id: request.id,
-                result: await mergedCleanups.finish(request.input, signal),
+                result: await mergedCleanups.finish(
+                  request.input,
+                  signal,
+                  request.id,
+                ),
               };
             if (request.method === 'read-session-worktree')
               return {
@@ -2180,7 +2187,9 @@ export const serveHost = ({
               };
             const session =
               request.method === 'finish-session-worktree'
-                ? await sessions.finishWorktree(request.input, signal)
+                ? await sessions.finishWorktree(request.input, signal, {
+                    actionId: request.id,
+                  })
                 : await sessions.createWithEffort(request.input, signal);
             return { type: 'session', id: request.id, session };
           };
@@ -3729,6 +3738,35 @@ export const serveHost = ({
           yield* Effect.tryPromise(() => send(response));
           continue;
         }
+        if (request.method === 'custom-worktree-providers') {
+          const pending = customWorktrees
+            .settings(request.input, probes.controller.signal)
+            .then(reply =>
+              send({
+                type: 'custom-worktree-providers',
+                id: request.id,
+                reply,
+              }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError
+                    ? error.code
+                    : 'invalid-request',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : 'The worktree provider request failed.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
         if (
           request.method === 'decide-delegation' ||
           request.method === 'worker-worktree'
@@ -3752,6 +3790,7 @@ export const serveHost = ({
                       result: await sessions.workerWorktree(
                         request.input,
                         signal,
+                        request.id,
                       ),
                     };
               } catch (error) {

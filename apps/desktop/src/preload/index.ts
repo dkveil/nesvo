@@ -199,6 +199,8 @@ import {
   trustRepositoryMcpSchema,
   repositoryTrustSettingsInputSchema,
   repositoryTrustSettingsSchema,
+  worktreeProviderInputSchema,
+  worktreeProviderReplySchema,
   mcpServerListSchema,
   setSessionMcpSchema,
   skillCatalogSchema,
@@ -1622,6 +1624,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:read-default-session-folder',
         route(hostId),
+      ),
+    ),
+  customWorktreeProviders: async (input, hostId) =>
+    worktreeProviderReplySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:custom-worktree-providers',
+        worktreeProviderInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
       ),
     ),
   setDefaultSessionFolder: async (directory, hostId) =>

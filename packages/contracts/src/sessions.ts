@@ -1,3 +1,8 @@
+import {
+  attachWorktreeSchema,
+  sessionWorktreeBindingSchema,
+  worktreeTaskFieldsSchema,
+} from './worktree-providers';
 import { z } from 'zod';
 import {
   allowPatternSchema,
@@ -275,12 +280,19 @@ export const sessionIsolationSchema = z.strictObject({
     .max(200)
     .regex(SESSION_BRANCH_PATTERN, 'Use a valid Git branch name.')
     .optional(),
+  task: worktreeTaskFieldsSchema.optional(),
+  attach: attachWorktreeSchema.optional(),
+  providerRevision: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 });
 export const sessionWorktreeSchema = z.strictObject({
   projectDirectory: z.string().min(1).max(4096),
   branch: z.string().min(1).max(200).regex(SESSION_BRANCH_PATTERN),
   base: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/),
   state: z.enum(['active', 'kept', 'removed']),
+  binding: sessionWorktreeBindingSchema.optional(),
   workerTargetBranch: z.string().min(1).max(1024).optional(),
   workerResolution: z.enum(['merge', 'discard']).optional(),
   includes: z

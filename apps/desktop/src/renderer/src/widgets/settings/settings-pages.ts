@@ -99,7 +99,7 @@ export const settingsPages: SettingsPageEntry[] = [
   },
   {
     id: 'worktree-recipes',
-    label: 'Worktree recipes',
+    label: 'Worktrees',
     icon: GitFork,
     group: '',
     keywords:

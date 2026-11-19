@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { GitFork, Globe, ListChecks } from 'lucide-react';
-import { sessionIsolationSchema } from '@nesvo/contracts';
+import {
+  sessionIsolationSchema,
+  worktreeTaskFieldsSchema,
+} from '@nesvo/contracts';
 import type {
   Computer,
   CreateSessionInput,
@@ -9,6 +12,8 @@ import type {
   DesktopSession,
   ListMcpServersInput,
   McpServerList,
+  AttachWorktree,
+  WorktreeProviderReply,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
@@ -40,6 +45,7 @@ import {
   ComposerToolbar,
 } from '@/shared/ui/composer';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
@@ -57,6 +63,7 @@ import { WorkflowPicker } from './workflow-picker';
 import { resolveProviderEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
 import { RepositoryReviewDialog } from './repository-review-dialog';
+import { AttachWorktreePicker } from './attach-worktree';
 import {
   defaultProfileKey,
   readNewSessionDefaults,
@@ -134,6 +141,15 @@ export function NewThread({
   const [worktreeChoice, setWorktreeChoice] = useState<boolean | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState('');
+  const [worktreeTaskType, setWorktreeTaskType] = useState('');
+  const [worktreeTicket, setWorktreeTicket] = useState('');
+  const [attachment, setAttachment] = useState<{
+    directory: string;
+    hostId: string;
+    choice: AttachWorktree;
+  }>();
+  const [worktreePreview, setWorktreePreview] =
+    useState<Extract<WorktreeProviderReply, { action: 'effective' }>>();
   const [planFirst, setPlanFirst] = useState(false);
   const [browser, setBrowser] = useState(false);
   const [repositoryReview, setRepositoryReview] = useState<{
@@ -163,13 +179,87 @@ export function NewThread({
     gitRepository &&
     !!computer?.capabilities.includes('session-worktrees');
   const useWorktree = worktreeChoice ?? (worktreeDefault && worktreeAvailable);
+  const attached =
+    attachment?.directory === setup.directory &&
+    attachment.hostId === setup.hostId
+      ? attachment.choice
+      : undefined;
+  const customWorktrees =
+    connected &&
+    worktreeAvailable &&
+    !!computer?.capabilities.includes('custom-worktree-providers');
   const planFirstAvailable =
     !piped && !!computer?.capabilities.includes('session-stages');
   const usePlanFirst = planFirst && planFirstAvailable;
   const isolation = sessionIsolationSchema.safeParse({
     kind: 'worktree',
-    branch: worktreeBranch.trim() || undefined,
+    ...(attached
+      ? { attach: attached }
+      : {
+          branch: worktreeBranch.trim() || undefined,
+          task:
+            worktreeTaskType || worktreeTicket
+              ? {
+                  type: worktreeTaskType || undefined,
+                  ticket: worktreeTicket || undefined,
+                }
+              : undefined,
+        }),
   });
+  const previewTitle = text.trim()
+    ? deriveThreadTitle(text.trim())
+    : 'New session';
+  useEffect(() => {
+    if (!customWorktrees || !useWorktree || attached) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      const fields = worktreeTaskFieldsSchema.safeParse({
+        type: worktreeTaskType || undefined,
+        ticket: worktreeTicket || undefined,
+      });
+      if (!fields.success) return;
+      void window.nesvo
+        .customWorktreeProviders(
+          {
+            action: 'effective',
+            directory: setup.directory,
+            title: previewTitle,
+            branch: worktreeBranch.trim() || undefined,
+            fields: fields.data,
+          },
+          setup.hostId,
+        )
+        .then(
+          result => {
+            if (current && result.action === 'effective')
+              setWorktreePreview(result);
+          },
+          reason => {
+            if (current)
+              setWorktreePreview({
+                action: 'effective',
+                provider: null,
+                branch: null,
+                reason: errorDetail(reason),
+              });
+          },
+        );
+    }, 350);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [
+    attached,
+    customWorktrees,
+    previewTitle,
+    setup.directory,
+    setup.hostId,
+    useWorktree,
+    worktreeBranch,
+    worktreeTaskType,
+    worktreeTicket,
+  ]);
   const validProfile =
     !setup.profileId ||
     profiles.some(
@@ -338,6 +428,30 @@ export function NewThread({
       }
       const message = typed?.status === 'skill' ? typed.text : text.trim();
       const chosen = typed?.status === 'skill' ? typed.skill : skill;
+      let isolated =
+        useWorktree && isolation.success ? isolation.data : undefined;
+      if (customWorktrees && isolated && !attached) {
+        const effective = await window.nesvo.customWorktreeProviders(
+          {
+            action: 'effective',
+            directory: setup.directory,
+            title: deriveThreadTitle(message),
+            branch: isolated.branch,
+            fields: isolated.task,
+          },
+          setup.hostId,
+        );
+        if (!mounted.current || latestSetup.current !== submittedSetup) return;
+        if (effective.action === 'effective') {
+          setWorktreePreview(effective);
+          if (effective.reason) throw new Error(effective.reason);
+          if (effective.provider)
+            isolated = {
+              ...isolated,
+              providerRevision: effective.provider.fingerprint,
+            };
+        }
+      }
       const start = () =>
         onStart(
           {
@@ -348,9 +462,7 @@ export function NewThread({
             ...(effort ? { effort } : {}),
             mode: setup.mode,
             directory: setup.directory.trim(),
-            ...(useWorktree && isolation.success
-              ? { isolation: isolation.data }
-              : {}),
+            ...(isolated ? { isolation: isolated } : {}),
             ...(usePlanFirst ? { planFirst: true } : {}),
             ...(useBrowser ? { browser: true } : {}),
           },
@@ -695,7 +807,7 @@ export function NewThread({
                   onChange={mode => onSetupChange({ ...setup, mode })}
                 />
               </div>
-              {worktreeAvailable && useWorktree && (
+              {worktreeAvailable && useWorktree && !attached && (
                 <Field
                   id="thread-worktree-branch"
                   label="Branch name (optional)"
@@ -728,6 +840,85 @@ export function NewThread({
                     onChange={event => setWorktreeBranch(event.target.value)}
                   />
                 </Field>
+              )}
+              {customWorktrees && useWorktree && !attached && (
+                <div className="space-y-2 px-2">
+                  {worktreePreview?.provider && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field id="worktree-task-type" label="Task type">
+                        <Input
+                          id="worktree-task-type"
+                          placeholder="fix"
+                          value={worktreeTaskType}
+                          onChange={event =>
+                            setWorktreeTaskType(event.target.value)
+                          }
+                          disabled={pending}
+                        />
+                      </Field>
+                      <Field id="worktree-ticket" label="Ticket">
+                        <Input
+                          id="worktree-ticket"
+                          placeholder="TASK-123"
+                          value={worktreeTicket}
+                          onChange={event =>
+                            setWorktreeTicket(event.target.value)
+                          }
+                          disabled={pending}
+                        />
+                      </Field>
+                    </div>
+                  )}
+                  {worktreePreview?.reason ? (
+                    <StatusMessage tone="warning">
+                      {worktreePreview.reason}
+                    </StatusMessage>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {worktreePreview?.provider?.name ?? 'Built-in Git'}
+                      {worktreePreview?.branch
+                        ? ` · ${worktreePreview.branch.replace(/00000000$/, '…')}`
+                        : ''}
+                    </p>
+                  )}
+                </div>
+              )}
+              {customWorktrees && (
+                <div className="flex items-center gap-2 px-2">
+                  {attached ? (
+                    <>
+                      <span className="text-xs text-muted-foreground">
+                        Adopt {attached.branch}
+                      </span>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setAttachment(undefined)}
+                      >
+                        Clear
+                      </Button>
+                    </>
+                  ) : (
+                    <AttachWorktreePicker
+                      key={setup.hostId + ':' + setup.directory}
+                      hostId={setup.hostId}
+                      directory={setup.directory}
+                      onAdopt={choice => {
+                        setAttachment({
+                          directory: setup.directory,
+                          hostId: setup.hostId,
+                          choice,
+                        });
+                        setWorktreeChoice(true);
+                      }}
+                      onView={directory => {
+                        onSetupChange({ ...setup, directory });
+                        setWorktreeChoice(false);
+                      }}
+                    />
+                  )}
+                </div>
               )}
               <WorktreeRecipeHint
                 api={hostApi}

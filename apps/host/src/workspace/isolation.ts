@@ -61,6 +61,8 @@ export function worktreeSlug(title: string, fallback: string): string {
   return slug || fallback;
 }
 
+export const SESSION_WORKTREE_BRANCH_PREFIX = 'nesvo/';
+
 export type WorkspaceIsolationErrorCode =
   | 'invalid-project'
   | 'invalid-data-directory'
@@ -828,7 +830,8 @@ async function createWorktree(
     fail('no-base-commit', 'The requested base commit is invalid.');
   const base = baseCommit ?? (await headCommit(repository, signal));
   const shortId = runId.slice(0, 8).toLowerCase();
-  const branch = requestedBranch ?? `nesvo/${slug}-${shortId}`;
+  const branch =
+    requestedBranch ?? `${SESSION_WORKTREE_BRANCH_PREFIX}${slug}-${shortId}`;
   if (requestedBranch) {
     const checked = await runGit({
       args: ['check-ref-format', '--branch', branch],
@@ -957,6 +960,7 @@ async function createWorktree(
 type SessionWorktreeLocation = ListTaskWorktreesParams & {
   worktree: string;
   gitDirectory?: string;
+  binding?: NonNullable<Session['worktree']>['binding'];
 };
 
 async function registeredSessionWorktree({
@@ -965,19 +969,25 @@ async function registeredSessionWorktree({
   worktree,
   signal,
   gitDirectory: recordedGitDirectory,
+  binding,
 }: SessionWorktreeLocation) {
   const root = worktreesRoot(dataDirectory, false, SESSION_ROOT);
   if (
     !isAbsolute(worktree) ||
-    (root && resolve(worktree, '..') !== root) ||
+    (binding
+      ? binding.checkout !== worktree ||
+        !isInside(binding.root, worktree) ||
+        binding.root === worktree
+      : root && resolve(worktree, '..') !== root) ||
     realPathOf(worktree) !== worktree
   )
     fail(
       'not-a-task-worktree',
       'This path is outside the managed session worktrees.',
     );
-  if (!root || !pathExists(worktree)) return;
+  if ((!root && !binding) || !pathExists(worktree)) return;
   const gitDirectory =
+    binding?.gitDirectory ??
     recordedGitDirectory ??
     (await repositoryGitDirectory(projectPath(projectDirectory), signal));
   if (realDirectory(gitDirectory) !== gitDirectory)
@@ -992,6 +1002,11 @@ async function registeredSessionWorktree({
       'This path is no longer a registered session worktree.',
     );
   if (!target) return;
+  if (binding && (target.prunable || target.branch !== binding.branch))
+    fail(
+      'not-a-task-worktree',
+      'The bound worktree branch or registration has changed.',
+    );
   const admin = checkoutGitDirectory(worktree, gitDirectory);
   return { target, gitDirectory, admin, cwd };
 }
@@ -1077,10 +1092,18 @@ export async function removeSessionWorktree(
   input: SessionWorktreeLocation & {
     force?: boolean;
     allowsIgnoredFiles?: boolean;
+    removeBound?: () => Promise<void>;
   },
 ) {
   const registration = await registeredSessionWorktree(input);
-  if (!registration) return;
+  if (!registration) {
+    if (input.binding)
+      fail(
+        'not-a-task-worktree',
+        'The bound checkout is missing. Review the previous removal receipt.',
+      );
+    return;
+  }
   const { target, gitDirectory, cwd } = registration;
   if (
     !input.force &&
@@ -1092,10 +1115,37 @@ export async function removeSessionWorktree(
       'dirty-worktree',
       'The worktree has uncommitted changes. Commit them or explicitly confirm removal.',
     );
+  if (input.binding) {
+    if (!input.removeBound)
+      fail(
+        'not-a-task-worktree',
+        'A bound checkout must be removed by its pinned provider.',
+      );
+    await input.removeBound();
+    if (input.binding.providerKind === 'external') return;
+  }
   await removeWorktree(
     { ...input, projectDirectory: cwd },
     target,
     gitDirectory,
+  );
+}
+
+export function includeBoundWorktreeFiles(
+  dataDirectory: string,
+  sessionId: string,
+  source: string,
+  target: string,
+  signal: AbortSignal,
+) {
+  if (!RUN_ID_PATTERN.test(sessionId))
+    fail('invalid-task', 'The session identifier is invalid.');
+  const records = worktreesRoot(dataDirectory, true, RECORDS_ROOT)!;
+  return includeWorktreeFiles(
+    source,
+    target,
+    join(records, `${sessionId}.include`),
+    signal,
   );
 }
 

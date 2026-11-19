@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { pullRequestReferenceSchema } from './pull-requests';
 import { reasoningEffortSchema } from './reasoning-effort';
+import { worktreeTaskFieldsSchema } from './worktree-providers';
 import { delegationActivityTitle } from './session-subsessions';
 import {
   providerSchema,
@@ -199,6 +200,7 @@ const sessionCreateInputSchema = z.strictObject({
         .max(200)
         .regex(SESSION_BRANCH_PATTERN, 'Use a valid Git branch name.')
         .optional(),
+      task: worktreeTaskFieldsSchema.optional(),
     })
     .optional(),
   groupId: sessionIdSchema.optional(),

@@ -31,6 +31,177 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
+test(
+  'D88 custom worktree commands verify Git identity and refuse a changed pinned provider',
+  { timeout: 60_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-d88-worktrees-')),
+    );
+    const project = join(root, 'project');
+    const destination = join(root, 'checkout root');
+    const data = join(root, 'data');
+    const script = join(root, 'worktree provider.cjs');
+    const trace = join(root, 'argv.jsonl');
+    let host;
+    t.after(async () => {
+      if (host?.child.exitCode === null) await host.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+    for (const path of [project, destination, data]) await mkdir(path);
+    const git = (...args) =>
+      promisify(execFile)('git', args, {
+        cwd: project,
+        env: {
+          ...process.env,
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: join(root, 'gitconfig'),
+        },
+      });
+    await git('init', '-q', '-b', 'main');
+    await git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'Base',
+    );
+    await writeFile(
+      script,
+      `
+    const { execFileSync } = require('node:child_process');
+    const fs = require('node:fs');
+    const [action, path, branch, base, title] = process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ action, path, branch, base, title }) + '\\n');
+    if (action === 'create') execFileSync('git', ['worktree', 'add', '-qb', branch, path, base]);
+    if (action === 'remove') execFileSync('git', ['worktree', 'remove', path]);
+    console.log(JSON.stringify(action === 'list' ? { version: 1, checkouts: [] } : {
+      version: 1, path, branch, base, ...(action === 'remove' ? { removed: true } : {})
+    }));
+  `,
+    );
+    const command = argv => ({
+      executable: process.execPath,
+      argv: [script, ...argv],
+      files: [script],
+    });
+    const definition = {
+      version: 1,
+      name: 'Fixture argv provider',
+      kind: 'external',
+      scope: { kind: 'repository', directory: project },
+      checkoutRoots: [destination],
+      branchPolicy: {
+        template: '<type>/<TICKET>-<slug>',
+        validation: '^fix/[A-Z0-9]+-[a-z0-9-]+$',
+      },
+      create: command([
+        'create',
+        join(destination, '<sessionId>'),
+        '<branch>',
+        '<base>',
+        '<title>',
+      ]),
+      remove: command(['remove', '<path>', '<branch>', '<base>', '<title>']),
+      list: command(['list']),
+    };
+    host = launch(data, join(root, 'fixture-pid'));
+    const inspected = await host.request('custom-worktree-providers', {
+      action: 'inspect',
+      definition,
+    });
+    assert.equal(
+      inspected.type,
+      'custom-worktree-providers',
+      JSON.stringify(inspected),
+    );
+    const confirmed = await host.request('custom-worktree-providers', {
+      action: 'approve',
+      actionId: randomUUID(),
+      definition,
+      fingerprint: inspected.reply.fingerprint,
+    });
+    assert.equal(confirmed.reply.action, 'approve', JSON.stringify(confirmed));
+    const input = {
+      requestId: randomUUID(),
+      title: 'Task title with spaces & literal arguments',
+      directory: project,
+      model: 'sonnet',
+      isolation: {
+        kind: 'worktree',
+        task: { type: 'fix', ticket: 'T42', slug: 'example' },
+      },
+    };
+    const created = await host.request('create-session', input);
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    assert.equal(created.session.id, input.requestId);
+    assert.equal(created.session.worktree.branch, 'fix/T42-example');
+    assert.equal(
+      created.session.worktree.binding.providerId,
+      confirmed.reply.provider.providerId,
+    );
+    const acts = async () =>
+      (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(
+      (await acts()).map(event => event.title),
+      [input.title],
+    );
+    const request = {
+      sessionId: created.session.id,
+      action: { kind: 'remove', force: false },
+    };
+    const initial = await readFile(script);
+    await writeFile(script, Buffer.concat([initial, Buffer.from('\n')]));
+    const refused = await host.request('finish-session-worktree', request);
+    assert.equal(refused.type, 'error', JSON.stringify(refused));
+    assert.match(refused.message, /changed or revoked/);
+    assert.equal((await acts()).length, 1);
+    await writeFile(script, initial);
+    const removed = await host.request('finish-session-worktree', request);
+    assert.equal(removed.type, 'session', JSON.stringify(removed));
+    assert.equal(removed.session.worktree.state, 'removed');
+    assert.deepEqual(
+      (await acts()).map(event => event.action),
+      ['create', 'remove'],
+    );
+    await git('show-ref', '--verify', 'refs/heads/fix/T42-example');
+    const linked = join(root, 'existing checkout');
+    await git('worktree', 'add', '-qb', 'existing', linked);
+    const attachments = await host.request('custom-worktree-providers', {
+      action: 'attachments',
+      directory: project,
+    });
+    assert.equal(
+      attachments.reply.action,
+      'attachments',
+      JSON.stringify(attachments),
+    );
+    const candidate = attachments.reply.rows.find(
+      row => row.branch === 'existing',
+    );
+    assert.ok(candidate);
+    const { dirty, ...attach } = candidate;
+    assert.equal(dirty, false);
+    const adopted = await host.request('create-session', {
+      ...input,
+      requestId: randomUUID(),
+      isolation: { kind: 'worktree', attach },
+    });
+    assert.equal(adopted.type, 'session', JSON.stringify(adopted));
+    assert.equal(adopted.session.worktree.binding.ownership, 'adopted');
+    assert.equal(adopted.session.worktree.binding.providerKind, 'builtin');
+    const finished = await host.request('finish-session-worktree', {
+      sessionId: adopted.session.id,
+      action: { kind: 'keep' },
+    });
+    assert.equal(finished.session.worktree.state, 'kept');
+    assert.equal((await stat(linked)).isDirectory(), true);
+  },
+);
+
 test('D88 repository identity verifies worktree registration and unambiguous remotes', async t => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-d88-identity-')),
@@ -3642,6 +3813,7 @@ test(
         'manager-import',
         'configuration',
         'repository-trust-rules',
+        'custom-worktree-providers',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -3717,7 +3889,11 @@ test(
       );
     assert.deepEqual((await branchOf('')).branch, { kind: 'none' });
     await writeFile(join(branchRoot, 'plain', 'file.txt'), 'x');
-    await symlink(join(branchRoot, 'named'), join(branchRoot, 'named-link'));
+    await symlink(
+      join(branchRoot, 'named'),
+      join(branchRoot, 'named-link'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
     assert.deepEqual((await branchOf(join(branchRoot, 'named-link'))).branch, {
       kind: 'branch',
       name: 'feature/ui1c',
@@ -9275,6 +9451,7 @@ test(
       'manager-import',
       'configuration',
       'repository-trust-rules',
+      'custom-worktree-providers',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -27451,7 +27628,15 @@ test('Claude Code native commands are listed from the CLI, passed through and re
   const promptLog = join(directory, 'prompts.jsonl');
   const mcpLog = join(directory, 'mcp.jsonl');
   const commandsLog = join(directory, 'commands.jsonl');
-  await mkdir(join(project, '.git'), { recursive: true });
+  await mkdir(project);
+  await promisify(execFile)('git', ['init', '-q', '-b', 'main'], {
+    cwd: project,
+    env: {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: join(directory, 'gitconfig'),
+    },
+  });
   await mkdir(join(project, '.claude', 'commands'), { recursive: true });
   await mkdir(join(project, '.claude', 'rules', 'nested'), { recursive: true });
   await mkdir(join(project, 'src'));
@@ -31256,6 +31441,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'manager-import',
     'configuration',
     'repository-trust-rules',
+    'custom-worktree-providers',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

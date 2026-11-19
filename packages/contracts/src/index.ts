@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  worktreeProviderInputSchema,
+  worktreeProviderReplySchema,
+  type WorktreeProviderInput,
+  type WorktreeProviderReply,
+} from './worktree-providers';
+import {
   repositoryTrustSettingsInputSchema,
   repositoryTrustSettingsSchema,
   type RepositoryTrustSettingsInput,
@@ -614,6 +620,8 @@ export * from './mcp-selection';
 export * from './computers';
 export * from './provider-usage';
 export * from './repository-trust';
+export * from './direct-command';
+export * from './worktree-providers';
 export * from './provider-profiles';
 export * from './costs';
 export * from './mobile';
@@ -1211,6 +1219,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('repository-trust-settings'),
     input: repositoryTrustSettingsInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('custom-worktree-providers'),
+    input: worktreeProviderInputSchema,
   }),
   z.strictObject({
     id: z.string().min(1).max(200),
@@ -1977,6 +1990,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     settings: repositoryTrustSettingsSchema,
   }),
   z.strictObject({
+    type: z.literal('custom-worktree-providers'),
+    id: z.uuid(),
+    reply: worktreeProviderReplySchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2422,6 +2440,10 @@ export type DesktopApi = {
     input: RepositoryTrustSettingsInput,
     hostId?: HostId,
   ) => Promise<RepositoryTrustSettings>;
+  customWorktreeProviders: (
+    input: WorktreeProviderInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeProviderReply>;
   listMcpServers: (
     input: ListMcpServersInput,
     hostId?: HostId,

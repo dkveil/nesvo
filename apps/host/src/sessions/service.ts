@@ -138,6 +138,7 @@ import { SessionError } from './session-error';
 import {
   FolderLocks,
   folderWaitMessage,
+  foldersOverlap,
   type FolderAccess,
   type FolderOperation,
   type FolderRequest,
@@ -164,6 +165,7 @@ import {
 import {
   confirmSessionWorktree,
   createSessionWorktree,
+  includeBoundWorktreeFiles,
   currentGitBranch,
   repositoryRoot,
   readHeadCommit,
@@ -175,6 +177,8 @@ import {
   worktreeSlug,
   WorkspaceIsolationError,
 } from '../workspace/isolation';
+import type { CustomWorktreeProviders } from '../workspace/custom-worktree-providers';
+import type { WorktreeTaskFields } from '@nesvo/contracts';
 import {
   executeWorktreeSetup,
   inspectWorktreeSetup,
@@ -434,6 +438,7 @@ export const isCoordinatorCandidate = (session: Session): boolean =>
   !session.scheduledJobId;
 
 export type SessionServiceOptions = {
+  customWorktrees?: CustomWorktreeProviders;
   control?: SessionControlBridge;
   autonomy?: ClaudeAutonomyStore;
   profiles?: ProviderProfiles;
@@ -1743,7 +1748,12 @@ export class SessionService {
     input: CreateSessionInput,
     signal: AbortSignal,
     parentId?: string,
-    workerBase?: { directory: string; branch: string; commit: string },
+    workerBase?: {
+      directory: string;
+      branch: string;
+      commit: string;
+      suggestedBranch?: string;
+    },
   ): Promise<Session> {
     const { requestId } = input;
     if (!requestId)
@@ -1768,7 +1778,12 @@ export class SessionService {
     input: CreateSessionInput,
     signal: AbortSignal,
     parentId?: string,
-    workerBase?: { directory: string; branch: string; commit: string },
+    workerBase?: {
+      directory: string;
+      branch: string;
+      commit: string;
+      suggestedBranch?: string;
+    },
   ): Promise<Session> {
     const existing = this.sessionForCreateRequest(input.requestId);
     if (existing) {
@@ -1805,14 +1820,79 @@ export class SessionService {
         workerBase?.directory ?? this.requestedDirectory(input),
         signal,
       );
+      if (input.isolation.attach) {
+        if (
+          parentId ||
+          input.isolation.branch ||
+          input.isolation.task ||
+          !this.options.customWorktrees
+        )
+          throw new SessionError(
+            'invalid-request',
+            'Attach a verified checkout from a standalone session.',
+          );
+        const attachment = input.isolation.attach;
+        const sessionId = input.requestId ?? randomUUID();
+        const claimed = this.store
+          .list()
+          .some(
+            session =>
+              session.worktree?.state !== 'removed' &&
+              foldersOverlap(attachment.checkout, session.directory),
+          );
+        if (claimed)
+          throw new SessionError(
+            'busy',
+            'Another session already uses this checkout.',
+          );
+        const release = this.claimFolders(
+          [canonicalDirectory(attachment.checkout)],
+          'worktree-setup',
+          sessionId,
+        );
+        try {
+          const { binding, projectDirectory } =
+            await this.options.customWorktrees.adopt(
+              attachment,
+              {
+                directory: project,
+                title: input.title,
+                sessionId,
+              },
+              signal,
+            );
+          const metadata: NonNullable<Session['worktree']> = {
+            state: 'active',
+            projectDirectory,
+            branch: binding.branch,
+            base: binding.base,
+            binding,
+          };
+          return this.create(input, {
+            isolatedDirectory: binding.checkout,
+            worktree: { id: sessionId, metadata },
+          });
+        } finally {
+          release();
+        }
+      }
       const isolated = await this.prepareSessionWorktree(
         project,
         input.title,
         signal,
         {
           branch: input.isolation.branch,
+          task: input.isolation.task,
+          sessionId: input.requestId,
+          useProvider: true,
+          providerRevision: input.isolation.providerRevision,
           ...(workerBase
-            ? { fork: true, workerTargetBranch: workerBase.branch }
+            ? {
+                fork: true,
+                baseCommit: workerBase.commit,
+                workerTargetBranch: workerBase.branch,
+                workerBranch: workerBase.suggestedBranch,
+              }
             : {}),
         },
       );
@@ -1863,9 +1943,68 @@ export class SessionService {
     options: Pick<
       Parameters<typeof createSessionWorktree>[0],
       'branch' | 'baseCommit' | 'fork' | 'carryChanges' | 'sourceWorktree'
-    > & { workerTargetBranch?: string },
+    > & {
+      workerTargetBranch?: string;
+      workerBranch?: string;
+      sessionId?: string;
+      task?: WorktreeTaskFields;
+      useProvider?: boolean;
+      providerRevision?: string;
+    },
   ) {
     const id = randomUUID();
+    const custom = options.useProvider
+      ? this.options.customWorktrees
+      : undefined;
+    const selection = await custom?.select(projectDirectory, signal);
+    if (
+      options.providerRevision &&
+      options.providerRevision !== selection?.provider?.fingerprint
+    )
+      throw new SessionError(
+        'invalid-request',
+        'The effective worktree provider changed. Review it before creating the session.',
+      );
+    const providerSessionId = options.sessionId ?? id;
+    const configured =
+      custom && selection?.provider
+        ? await custom.create(
+            {
+              directory: projectDirectory,
+              title,
+              sessionId: providerSessionId,
+              branch: options.branch,
+              workerBranch: options.workerBranch,
+              base: options.baseCommit,
+              fields: options.task,
+            },
+            selection,
+            signal,
+          )
+        : null;
+    if (configured?.kind === 'external') {
+      const { binding, branch, base } = configured;
+      const includes = await includeBoundWorktreeFiles(
+        this.directory,
+        providerSessionId,
+        projectDirectory,
+        binding.checkout,
+        signal,
+      );
+      const metadata: NonNullable<Session['worktree']> = {
+        projectDirectory: configured.projectDirectory,
+        branch,
+        base,
+        binding,
+        state: 'active',
+        workerTargetBranch: options.workerTargetBranch,
+        includes,
+      };
+      return {
+        directory: binding.checkout,
+        worktree: { id: providerSessionId, metadata },
+      };
+    }
     const {
       worktree,
       branch,
@@ -1874,6 +2013,7 @@ export class SessionService {
       includes,
     } = await createSessionWorktree({
       ...options,
+      branch: configured?.branch ?? options.workerBranch ?? options.branch,
       projectDirectory,
       dataDirectory: this.directory,
       slug: worktreeSlug(title, 'session'),
@@ -1946,13 +2086,49 @@ export class SessionService {
         dataDirectory: this.directory,
         worktree: session.directory,
         gitDirectory: sessionCheckout(this.directory, sessionId)?.gitDirectory,
+        binding: session.worktree.binding,
       },
+    };
+  }
+
+  private boundRemoval(
+    session: Session,
+    actionId: string | undefined,
+    signal: AbortSignal,
+  ) {
+    const binding = session.worktree?.binding;
+    if (!binding) return undefined;
+    return async () => {
+      if (!this.options.customWorktrees)
+        throw new SessionError(
+          'unavailable',
+          'The pinned worktree provider is unavailable.',
+        );
+      if (binding.providerKind === 'builtin') {
+        await this.options.customWorktrees.assertBuiltinBinding(
+          binding,
+          session.worktree!.projectDirectory,
+          signal,
+        );
+        return;
+      }
+      await this.options.customWorktrees.remove(
+        binding,
+        {
+          directory: session.worktree!.projectDirectory,
+          title: session.title,
+          sessionId: session.id,
+        },
+        actionId ?? randomUUID(),
+        signal,
+      );
     };
   }
 
   async workerWorktree(
     input: WorkerWorktreeInput,
     signal: AbortSignal,
+    actionId?: string,
   ): Promise<WorkerWorktreeResult> {
     const parent = this.snapshot(input.sessionId);
     const child = this.snapshot(input.workerId);
@@ -2040,6 +2216,7 @@ export class SessionService {
       await removeSessionWorktree({
         ...location,
         allowsIgnoredFiles: true,
+        removeBound: this.boundRemoval(child, actionId, signal),
         signal,
       });
       this.markWorktreeFinished(
@@ -2054,7 +2231,22 @@ export class SessionService {
   }
 
   async readWorktree(input: ReadSessionWorktreeInput, signal: AbortSignal) {
-    const { metadata, location } = this.sessionWorktree(input.sessionId);
+    const { session, metadata, location } = this.sessionWorktree(
+      input.sessionId,
+    );
+    if (
+      metadata.state === 'active' &&
+      metadata.binding?.providerKind === 'external'
+    )
+      await this.options.customWorktrees?.status(
+        metadata.binding,
+        {
+          directory: metadata.projectDirectory,
+          title: session.title,
+          sessionId: session.id,
+        },
+        signal,
+      );
     return metadata.state === 'removed'
       ? { dirty: false }
       : readSessionWorktreeStatus({ ...location, signal });
@@ -2191,7 +2383,7 @@ export class SessionService {
   async finishWorktree(
     input: FinishSessionWorktreeInput,
     signal: AbortSignal,
-    removal: { allowsIgnoredFiles?: boolean } = {},
+    removal: { allowsIgnoredFiles?: boolean; actionId?: string } = {},
   ): Promise<Session> {
     const { session, metadata, location } = this.sessionWorktree(
       input.sessionId,
@@ -2231,6 +2423,7 @@ export class SessionService {
         ...location,
         force: input.action.force,
         allowsIgnoredFiles: removal.allowsIgnoredFiles,
+        removeBound: this.boundRemoval(session, removal.actionId, signal),
         signal,
       });
       const current = this.sessionWorktree(session.id).session;
@@ -3823,7 +4016,9 @@ export class SessionService {
             proposal.title,
             signal,
             {
-              branch: this.workerBranch(base.branch, proposal.id),
+              workerBranch: this.workerBranch(base.branch, proposal.id),
+              sessionId: proposal.id,
+              useProvider: true,
               fork: true,
               baseCommit: base.commit,
               workerTargetBranch: base.branch,
@@ -3876,7 +4071,7 @@ export class SessionService {
       return structuredClone(parent);
     } finally {
       this.acceptingWorkers.delete(proposal.id);
-      if (isolated && !persisted)
+      if (isolated && !persisted && !isolated.worktree.metadata.binding)
         await removeSessionWorktree({
           dataDirectory: this.directory,
           projectDirectory: isolated.worktree.metadata.projectDirectory,

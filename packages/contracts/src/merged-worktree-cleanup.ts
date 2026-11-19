@@ -37,6 +37,7 @@ export type MergedCleanupBlocker = z.infer<typeof mergedCleanupBlockerSchema>;
 
 export const mergedCleanupBranchSchema = z.enum([
   'delete',
+  'keep',
   'missing',
   'other-branch',
   'not-merged',
@@ -92,6 +93,7 @@ export const mergedCleanupBlockerMessages: Record<
 export const mergedCleanupBranchMessages: Record<MergedCleanupBranch, string> =
   {
     delete: 'The local branch will be deleted.',
+    keep: 'The local branch will be kept.',
     missing: 'The local branch no longer exists.',
     'other-branch':
       'The pull request comes from another branch, so the local branch is kept.',

@@ -177,6 +177,7 @@ import {
   mcpProfileTargetSchema,
   trustRepositoryMcpSchema,
   repositoryTrustSettingsInputSchema,
+  worktreeProviderInputSchema,
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -1377,6 +1378,17 @@ void app.whenReady().then(async () => {
       route(hostId),
     );
   });
+  handle(
+    'nesvo:custom-worktree-providers',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'custom-worktree-providers',
+        worktreeProviderInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle(
     'nesvo:set-default-session-folder',
     (event, input: unknown, hostId: unknown) => {

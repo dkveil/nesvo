@@ -453,6 +453,19 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           payload TEXT NOT NULL,
           document TEXT NOT NULL CHECK (json_valid(document))
         );
+        CREATE TABLE IF NOT EXISTS custom_worktree_providers (
+          id TEXT PRIMARY KEY,
+          scope_key TEXT NOT NULL UNIQUE,
+          fingerprint TEXT NOT NULL,
+          definition TEXT NOT NULL CHECK (json_valid(definition)),
+          revoked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS custom_worktree_actions (
+          id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          receipt TEXT NOT NULL CHECK (json_valid(receipt)),
+          result TEXT CHECK (result IS NULL OR json_valid(result))
+        );
       `);
       database.exec(`
         CREATE TABLE IF NOT EXISTS manager_import_provenance (
