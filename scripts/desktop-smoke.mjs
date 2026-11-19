@@ -5194,6 +5194,13 @@ async function smokeDesktop() {
     name: 'Inspector',
     exact: true,
   });
+  const closeInspector = async () => {
+    if (!(await inspector.isVisible())) return;
+    await inspector
+      .getByRole('button', { name: 'Close inspector', exact: true })
+      .click();
+    await inspector.waitFor({ state: 'hidden' });
+  };
   const openPicker = async (from, when = 'success') => {
     const add = editor.locator(
       `[data-node-add="${from}"][data-node-add-when="${when}"]`,
@@ -5382,11 +5389,13 @@ async function smokeDesktop() {
   await inspector
     .getByLabel('Selected skill: Fixture Claude instructions')
     .waitFor();
+  await closeInspector();
   await addGraphStep('smoke-publish', 'smoke-approve');
   await editor
     .locator('[data-editor-edge="smoke-approve -> smoke-publish"]')
     .waitFor({ state: 'attached' });
   await editor.locator('[data-editor-inspector="node"]').waitFor();
+  await closeInspector();
   await fitGraph();
   await editor
     .locator('[data-editor-edge="smoke-check -> smoke-lint"]')
@@ -5405,6 +5414,7 @@ async function smokeDesktop() {
     .waitFor({ state: 'attached' });
   assert.equal(await edgeCount('smoke-check -> smoke-lint'), 0);
   await editorShot('insert-dark');
+  await closeInspector();
   await editor.locator('[data-editor-node="smoke-format"]').hover();
   await editor.locator('[data-node-delete="smoke-format"]').click();
   await editor
@@ -5492,6 +5502,7 @@ async function smokeDesktop() {
     true,
   );
   await editorShot('inspector-workflow-dark');
+  await closeInspector();
   await openPicker('__start');
   await restartedPage.locator('[data-picker-new="command"]').click();
   await editor.locator('[data-editor-inspector="draft"]').waitFor();
@@ -5543,6 +5554,7 @@ async function smokeDesktop() {
   )
     await delay(50);
   assert.match(await readFile(savedTimeoutStep, 'utf8'), /^timeout: 90m$/m);
+  await closeInspector();
   await editor.locator('[data-editor-start]').click();
   await editor.locator('[data-editor-inspector="start"]').waitFor();
   await inspector
