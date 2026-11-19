@@ -2,7 +2,7 @@ import { ExternalLink, RadioTower } from 'lucide-react';
 import type { RunningApp } from '@nesvo/contracts';
 import { Chip } from '@/shared/ui/chip';
 import { Disclosure } from '@/shared/ui/disclosure';
-import { IconButton } from '@/shared/ui/icon-button';
+import { Button } from '@/shared/ui/button';
 import { ListRow } from '@/shared/ui/list-row';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { Hint } from '@/shared/ui/tooltip';
@@ -16,6 +16,7 @@ type Props = {
 
 function PortRows({ apps, local, owner }: Props) {
   if (!apps.length) return null;
+  const showOwner = new Set(apps.map(app => app.sessionId)).size > 1;
   return (
     <ul>
       {apps.map(app => {
@@ -26,36 +27,39 @@ function PortRows({ apps, local, owner }: Props) {
               ? '127.0.0.1'
               : app.address;
         const label = /^127\.(?!0\.0\.1$)/.test(host) ? host : 'localhost';
+        const description = [
+          showOwner ? owner(app.sessionId) : '',
+          app.match === 'folder' ? 'Matched by folder' : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
         return (
           <li key={app.pid + ':' + app.port}>
             <ListRow
-              density="two-line"
+              density={description ? 'two-line' : 'compact'}
               title={
-                <span className="tabular-nums">
+                <span className="tabular-nums" title={label + ':' + app.port}>
                   {app.web ? 'Web app' : 'TCP'} · port {app.port}
                 </span>
               }
-              description={
-                <span title={label + ':' + app.port}>
-                  {owner(app.sessionId)}
-                  {app.match === 'folder' ? ' · Matched by folder' : ''}
-                </span>
-              }
+              description={description || undefined}
               actionsPlacement="visible"
               actions={
                 local &&
                 app.web === true && (
-                  <IconButton
-                    label={'Open ' + label + ':' + app.port}
-                    size={24}
+                  <Button
+                    variant="ghost"
+                    aria-label={'Open ' + label + ':' + app.port}
+                    size="xs"
                     onClick={() =>
                       void window.nesvo
                         .openExternal('http://' + host + ':' + app.port)
                         .catch(() => undefined)
                     }
                   >
+                    Open
                     <ExternalLink />
-                  </IconButton>
+                  </Button>
                 )
               }
             />
@@ -113,7 +117,9 @@ export function RunningAppsChip(props: Props) {
             className="font-mono tabular-nums"
           >
             <span>
-              {servers.length ? runningAppsSummary(servers) : 'Other ports'}
+              {servers.length
+                ? `Servers ${runningAppsSummary(servers)}`
+                : 'Other ports'}
             </span>
           </Chip>
         </PopoverTrigger>

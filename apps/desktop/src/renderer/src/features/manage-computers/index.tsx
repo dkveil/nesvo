@@ -122,10 +122,6 @@ export function ManageComputers({
   }, [adding, onEditingChange]);
   const [removing, setRemoving] = useState<Computer | null>(null);
   const [pending, setPending] = useState('');
-  const waitingForConnection = computers.some(
-    computer =>
-      computer.status === 'connecting' || computer.status === 'syncing',
-  );
   useEffect(() => {
     onBusyChange?.(!!pending);
   }, [pending, onBusyChange]);
@@ -251,7 +247,7 @@ export function ManageComputers({
             <section
               key={computer.id}
               aria-label={`Computer: ${computer.name}`}
-              className="space-y-2 px-3 py-3"
+              className="space-y-1.5 px-3 py-3"
             >
               <div className="flex items-start gap-2">
                 {computer.kind === 'local' ? (
@@ -263,7 +259,10 @@ export function ManageComputers({
                   <p className="truncate text-ui font-medium">
                     {computer.name}
                   </p>
-                  <StatusMessage tone={statusTones[computer.status]}>
+                  <StatusMessage
+                    className="text-xs"
+                    tone={statusTones[computer.status]}
+                  >
                     {statusLabels[computer.status]}
                     {computer.kind === 'local' ? ' · This computer' : ''}
                   </StatusMessage>
@@ -304,7 +303,13 @@ export function ManageComputers({
                         )
                       }
                     >
-                      {computer.kind === 'local' ? 'Retry' : 'Connect'}
+                      {computer.status === 'connecting'
+                        ? 'Connecting…'
+                        : computer.status === 'syncing'
+                          ? 'Syncing…'
+                          : computer.kind === 'local'
+                            ? 'Retry'
+                            : 'Connect'}
                     </Button>
                   ) : null}
                   {computer.kind === 'ssh' && (
@@ -326,20 +331,28 @@ export function ManageComputers({
                 </div>
               </div>
               {computer.status === 'connected' && (
-                <DefaultFolderField
-                  key={`${computer.id}:${defaultFolders.folders[computer.id] ?? ''}`}
-                  id={`computer-default-folder-${computer.id}`}
-                  computerName={computer.name}
-                  value={defaultFolders.folders[computer.id] ?? null}
-                  supported={defaultFolders.supported(computer.id)}
-                  onSave={directory =>
-                    defaultFolders.save(computer.id, directory)
-                  }
-                  chooseDirectory={
-                    computer.kind === 'local' ? api.chooseDirectory : undefined
-                  }
-                  className="ml-6"
-                />
+                <Disclosure
+                  title="Default session folder"
+                  className="ml-5"
+                  defaultOpen={onboarding}
+                >
+                  <DefaultFolderField
+                    key={`${computer.id}:${defaultFolders.folders[computer.id] ?? ''}`}
+                    id={`computer-default-folder-${computer.id}`}
+                    label="Folder"
+                    computerName={computer.name}
+                    value={defaultFolders.folders[computer.id] ?? null}
+                    supported={defaultFolders.supported(computer.id)}
+                    onSave={directory =>
+                      defaultFolders.save(computer.id, directory)
+                    }
+                    chooseDirectory={
+                      computer.kind === 'local'
+                        ? api.chooseDirectory
+                        : undefined
+                    }
+                  />
+                </Disclosure>
               )}
               {onboarding &&
                 computer.kind === 'local' &&
@@ -359,8 +372,13 @@ export function ManageComputers({
                 )}
               {(computer.error || computer.lastSyncedAt || computer.ssh) && (
                 <Disclosure
-                  title="Connection details"
                   triggerTone="default"
+                  title={
+                    computer.error
+                      ? 'Connection diagnostics'
+                      : 'Connection details'
+                  }
+                  triggerLabel={`${computer.error ? 'Connection diagnostics' : 'Connection details'} for ${computer.name}`}
                   className="ml-5"
                   contentClassName="space-y-2 pt-1 pb-0 leading-5"
                 >
@@ -386,9 +404,7 @@ export function ManageComputers({
         </SettingsSection>
         {!adding && (
           <p className="px-3 text-xs leading-5 text-muted-foreground">
-            {pending || waitingForConnection
-              ? 'Wait for the current computer action to finish.'
-              : 'Sessions, files and provider accounts stay on their computer.'}
+            Sessions, files and provider accounts stay on their computer.
           </p>
         )}
       </div>
