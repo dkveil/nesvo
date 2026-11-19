@@ -1434,7 +1434,12 @@ if (args.length === 1 && args[0] === '--version') {
       });
     }
     finish('Fixture finished a long active turn.');
-  } else if (command === 'fixture:hold' || command === 'fixture:hold-exit') {
+  } else if (
+    command === 'fixture:hold' ||
+    command === 'fixture:hold-exit' ||
+    (process.env.NESVO_FIXTURE_WAKE_HOLD === '1' &&
+      command === 'Child updates from Nesvo')
+  ) {
     const child = spawn(
       process.execPath,
       ['-e', 'setInterval(() => {}, 1000)'],

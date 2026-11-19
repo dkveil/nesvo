@@ -7002,6 +7002,20 @@ test(
     assert.equal(root.role, 'standalone');
     assert.equal(root.delegationEnabled, true);
     assert.equal(root.parentId, null);
+    const wake = await checked.request('read-coordinator-wake', {
+      sessionId: root.id,
+    });
+    assert.equal(
+      (
+        await checked.request('set-coordinator-wake', {
+          sessionId: root.id,
+          enabled: false,
+          expectedRevision: wake.state.revision,
+          actionId: randomUUID(),
+        })
+      ).state.effective,
+      false,
+    );
     const outside = join(directory, 'outside-delegation');
     await mkdir(outside);
     await symlink(
@@ -29837,9 +29851,14 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
     const steered = (await host.request('list-sessions')).sessions.find(
       item => item.id === coordinator.id,
     );
-    assert.deepEqual(steered.turnChildren, [
-      { runId: steered.runId, sessionIds: [childA] },
-    ]);
+    const joinedChild = steered.turnChildren.find(
+      turn => turn.runId === steered.runId,
+    );
+    assert.deepEqual(joinedChild.sessionIds, [childA]);
+    assert.equal(
+      joinedChild.childRuns[0].runId,
+      blocked[2].result.events[0].runId,
+    );
     assert.deepEqual(
       blocked[2].result.events.map(event => [event.sessionId, event.type]),
       [[childA, 'finished']],
@@ -30130,6 +30149,122 @@ test('D87 wakes an idle coordinator once with exact direct child runs and the re
   );
 });
 
+test('D87 debounces and respects the persisted coordinator and computer wake limits', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-d87-clock-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = fileURLToPath(
+    new URL('../src/session-control/', import.meta.url),
+  );
+  await promisify(execFile)('bun', [
+    'build',
+    join(source, 'wake.ts'),
+    join(source, 'store.ts'),
+    '--target=node',
+    '--format=esm',
+    '--entry-naming=[name].mjs',
+    `--outdir=${directory}`,
+  ]);
+  const [
+    { CoordinatorWake },
+    { SessionControlStore, installSessionControlTables },
+  ] = await Promise.all(
+    ['wake', 'store'].map(
+      name => import(pathToFileURL(join(directory, `${name}.mjs`)).href),
+    ),
+  );
+
+  for (const [name, count, computer, delayMs] of [
+    ['two direct child outcomes are coalesced', 0, false, 2_000],
+    ['one coordinator starts at most every 30 seconds', 1, false, 20_000],
+    ['one coordinator starts at most six times per hour', 6, false, 3_590_000],
+    ['one computer starts at most 24 times per hour', 24, true, 3_590_000],
+  ]) {
+    await t.test(name, subtest => {
+      const now = Date.parse('2026-11-19T12:00:00Z');
+      subtest.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+      const db = new DatabaseSync(':memory:');
+      installSessionControlTables(db);
+      const store = new SessionControlStore(db);
+      const parent = {
+        id: randomUUID(),
+        providerInitialized: true,
+        providerSessionId: randomUUID(),
+        mode: 'read-only',
+        status: 'completed',
+        queue: [],
+        stageRecords: [],
+        messages: [],
+      };
+      const children = Array.from({ length: 2 }, () => ({
+        id: randomUUID(),
+        parentId: parent.id,
+        runId: randomUUID(),
+      }));
+      const epoch = randomUUID();
+      for (let index = 0; index < count; index++) {
+        store.prepareBatch(
+          computer ? randomUUID() : parent.id,
+          {
+            batchId: randomUUID(),
+            messageId: randomUUID(),
+            runId: randomUUID(),
+          },
+          epoch,
+          now - 10_000,
+          [],
+          false,
+        );
+      }
+      const requests = [];
+      const wake = new CoordinatorWake({
+        store,
+        signal: new AbortController().signal,
+        sessions: {
+          snapshot: id =>
+            id === parent.id ? parent : children.find(child => child.id === id),
+          list: () => [parent, ...children],
+          isRunning: () => false,
+          send: (input, turn) => {
+            store.transaction(() => turn.wake.save({ runId: randomUUID() }));
+            requests.push(input);
+          },
+        },
+        eligible: () => true,
+        resultRef: () => null,
+        route: () => 'both',
+        gate: () => null,
+      });
+      try {
+        for (const child of children)
+          store.appendEvent(
+            {
+              parentId: parent.id,
+              sessionId: child.id,
+              runId: child.runId,
+              type: 'finished',
+              status: 'completed',
+              summary: 'Child completed',
+            },
+            { key: child.runId, enabled: true, now },
+          );
+        wake.signal();
+        subtest.mock.timers.tick(1);
+        assert.equal(wake.state(parent.id).reason, count ? 'rate' : null);
+        subtest.mock.timers.tick(delayMs - 2);
+        assert.equal(requests.length, 0);
+        subtest.mock.timers.tick(1);
+        assert.equal(requests.length, 1);
+        for (const child of children)
+          assert.ok(requests[0].text.includes(child.runId));
+        assert.equal(wake.state(parent.id).pending, 0);
+      } finally {
+        wake.close();
+        db.close();
+      }
+    });
+  }
+});
+
 test('D87 recovery keeps a committed child update pending until Continue', async t => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-d87-recovery-')),
@@ -30196,7 +30331,8 @@ test('D87 recovery keeps a committed child update pending until Continue', async
   ).state;
   assert.equal(pending.pending, 1);
   assert.equal(pending.continueRequired, false);
-  await host.stop();
+  host.child.kill('SIGKILL');
+  await host.exited;
   host = launch(directory, pidFile);
   const recovered = (
     await host.request('read-coordinator-wake', { sessionId: parent.id })
@@ -30242,6 +30378,108 @@ test('D87 recovery keeps a committed child update pending until Continue', async
   );
   assert.ok(wakes[0].body.includes(changed.session.runId));
   assert.ok(!wakes[0].body.includes(first.runId));
+
+  const [read] = await controlTurn(host, parent.id, [
+    { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 1 } },
+  ]);
+  const ids = read.result.events.map(event => event.seq);
+  assert.ok(ids.length >= 2);
+  const [unseen, seen, acknowledged] = await controlTurn(host, parent.id, [
+    { tool: 'events_ack', arguments: { events: ids } },
+    { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 1 } },
+    { tool: 'events_ack', arguments: { events: ids } },
+  ]);
+  assert.equal(unseen.result.code, 'invalid');
+  assert.deepEqual(
+    seen.result.events.map(event => event.seq),
+    ids,
+  );
+  assert.deepEqual(acknowledged.result.alreadyHandled, ids);
+  assert.equal(acknowledged.result.acknowledged.length, 0);
+});
+
+test('D87 preserves a prepared wake receipt across a crash and requires a new Continue run', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-prepared-')),
+  );
+  const pidFile = join(directory, 'fixture.pid');
+  let host = launch(directory, pidFile, { NESVO_FIXTURE_WAKE_HOLD: '1' });
+  t.after(async () => {
+    await host.stop().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Recovery coordinator',
+      provider: 'Claude Code',
+      model: 'default',
+      directory,
+    })
+  ).session;
+  const [child] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: { title: 'Child', prompt: 'fixture:say Child completed.' },
+    },
+  ]);
+  const settled = await finishedChild(host, child.result.sessionId);
+  const prepared = await host.event(
+    item =>
+      item.id === parent.id &&
+      item.status === 'running' &&
+      item.messages.some(message => message.origin === 'coordinator-wake') &&
+      agent(item).body === 'Fixture is waiting.',
+  );
+  const original = prepared.messages.find(
+    message => message.origin === 'coordinator-wake',
+  );
+  assert.equal(original.runId, prepared.runId);
+  host.child.kill('SIGKILL');
+  await host.exited;
+  host = launch(directory, pidFile);
+  const recovered = (
+    await host.request('read-coordinator-wake', { sessionId: parent.id })
+  ).state;
+  assert.equal(recovered.reason, 'restart');
+  const before = (await host.request('get-session', { sessionId: parent.id }))
+    .session;
+  assert.equal(before.runId, original.runId);
+  assert.equal(before.status, 'interrupted');
+  assert.equal(before.messages.at(-2).id, original.id);
+  const continuation = {
+    sessionId: parent.id,
+    batchId: recovered.batchId,
+    messageId: randomUUID(),
+  };
+  const response = await host.request(
+    'continue-coordinator-delivery',
+    continuation,
+  );
+  assert.equal(response.type, 'coordinator-delivery', JSON.stringify(response));
+  assert.notEqual(response.receipt.runId, original.runId);
+  assert.deepEqual(
+    (await host.request('continue-coordinator-delivery', continuation)).receipt,
+    response.receipt,
+  );
+  await host.event(
+    item =>
+      item.id === parent.id &&
+      item.runId === response.receipt.runId &&
+      item.status === 'completed',
+  );
+  const { session: finished } = await host.request('get-session', {
+    sessionId: parent.id,
+  });
+  assert.equal(finished.providerSessionId, prepared.providerSessionId);
+  const launches = finished.messages.filter(
+    message => message.origin === 'coordinator-wake',
+  );
+  assert.deepEqual(
+    launches.map(message => message.id),
+    [original.id, continuation.messageId],
+  );
+  assert.ok(launches[1].body.includes(settled.runId));
 });
 
 test('D87 steering stays bound to a child run and queues only after definite refusal', async t => {
@@ -30376,6 +30614,35 @@ test('D87 steering stays bound to a child run and queues only after definite ref
   assert.ok(
     !final.messages.some(message => message.id === unknown.receipt.messageId),
   );
+
+  const [claude] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: { title: 'Claude child', prompt: 'fixture:hold' },
+    },
+  ]);
+  const claudeId = claude.result.sessionId;
+  const running = await host.event(
+    item =>
+      item.id === claudeId &&
+      item.status === 'running' &&
+      agent(item).body.includes('waiting'),
+  );
+  const queuedClaude = await host.request('steer-child-session', {
+    sessionId: claudeId,
+    expectedRunId: running.runId,
+    actionId: randomUUID(),
+    text: 'Optional feedback.',
+  });
+  assert.equal(queuedClaude.receipt.status, 'queued');
+  assert.match(queuedClaude.receipt.reason, /separate turn/);
+  await host.request('stop-run', { sessionId: claudeId, runId: running.runId });
+  const stopped = await host.event(
+    item => item.id === claudeId && item.status === 'stopped',
+  );
+  assert.equal(stopped.runId, running.runId);
+  assert.equal(stopped.queue[0].id, queuedClaude.receipt.messageId);
+  assert.equal(stopped.queue[0].held, true);
 });
 
 test('D87 reads snapshot-bound child work and resolves an earlier saved result', async t => {
@@ -30403,16 +30670,28 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
     })
   ).session;
   const token = 'github_pat_0123456789abcdefghijklmnopqrstuvwxyz';
-  const [created] = await controlTurn(host, parent.id, [
+  const [created, sibling] = await controlTurn(host, parent.id, [
     {
       tool: 'session_create',
       arguments: { title: 'Child', prompt: 'fixture:say Secret ' + token },
     },
+    {
+      tool: 'session_create',
+      arguments: {
+        title: 'Other child',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        prompt: 'fixture:activities',
+      },
+    },
   ]);
   assert.equal(created.isError, false, JSON.stringify(created));
+  assert.equal(sibling.isError, false, JSON.stringify(sibling));
   const child = created.result.sessionId;
+  const otherChild = sibling.result.sessionId;
   const first = await finishedChild(host, child);
-  const [recent, saved] = await controlTurn(host, parent.id, [
+  const firstActivities = await finishedChild(host, otherChild);
+  const [recent, saved, activity] = await controlTurn(host, parent.id, [
     {
       tool: 'session_read',
       arguments: { sessionId: child, view: 'transcript', limit: 1 },
@@ -30420,6 +30699,10 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
     {
       tool: 'session_result',
       arguments: { sessionId: child, runId: first.runId },
+    },
+    {
+      tool: 'session_read',
+      arguments: { sessionId: otherChild, view: 'activity', limit: 1 },
     },
   ]);
   assert.equal(recent.result.items[0].id, agent(first).id);
@@ -30429,6 +30712,16 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
   assert.equal(saved.result.version, 1);
   assert.equal(saved.result.destination.runId, first.runId);
   assert.ok(!saved.result.summary.includes(token));
+  assert.equal(activity.result.omitted, true);
+  assert.equal(activity.result.items[0].runId, firstActivities.runId);
+  assert.ok(!('output' in activity.result.items[0]));
+  assert.ok(!('detail' in activity.result.items[0]));
+  const activityScope = {
+    sessionId: otherChild,
+    view: 'activity',
+    cursor: activity.result.nextCursor,
+    limit: 1,
+  };
 
   const newTurn = await host.request('send-message', {
     sessionId: child,
@@ -30452,7 +30745,7 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
     version: saved.result.version,
     resultId: saved.result.resultId,
   };
-  const [previous, wrongView, foreign, retained, wrongRun, newer] =
+  const [previous, wrongView, foreign, retained, wrongRun, newer, wrongChild] =
     await controlTurn(host, parent.id, [
       { tool: 'session_read', arguments: scope },
       { tool: 'session_read', arguments: { ...scope, view: 'activity' } },
@@ -30469,6 +30762,10 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
         tool: 'session_result',
         arguments: { sessionId: child, runId: newTurn.session.runId },
       },
+      {
+        tool: 'session_read',
+        arguments: { ...scope, sessionId: otherChild },
+      },
     ]);
   assert.equal(previous.result.snapshot, recent.result.snapshot);
   assert.deepEqual(
@@ -30482,6 +30779,32 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
   assert.ok(retained.result.revision >= saved.result.revision);
   assert.equal(wrongRun.result.code, 'invalid');
   assert.equal(newer.result.version, 2);
+  assert.equal(wrongChild.result.code, 'invalid');
+
+  for (let index = 0; index < 3; index++) {
+    const turn = await host.request('send-message', {
+      sessionId: otherChild,
+      messageId: randomUUID(),
+      text: 'fixture:activities',
+    });
+    await host.event(
+      item =>
+        item.id === otherChild &&
+        item.runId === turn.session.runId &&
+        item.status === 'completed',
+    );
+    if (index === 1) {
+      const [prior] = await controlTurn(host, parent.id, [
+        { tool: 'session_read', arguments: activityScope },
+      ]);
+      assert.equal(prior.result.snapshot, activity.result.snapshot);
+      assert.equal(prior.result.items[0].runId, firstActivities.runId);
+    }
+  }
+  const [expired] = await controlTurn(host, parent.id, [
+    { tool: 'session_read', arguments: activityScope },
+  ]);
+  assert.equal(expired.result.code, 'cursor-expired');
 });
 
 test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on resume', async () => {
