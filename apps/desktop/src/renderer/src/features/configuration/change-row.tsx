@@ -6,7 +6,7 @@ import {
   type ConfigurationChange,
   type ConfigurationValue,
 } from '@nesvo/contracts';
-import { errorDetail } from '@/entities/session';
+import { errorDetail, modeLabel } from '@/entities/session';
 import { DiffFileView } from '@/features/diff-viewer/diff-file-view';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
@@ -59,6 +59,7 @@ export function ConfigurationChangeRow({
   const [working, setWorking] = useState<Action | null>(null);
   const [confirm, setConfirm] = useState<{
     action: Action;
+    revision: number;
     reason: string;
     revoked: boolean;
   } | null>(null);
@@ -70,6 +71,7 @@ export function ConfigurationChangeRow({
   } | null>(null);
   const [editPending, setEditPending] = useState(false);
   const { target, source } = change;
+  const permission = change.sessionMode;
   const name =
     change.label ??
     ('scope' in target
@@ -158,6 +160,19 @@ export function ConfigurationChangeRow({
         revision: change.revision,
         actionId: crypto.randomUUID(),
         confirmAuthority: confirmed,
+        confirmSessionMode:
+          confirmed && action !== 'dismiss' && permission
+            ? {
+                sessionId: permission.sessionId,
+                modeRevision:
+                  action === 'undo' &&
+                  change.resultingVersion?.type === 'revision'
+                    ? change.resultingVersion.revision
+                    : permission.modeRevision,
+                from: action === 'undo' ? permission.to : permission.from,
+                to: action === 'undo' ? permission.from : permission.to,
+              }
+            : undefined,
       };
       const result =
         action === 'undo'
@@ -169,11 +184,12 @@ export function ConfigurationChangeRow({
       if (
         !result.ok &&
         result.code === 'review-required' &&
-        !confirmed &&
-        !reReview
+        !reReview &&
+        (!confirmed || result.message.includes('device grant'))
       ) {
         setConfirm({
           action,
+          revision: input.revision,
           reason: result.message,
           revoked:
             source.kind === 'device' && result.message.includes('device grant'),
@@ -209,12 +225,17 @@ export function ConfigurationChangeRow({
           .filter(Boolean)
           .join(' · ')}
         trailing={
-          source.kind === 'assistant' &&
-          onOpenSession && (
+          onOpenSession &&
+          (source.kind === 'assistant' || permission) && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onOpenSession(source.sessionId)}
+              onClick={() => {
+                const id =
+                  permission?.sessionId ??
+                  (source.kind === 'assistant' ? source.sessionId : null);
+                if (id) onOpenSession(id);
+              }}
             >
               Open session
             </Button>
@@ -269,13 +290,17 @@ export function ConfigurationChangeRow({
                     if (change.classification === 'authority')
                       setConfirm({
                         action: 'accept',
-                        reason: `Confirm the change in authority for ${name} on ${computer}.`,
+                        revision: change.revision,
+                        reason:
+                          target.area === 'budgets'
+                            ? `${name} on ${computer} will refuse new turns after the budget is reached.`
+                            : `Confirm the change in authority for ${name} on ${computer}.`,
                         revoked: false,
                       });
                     else void act('accept');
                   }}
                 >
-                  Accept
+                  {permission ? 'Review permission change' : 'Accept'}
                 </Button>
                 <Button
                   variant="ghost"
@@ -287,22 +312,32 @@ export function ConfigurationChangeRow({
                 </Button>
               </>
             )}
-            {change.status === 'applied' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!online || !!working}
-                onClick={() => void act('undo')}
-              >
-                Undo
-              </Button>
-            )}
+            {change.status === 'applied' &&
+              permission?.from !== 'full-access' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!online || !!working}
+                  onClick={() => {
+                    if (permission)
+                      setConfirm({
+                        action: 'undo',
+                        revision: change.revision,
+                        reason: '',
+                        revoked: false,
+                      });
+                    else void act('undo');
+                  }}
+                >
+                  Undo
+                </Button>
+              )}
           </div>
         </div>
       </Disclosure>
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       {!online && <StatusMessage>Offline snapshot</StatusMessage>}
-      {confirm && (
+      {confirm && confirm.revision === change.revision && (
         <ConfirmDialog
           open
           onOpenChange={open => {
@@ -311,12 +346,28 @@ export function ConfigurationChangeRow({
           title={
             confirm.revoked
               ? 'Review revoked device proposal'
-              : 'Confirm configuration change'
+              : permission
+                ? 'Confirm session permission change'
+                : 'Confirm configuration change'
           }
-          description={confirm.reason}
+          description={
+            permission
+              ? [
+                  confirm.revoked ? confirm.reason : '',
+                  `${name} on ${computer} will change from ${modeLabel(permission.provider, confirm.action === 'undo' ? permission.to : permission.from)} to ${modeLabel(permission.provider, confirm.action === 'undo' ? permission.from : permission.to)}.`,
+                  'The new mode applies to the next turn.',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+              : confirm.reason
+          }
           tone="default"
           confirmLabel={
-            confirm.action === 'undo' ? 'Confirm Undo' : 'Confirm and accept'
+            confirm.action === 'undo'
+              ? 'Confirm Undo'
+              : permission
+                ? 'Change permission mode'
+                : 'Confirm and accept'
           }
           onConfirm={() => act(confirm.action, true, confirm.revoked)}
         />

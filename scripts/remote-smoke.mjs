@@ -61,11 +61,12 @@ function bounded(operation, description, milliseconds = 20_000) {
 function command(
   binary,
   args,
-  { input, timeout = 30_000, allowFailure = false } = {},
+  { input, env = process.env, timeout = 30_000, allowFailure = false } = {},
 ) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
       cwd: repository,
+      env,
       windowsHide: true,
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -169,14 +170,14 @@ const waitApproval = (hostId, id, runId) =>
     value => value?.runId === runId && value.pendingApprovals.length === 1,
     'Operation approval missing',
   );
-const waitReview = (hostId, runId) =>
+const waitReview = (hostId, runId, status = 'pending') =>
   waitFor(
     () => hostSnapshot(hostId),
     value =>
       value.reviews.some(
-        review => review.runId === runId && review.status === 'pending',
+        review => review.runId === runId && review.status === status,
       ),
-    'Pending review missing',
+    `Review with status ${status} missing`,
   ).then(value => value.reviews.find(review => review.runId === runId));
 const send = (hostId, sessionId, text, messageId = randomUUID()) =>
   page.evaluate(
@@ -346,7 +347,7 @@ async function verifyServiceUnit() {
   );
   assert.equal(rejected.code, 1);
   assert.equal(rejected.stdout, '');
-  assert.match(rejected.stderr, /must not contain quotes or backslashes/);
+  assert.match(rejected.stderr, /The host could not start/);
   const generated = await docker([
     'exec',
     '--user',
@@ -579,6 +580,63 @@ try {
   assert.deepEqual(await remoteBridgeCommands(), [
     ['/usr/local/bin/node', target.entryPath, 'connect'],
   ]);
+  const { device, token } = await page.evaluate(
+    hostId =>
+      window.nesvo.configuration.enroll(
+        {
+          name: 'Remote configuration fixture',
+          grants: [
+            { area: 'settings', verbs: ['read'], global: true, projects: [] },
+          ],
+        },
+        hostId,
+      ),
+    remoteId,
+  );
+  assert.ok(device && token);
+  const readRemoteConfiguration = async credential => {
+    const reply = await command(
+      process.execPath,
+      [
+        join(repository, 'apps/host/dist/cli.js'),
+        'config',
+        'get',
+        'settings',
+        'inbox-routing',
+        '--json',
+      ],
+      {
+        allowFailure: true,
+        env: {
+          ...process.env,
+          NESVO_CONFIG_TOKEN: credential,
+          NESVO_CONFIG_SSH: JSON.stringify(target),
+          NESVO_CONFIG_CONFIG: '',
+          NESVO_CONFIG_COMPUTER: credential.slice(0, 36),
+        },
+      },
+    );
+    return JSON.parse(reply.stdout);
+  };
+  const route = await readRemoteConfiguration(token);
+  assert.equal(route.ok, true);
+  assert.equal(route.target.version.type, 'revision');
+  assert.equal(
+    (await readRemoteConfiguration(randomUUID() + token.slice(36))).code,
+    'unavailable',
+  );
+  await page.evaluate(
+    ({ hostId, deviceId }) =>
+      window.nesvo.configuration.revoke(deviceId, hostId),
+    { hostId: remoteId, deviceId: device.id },
+  );
+  assert.equal((await readRemoteConfiguration(token)).code, 'unauthorized');
+  console.log(
+    JSON.stringify({
+      configurationTransport:
+        'SSH read, instance mismatch and revocation verified',
+    }),
+  );
   const localUsage = await page.evaluate(() =>
     window.nesvo.providerUsage({ provider: 'Codex' }),
   );
@@ -703,6 +761,7 @@ try {
   const localReview = await waitReview(
     'local',
     (await session('local', local.id)).runId,
+    'done',
   );
   assert.equal(localReview.hostId, 'local');
   await connectRemote();

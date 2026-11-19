@@ -215,6 +215,10 @@ import { LessonsSettings } from '@/widgets/lessons-settings';
 import { LessonInbox } from '@/widgets/lesson-inbox';
 import { InboxRulesSettings } from '@/widgets/inbox-rules-settings';
 import { DevicesSettings } from '@/widgets/settings/devices-settings';
+import {
+  ConfigurationDevicesSettings,
+  ConfigurationHistorySettings,
+} from '@/widgets/settings/configuration-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import {
@@ -6026,7 +6030,7 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <ConfigurationDevicesSettings
-                  key={settingsHostId}
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                 />
                 <DevicesSettings
@@ -6039,7 +6043,7 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <ConfigurationHistorySettings
-                  key={settingsHostId}
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   openSession={id => {
                     setSettingsPage(null);
@@ -6164,7 +6168,3 @@ ${text}`
     </div>
   );
 }
-import {
-  ConfigurationDevicesSettings,
-  ConfigurationHistorySettings,
-} from '@/widgets/settings/configuration-settings';

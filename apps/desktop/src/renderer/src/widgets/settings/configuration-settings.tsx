@@ -50,6 +50,7 @@ const areas: Record<ConfigurationArea, string> = {
   'session-groups': 'Session groups',
   budgets: 'Budgets',
   automations: 'Automations',
+  authority: 'Permissions',
 };
 const isOnline = (computer?: Computer) =>
   computer?.status === 'connected' &&

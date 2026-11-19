@@ -31,6 +31,7 @@ export const configurationAreaSchema = z.enum([
   'settings',
   'defaults',
   'appearance',
+  'authority',
   ...configurationFileAreas,
   ...configurationRecordAreas,
 ]);
@@ -53,6 +54,11 @@ const fileScope = z.discriminatedUnion('kind', [
 
 export const configurationTargetSchema = z.discriminatedUnion('area', [
   z.strictObject({ area: configurationRecordAreaSchema, id: z.uuid() }),
+  z.strictObject({
+    area: z.literal('authority'),
+    subject: z.literal('session-mode'),
+    id: z.uuid(),
+  }),
   z.strictObject({
     area: z.literal('settings'),
     key: z.enum([
@@ -111,6 +117,7 @@ export const configurationProfileInputSchema = z.strictObject({
 export type ConfigurationProfile = z.infer<typeof configurationProfileSchema>;
 
 export const configurationValueSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('authority'), value: sessionModeSchema }),
   z.strictObject({
     kind: z.literal('session-groups'),
     value: sessionGroupSchema
@@ -178,7 +185,10 @@ export const configurationMutationSchema = z
                 : 'enabled';
     if (input.draft && input.draft.kind !== kind)
       issue('draft', 'The value does not match the target.');
-    if ('key' in target && input.operation !== 'update')
+    if (
+      ('key' in target || target.area === 'authority') &&
+      input.operation !== 'update'
+    )
       issue('operation', 'This setting supports updates.');
     if (
       input.baseVersion.type !== 'absent' &&
@@ -205,6 +215,12 @@ export const configurationStatusSchema = z.enum([
   'undone',
   'inspection-required',
 ]);
+const sessionModeConfirmationSchema = z.strictObject({
+  sessionId: z.uuid(),
+  modeRevision: z.number().int().positive(),
+  from: sessionModeSchema,
+  to: sessionModeSchema,
+});
 export const configurationDecisionSchema = z.strictObject({
   id: z.uuid(),
   revision: z.number().int().positive(),
@@ -212,6 +228,7 @@ export const configurationDecisionSchema = z.strictObject({
   decision: z.enum(['accept', 'dismiss', 'edit']),
   draft: configurationValueSchema.nullable().optional(),
   confirmAuthority: z.boolean().default(false),
+  confirmSessionMode: sessionModeConfirmationSchema.optional(),
   reviewRevocation: z.boolean().default(false),
 });
 export const configurationInspectDraftSchema = configurationDecisionSchema.pick(
@@ -222,6 +239,7 @@ export const configurationUndoSchema = z.strictObject({
   revision: z.number().int().positive(),
   actionId: z.uuid(),
   confirmAuthority: z.boolean().default(false),
+  confirmSessionMode: sessionModeConfirmationSchema.optional(),
 });
 
 export const configurationIssueSchema = z.strictObject({
@@ -261,6 +279,9 @@ export const configurationChangeSchema = z.strictObject({
   source: configurationSourceSchema,
   status: configurationStatusSchema,
   classification: z.enum(['direct', 'review', 'authority']),
+  sessionMode: sessionModeConfirmationSchema
+    .extend({ provider: providerSchema })
+    .optional(),
   diff: configurationDiffSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -337,6 +358,7 @@ export const configurationCapabilitiesSchema = z.strictObject({
     .max(configurationAreaSchema.options.length),
   directApply: z.array(configurationTargetSchema).max(10),
   nameOnlyGroupRename: z.boolean(),
+  authoritySubjects: z.array(z.literal('session-mode')).max(1).default([]),
 });
 const configurationListSchema = z.strictObject({
   targets: z

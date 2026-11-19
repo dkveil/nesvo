@@ -255,6 +255,11 @@ export class ConfigurationDevices {
                 hasGrant(device, 'apply', target.area, scopeFor(target)),
               ),
               nameOnlyGroupRename: hasGrant(device, 'apply', 'session-groups'),
+              authoritySubjects:
+                this.supported.includes('authority') &&
+                device.grants.some(grant => grant.area === 'authority')
+                  ? ['session-mode']
+                  : [],
             },
           };
         case 'list':

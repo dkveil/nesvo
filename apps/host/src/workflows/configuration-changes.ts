@@ -1,6 +1,7 @@
 import {
   configurationLimits,
   configurationMutationSchema,
+  workLaptopRestriction,
   type ConfigurationChange,
   type ConfigurationDecision,
   type ConfigurationError,
@@ -229,6 +230,28 @@ function readMutation(input: ConfigurationMutation): ConfigurationMutation {
 
 const now = () => new Date().toISOString();
 
+function modeConfirmation(
+  target: Extract<ConfigurationTarget, { area: 'authority' }>,
+  before: ConfigurationSnapshot,
+  after: ConfigurationSnapshot,
+) {
+  if (
+    before.version.type !== 'revision' ||
+    before.value?.kind !== 'authority' ||
+    after.value?.kind !== 'authority'
+  )
+    throw new ConfigurationRefusal(
+      'unavailable',
+      'The session permission preview is unavailable.',
+    );
+  return {
+    sessionId: target.id,
+    modeRevision: before.version.revision,
+    from: before.value.value,
+    to: after.value.value,
+  };
+}
+
 export class ConfigurationChanges {
   private tail: Promise<unknown> = Promise.resolve();
   private writers = new Map<ConfigurationTarget['area'], ConfigurationWriter>();
@@ -240,6 +263,7 @@ export class ConfigurationChanges {
       source: Extract<ConfigurationSource, { kind: 'device' }>,
       target: ConfigurationTarget,
     ) => boolean,
+    private readonly workLaptopMode = false,
   ) {}
 
   register(
@@ -326,7 +350,7 @@ export class ConfigurationChanges {
       const withheld = configurationText(text) !== normalized;
       const operations: ConfigurationMutation['operation'][] = withheld
         ? []
-        : 'key' in target
+        : 'key' in target || target.area === 'authority'
           ? ['update']
           : value === null
             ? ['create']
@@ -505,10 +529,13 @@ export class ConfigurationChanges {
             'review-required',
             'Review this proposal again after its device grant changed.',
           );
-        this.confirmAuthority(
-          record.change.classification,
-          input.confirmAuthority,
-        );
+        if (target.area === 'authority')
+          this.confirmMode(target, record.before, record.after, input);
+        else
+          this.confirmAuthority(
+            record.change.classification,
+            input.confirmAuthority,
+          );
       };
       const prepare = (slot: ConfigurationSlot<unknown>) => {
         const before = slot.read();
@@ -591,7 +618,9 @@ export class ConfigurationChanges {
           before,
           record.before,
         );
-        this.confirmAuthority(classification, input.confirmAuthority);
+        if (target.area === 'authority')
+          this.confirmMode(target, before, after, input);
+        else this.confirmAuthority(classification, input.confirmAuthority);
         const undone = this.transition(record, 'undone', 'owner');
         return {
           record: {
@@ -619,10 +648,28 @@ export class ConfigurationChanges {
   }
 
   private confirmAuthority(classification: Classification, confirmed: boolean) {
+    if (classification === 'authority' && this.workLaptopMode)
+      throw new ConfigurationRefusal('unsupported', workLaptopRestriction);
     if (classification === 'authority' && !confirmed)
       throw new ConfigurationRefusal(
         'review-required',
         'Confirm the change in authority in Nesvo.',
+      );
+  }
+
+  private confirmMode(
+    target: Extract<ConfigurationTarget, { area: 'authority' }>,
+    before: ConfigurationSnapshot,
+    after: ConfigurationSnapshot,
+    input: ConfigurationDecision | ConfigurationUndo,
+  ) {
+    if (
+      !input.confirmSessionMode ||
+      !same(input.confirmSessionMode, modeConfirmation(target, before, after))
+    )
+      throw new ConfigurationRefusal(
+        'review-required',
+        'Confirm the exact permission mode and session in Nesvo.',
       );
   }
 
@@ -692,6 +739,10 @@ export class ConfigurationChanges {
     verb: 'apply' | 'propose',
   ): StoredConfigurationChange {
     const at = now();
+    const mode =
+      mutation.target.area === 'authority'
+        ? modeConfirmation(mutation.target, before, after)
+        : undefined;
     return {
       mutation,
       before,
@@ -702,7 +753,11 @@ export class ConfigurationChanges {
         revision: 1,
         source,
         target: mutation.target,
-        label: resourceLabel(after.value ?? before.value),
+        label: before.label ?? resourceLabel(after.value ?? before.value),
+        sessionMode:
+          mode && before.provider
+            ? { ...mode, provider: before.provider }
+            : undefined,
         operation: mutation.operation,
         baseVersion: before.version,
         classification,

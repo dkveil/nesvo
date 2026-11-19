@@ -89,6 +89,10 @@ import {
 import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
 import { DesktopConfigurationProfile } from './desktop-configuration-profile';
 import {
+  authorityConfiguration,
+  supportsModeProposal,
+} from './configuration-authority';
+import {
   automationConfiguration,
   budgetConfiguration,
   groupConfiguration,
@@ -329,6 +333,7 @@ const inboxFailure = (error: unknown, message: string) => ({
 type HostTransport = {
   directory: string;
   desktopProfile?: boolean;
+  workLaptopMode?: boolean;
   incoming: AsyncIterable<unknown>;
   send: (response: HostMessage) => Promise<void>;
 };
@@ -352,6 +357,7 @@ const toHostMessage = (
 export const serveHost = ({
   directory,
   desktopProfile = false,
+  workLaptopMode = process.env.NESVO_WORK_LAPTOP_MODE === '1',
   incoming,
   send: deliver,
 }: HostTransport) =>
@@ -949,6 +955,7 @@ export const serveHost = ({
         change => emit({ type: 'configuration-changed', change }),
         (source, target) =>
           configurationDevices.canPropose(source.deviceId, target),
+        workLaptopMode,
       );
       const profile = desktopProfile
         ? new DesktopConfigurationProfile(database)
@@ -1016,6 +1023,11 @@ export const serveHost = ({
         automationConfiguration(scheduledJobs, scheduledJobStore),
       );
       const recordAreas = ['session-groups', 'budgets', 'automations'] as const;
+      const authorityAreas = workLaptopMode ? [] : (['authority'] as const);
+      configuration.register(
+        'authority',
+        authorityConfiguration(database, sessions, directory, workLaptopMode),
+      );
       const definitionAreas = [
         'workflows',
         'steps',
@@ -1075,6 +1087,7 @@ export const serveHost = ({
                 'appearance',
                 ...definitionAreas,
                 ...recordAreas,
+                ...authorityAreas,
               ]
             : [
                 'settings',
@@ -1082,6 +1095,7 @@ export const serveHost = ({
                 'defaults',
                 ...definitionAreas,
                 ...recordAreas,
+                ...authorityAreas,
               ],
           profile
             ? [
@@ -1090,6 +1104,15 @@ export const serveHost = ({
               ]
             : [],
           async (area, project, signal) => {
+            if (area === 'authority')
+              return sessions
+                .list()
+                .filter(session => supportsModeProposal(session, directory))
+                .map(({ id }) => ({
+                  area,
+                  subject: 'session-mode',
+                  id,
+                }));
             if (area === 'session-groups')
               return housekeeping.list().groups.map(({ id }) => ({ area, id }));
             if (area === 'budgets')

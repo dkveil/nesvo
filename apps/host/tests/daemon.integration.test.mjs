@@ -527,6 +527,29 @@ test(
       (await bridge.request('health')).health.instanceId,
       instanceId,
     );
+    const configurationDevice = await bridge.request('enroll-config-device', {
+      name: 'Bridge configuration fixture',
+      grants: [
+        { area: 'settings', verbs: ['read'], global: true, projects: [] },
+      ],
+    });
+    assert.equal(configurationDevice.type, 'config-enrollment');
+    const token = configurationDevice.enrollment.token;
+    const readRoute = () =>
+      bridge.request('configuration', {
+        token,
+        command: {
+          operation: 'get',
+          target: { area: 'settings', key: 'inbox-routing' },
+        },
+      });
+    const configurationRoute = await readRoute();
+    assert.equal(configurationRoute.type, 'configuration-result');
+    assert.equal(configurationRoute.result.target.version.type, 'revision');
+    await first.request('revoke-config-device', {
+      deviceId: configurationDevice.enrollment.device.id,
+    });
+    assert.equal((await readRoute()).result.code, 'unauthorized');
     bridge.child.stdin.end();
     assert.deepEqual(
       await bounded(bridge.exited, 'Bridge EOF did not detach'),

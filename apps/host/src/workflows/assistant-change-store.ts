@@ -9,6 +9,7 @@ import {
   type ConfigurationReceipt,
   type ConfigurationValue,
   type ConfigurationVersion,
+  type Provider,
   configurationLimits,
 } from '@nesvo/contracts';
 
@@ -19,6 +20,8 @@ export type ConfigurationSnapshot = {
   dependencies: string;
   document?: string;
   state?: string;
+  label?: string;
+  provider?: Provider;
 };
 
 type CommitAction = { apply: () => void; rollback?: () => void };
@@ -56,18 +59,26 @@ export type ConfigurationIntent = {
 };
 
 export function installConfigurationTables(database: DatabaseSync): void {
-  for (const table of ['cost_budgets', 'scheduled_jobs'] as const) {
-    const revisions = `${table}_configuration_revisions`;
+  for (const [table, revisions, when] of [
+    ['cost_budgets', 'cost_budgets_configuration_revisions', ''],
+    [
+      'scheduled_jobs',
+      'scheduled_jobs_configuration_revisions',
+      'WHEN NEW.revision <> OLD.revision',
+    ],
+    [
+      'sessions',
+      'session_mode_revisions',
+      "WHEN (CASE WHEN json_valid(NEW.document) THEN json_extract(NEW.document, '$.mode') END) IS NOT (CASE WHEN json_valid(OLD.document) THEN json_extract(OLD.document, '$.mode') END)",
+    ],
+  ] as const) {
     database.exec(`
       CREATE TABLE IF NOT EXISTS ${revisions} (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
       INSERT OR IGNORE INTO ${revisions} (id, revision)
       SELECT id, ${table === 'scheduled_jobs' ? 'revision' : '1'} FROM ${table};
     `);
     for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
-      const changed =
-        operation === 'UPDATE' && table === 'scheduled_jobs'
-          ? 'WHEN NEW.revision <> OLD.revision'
-          : '';
+      const changed = operation === 'UPDATE' ? when : '';
       database.exec(`
         CREATE TRIGGER IF NOT EXISTS ${revisions}_${operation.toLowerCase()}
         AFTER ${operation} ON ${table} ${changed}

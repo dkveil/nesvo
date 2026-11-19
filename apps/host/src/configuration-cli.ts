@@ -106,9 +106,11 @@ export async function runConfigurationCli(args: string[]) {
                 ? { kind: 'project', root: values.project }
                 : { kind: 'global' },
             }
-          : configurationRecordAreaSchema.safeParse(area).success
-            ? { area, id: name }
-            : { area, key: name },
+          : area === 'authority'
+            ? { area, subject: 'session-mode', id: name }
+            : configurationRecordAreaSchema.safeParse(area).success
+              ? { area, id: name }
+              : { area, key: name },
       );
       command =
         operation === 'get'

@@ -39,13 +39,17 @@ import {
 import { log, writeHostOutput } from './logging';
 import { requestTimeoutMs } from './request-timeouts';
 
-export function startHost(directory: string) {
+export function startHost(directory: string, workLaptopMode: boolean) {
   const child = utilityProcess.fork(
     join(import.meta.dirname, 'host-entry.js'),
     [],
     {
       serviceName: 'Nesvo Host',
-      env: { ...process.env, NESVO_DATA_DIR: directory },
+      env: {
+        ...process.env,
+        NESVO_DATA_DIR: directory,
+        NESVO_WORK_LAPTOP_MODE: workLaptopMode ? '1' : '0',
+      },
       stdio: 'pipe',
     },
   );

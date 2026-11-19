@@ -352,8 +352,9 @@ void app.whenReady().then(async () => {
   applyApplicationMenu();
   nativeTheme.themeSource = readColorScheme(app.getPath('userData'));
   const hostDirectory = join(app.getPath('userData'), 'host');
+  const policy = await workLaptopPolicy(app.getPath('userData'));
   const startLocalHost = () => {
-    const host = startHost(hostDirectory);
+    const host = startHost(hostDirectory, policy.enabled);
     if (smokeTest && process.env.NESVO_TEST_PID_FILE)
       host.child.once('spawn', () => {
         writeFileSync(
@@ -363,7 +364,6 @@ void app.whenReady().then(async () => {
       });
     return host;
   };
-  const policy = await workLaptopPolicy(app.getPath('userData'));
   const computers = new ComputerManager(
     app.getPath('userData'),
     startLocalHost,

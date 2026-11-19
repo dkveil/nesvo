@@ -891,6 +891,226 @@ test('configuration groups, budgets and paused automations retain durable state'
   }
 });
 
+test('configuration permission proposals require exact owner confirmation and honor managed policy', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-config-authority-')),
+  );
+  const directory = join(root, 'host');
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  const open = managed =>
+    launch(directory, join(root, 'pids.json'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_WORK_LAPTOP_MODE: managed ? '1' : '0',
+      NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+    });
+  let host = open(false);
+  const request = async (method, input) => {
+    const response = await host.request(method, input);
+    assert.equal(
+      response.type,
+      'configuration-result',
+      JSON.stringify(response),
+    );
+    return response.result;
+  };
+  try {
+    const { session } = await host.request('create-session', {
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'read-only',
+      title: 'Release review',
+      directory: workspace,
+    });
+    const modeTarget = {
+      area: 'authority',
+      subject: 'session-mode',
+      id: session.id,
+    };
+    const { health } = await host.request('health');
+    const { enrollment } = await host.request('enroll-config-device', {
+      name: 'Authority test device',
+      grants: [
+        {
+          area: 'authority',
+          verbs: ['read', 'propose', 'apply'],
+          global: true,
+          projects: [],
+        },
+        { area: 'settings', verbs: ['propose'], global: true, projects: [] },
+      ],
+    });
+    const { target } = await request('read-config-target', modeTarget);
+    const mutation = {
+      target: modeTarget,
+      operation: 'update',
+      baseVersion: target.version,
+      actionId: randomUUID(),
+      draft: { kind: 'authority', value: 'supervised' },
+    };
+    const mcp = spawn(process.execPath, ['apps/host/dist/cli.js', 'mcp'], {
+      env: {
+        ...process.env,
+        NESVO_CONFIG_TOKEN: enrollment.token,
+        NESVO_CONFIG_COMPUTER: health.instanceId,
+        NESVO_CONFIG_CONFIG: '',
+        NESVO_CONFIG_SSH: '',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const output = createInterface({ input: mcp.stdout });
+    const lines = output[Symbol.asyncIterator]();
+    const exited = new Promise(resolve => mcp.once('exit', resolve));
+    let next = 1;
+    const send = (method, params, id) =>
+      mcp.stdin.write(
+        JSON.stringify({ jsonrpc: '2.0', method, params, id }) + '\n',
+      );
+    const rpc = async (method, params) => {
+      const id = next++;
+      send(method, params, id);
+      const reply = JSON.parse((await bounded(lines.next(), method)).value);
+      assert.equal(reply.id, id);
+      return reply.result;
+    };
+    const tool = (name, args) => rpc('tools/call', { name, arguments: args });
+    let proposal;
+    try {
+      assert.ok(await rpc('initialize', { protocolVersion: '2025-11-25' }));
+      send('notifications/initialized');
+      const capabilities = (await tool('config_capabilities', {}))
+        .structuredContent.capabilities;
+      assert.deepEqual(capabilities.authoritySubjects, ['session-mode']);
+      assert.equal(
+        (await tool('config_apply', mutation)).structuredContent.code,
+        'review-required',
+      );
+      assert.equal(
+        (
+          await tool('config_propose', {
+            ...mutation,
+            target: { area: 'settings', key: 'session-mode' },
+          })
+        ).isError,
+        true,
+      );
+      proposal = (await tool('config_propose', mutation)).structuredContent;
+      assert.equal(proposal.change.classification, 'authority');
+    } finally {
+      output.close();
+      mcp.stdin.end();
+      await bounded(exited, 'Configuration MCP did not close');
+    }
+    const duplicate = await request('propose-config-change', {
+      ...mutation,
+      actionId: randomUUID(),
+    });
+    const confirm = change => {
+      const { provider: _provider, ...effect } = change.sessionMode;
+      return effect;
+    };
+    const decide = (record, fields) =>
+      request('decide-config-proposal', {
+        id: record.id,
+        revision: record.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+        ...fields,
+      });
+    assert.equal(
+      (await decide(proposal.change, { confirmAuthority: true })).code,
+      'review-required',
+    );
+    const confirmation = confirm(proposal.change);
+    assert.equal(
+      (
+        await decide(proposal.change, {
+          confirmSessionMode: { ...confirmation, sessionId: randomUUID() },
+        })
+      ).code,
+      'review-required',
+    );
+    const applied = await decide(proposal.change, {
+      confirmSessionMode: confirmation,
+    });
+    assert.equal(applied.receipt.status, 'applied');
+    assert.equal(
+      applied.receipt.resultingVersion.revision,
+      target.version.revision + 1,
+    );
+    const current = (
+      await host.request('get-session', { sessionId: session.id })
+    ).session;
+    assert.equal(current.mode, 'supervised');
+    assert.equal(current.messages.length, 0);
+    assert.equal(current.stageRecords.at(-1).kind, 'mode-change');
+    assert.equal(
+      (
+        await decide(duplicate.change, {
+          confirmSessionMode: confirm(duplicate.change),
+        })
+      ).receipt.status,
+      'conflicted',
+    );
+    const undo = await request('undo-config-change', {
+      id: applied.receipt.id,
+      revision: applied.receipt.revision,
+      actionId: randomUUID(),
+      confirmSessionMode: {
+        sessionId: session.id,
+        modeRevision: applied.receipt.resultingVersion.revision,
+        from: 'supervised',
+        to: 'read-only',
+      },
+    });
+    assert.equal(undo.receipt.status, 'undone');
+    const pending = await request('propose-config-change', {
+      ...mutation,
+      actionId: randomUUID(),
+      baseVersion: undo.receipt.resultingVersion,
+    });
+    await host.stop();
+    host = open(true);
+    assert.equal(
+      (
+        await decide(pending.change, {
+          confirmSessionMode: confirm(pending.change),
+        })
+      ).code,
+      'unsupported',
+    );
+    const caps = await request('configuration', {
+      token: enrollment.token,
+      command: { operation: 'capabilities' },
+    });
+    assert.deepEqual(caps.capabilities.authoritySubjects, []);
+    const group = await request('propose-config-change', {
+      target: { area: 'session-groups', id: randomUUID() },
+      actionId: randomUUID(),
+      operation: 'create',
+      baseVersion: { type: 'absent' },
+      draft: {
+        kind: 'session-groups',
+        value: {
+          name: 'Review group',
+          parentId: null,
+          position: 0,
+          defaults: { provider: 'Codex', mode: 'supervised' },
+        },
+      },
+    });
+    assert.equal(group.change.classification, 'authority');
+    assert.equal(
+      (await decide(group.change, { confirmAuthority: true })).code,
+      'unsupported',
+    );
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test(
   'external Inbox CLI and MCP share durable decisions and device limits',
   { timeout: 60000 },

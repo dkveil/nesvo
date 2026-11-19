@@ -4003,17 +4003,7 @@ export class SessionService {
     change: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
     actor?: StageActor,
   ): Session {
-    const session = this.acceptingSession(sessionId);
-    this.ensureSessionIdle(
-      session,
-      'This session is running. Change it after the turn finishes or send the change with the next message.',
-    );
-    if (change.mode === 'full-access')
-      throw new SessionError(
-        'invalid-request',
-        'Confirm Full access in the session composer.',
-      );
-    const selection = this.turnSelection(session, change);
+    const { session, selection } = this.validateSelection(sessionId, change);
     const from = session.mode;
     session.model = selection.model;
     session.effort = selection.effort;
@@ -4038,8 +4028,25 @@ export class SessionService {
         ? () => this.options.autonomy?.revoke(session)
         : undefined,
     );
-    this.announceStage(session, added);
+    this.store.committed(() => this.announceStage(session, added));
     return structuredClone(session);
+  }
+
+  validateSelection(
+    sessionId: string,
+    change: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
+  ): { session: Session; selection: TurnSelection } {
+    const session = this.acceptingSession(sessionId);
+    this.ensureSessionIdle(
+      session,
+      'This session is running. Change it after the turn finishes or send the change with the next message.',
+    );
+    if (change.mode === 'full-access')
+      throw new SessionError(
+        'invalid-request',
+        'Confirm Full access in the session composer.',
+      );
+    return { session, selection: this.turnSelection(session, change) };
   }
 
   requestParent(sessionId: string, request: SessionParentRequest): Session {
@@ -5671,9 +5678,11 @@ export class SessionService {
 
   private publish(session: Session, writeRelated?: () => void): void {
     this.store.saveMany([session], writeRelated);
-    const active = this.active.get(session.id);
-    if (active) this.clearStreamTimer(active);
-    this.emitSession(session);
+    this.store.committed(() => {
+      const active = this.active.get(session.id);
+      if (active) this.clearStreamTimer(active);
+      this.emitSession(session);
+    });
   }
 
   defaultDirectory(groupId?: string): string | null {

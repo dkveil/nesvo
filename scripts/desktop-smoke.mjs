@@ -19,6 +19,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { createInterface } from 'node:readline';
 import { chromium, _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
 import { smokeGateRuleFlow } from './gate-rule-flow-smoke.mjs';
@@ -141,6 +142,12 @@ async function configurationShot(app, page, name, ready) {
       size,
     );
     await ready?.();
+    await page.evaluate(
+      () =>
+        new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
     const image = await app.evaluate(async ({ BrowserWindow }) =>
       (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
         .toPNG()
@@ -239,12 +246,39 @@ async function smokeConfigurationInbox(app, page) {
 }
 
 async function smokeConfigurationProfile(app, page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Devices', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Enroll device', exact: true })
+    .click();
+  const grantsDialog = page.getByRole('dialog', {
+    name: 'Enroll configuration device',
+  });
+  await grantsDialog
+    .getByRole('textbox', { name: 'Device name' })
+    .fill('Release reviewer');
+  await grantsDialog
+    .getByRole('checkbox', { name: 'Appearance', exact: true })
+    .check();
+  await configurationShot(app, page, 'stage-2-device-grants');
+  await grantsDialog
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
   const enrollment = await page.evaluate(() =>
     window.nesvo.configuration.enroll(
       {
         name: 'Fixture profile device',
         grants: [
           { area: 'steps', verbs: ['propose'], global: true, projects: [] },
+          {
+            area: 'authority',
+            verbs: ['read', 'propose', 'apply'],
+            global: true,
+            projects: [],
+          },
           { area: 'lessons', verbs: ['propose'], global: true, projects: [] },
           {
             area: 'session-groups',
@@ -565,6 +599,96 @@ async function smokeConfigurationProfile(app, page) {
     }, jobId),
     true,
   );
+  const workspace = join(directory, 'permission-review');
+  await mkdir(workspace);
+  const session = await page.evaluate(
+    folder =>
+      window.nesvo.createSession({
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode: 'read-only',
+        title: 'Release review',
+        directory: folder,
+      }),
+    workspace,
+  );
+  const current = (await cli(['get', 'authority', session.id])).target;
+  const mcp = spawn(process.execPath, ['apps/host/dist/cli.js', 'mcp'], {
+    env: {
+      ...env,
+      NESVO_CONFIG_TOKEN: enrollment.token,
+      NESVO_CONFIG_SSH: '',
+      NESVO_CONFIG_CONFIG: '',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const exited = once(mcp, 'exit');
+  const output = createInterface({ input: mcp.stdout });
+  const lines = output[Symbol.asyncIterator]();
+  let next = 1;
+  const send = (method, params, id) =>
+    mcp.stdin.write(
+      JSON.stringify({ jsonrpc: '2.0', method, params, id }) + '\n',
+    );
+  const mcpRequest = async (method, params) => {
+    const id = next++;
+    send(method, params, id);
+    const response = JSON.parse((await lines.next()).value);
+    assert.equal(response.id, id);
+    return response.result;
+  };
+  const mutation = {
+    target: current.target,
+    baseVersion: current.version,
+    actionId: randomUUID(),
+    operation: 'update',
+    draft: { kind: 'authority', value: 'supervised' },
+  };
+  try {
+    assert.ok(
+      await mcpRequest('initialize', { protocolVersion: '2025-11-25' }),
+    );
+    send('notifications/initialized');
+    const call = name =>
+      mcpRequest('tools/call', { name, arguments: mutation });
+    assert.equal(
+      (await call('config_apply')).structuredContent.code,
+      'review-required',
+    );
+    assert.equal(
+      (await call('config_propose')).structuredContent.receipt.status,
+      'pending',
+    );
+  } finally {
+    output.close();
+    mcp.stdin.end();
+    await exited;
+  }
+  const permission = inbox.getByRole('article', {
+    name: 'Configuration change Release review',
+  });
+  await permission
+    .getByRole('button', { name: 'Review diff for Release review' })
+    .click();
+  await permission
+    .getByRole('button', { name: 'Review permission change' })
+    .click();
+  const permissionDialog = page.getByRole('alertdialog', {
+    name: 'Confirm session permission change',
+  });
+  await permissionDialog.getByText(/Read-only to Workspace edits/i).waitFor();
+  await configurationShot(app, page, 'stage-6-authority');
+  await permissionDialog
+    .getByRole('button', { name: 'Change permission mode' })
+    .click();
+  await permission.waitFor({ state: 'hidden' });
+  const updated = await page.evaluate(
+    id => window.nesvo.getSession({ sessionId: id }),
+    session.id,
+  );
+  assert.equal(updated.mode, 'supervised');
+  assert.equal(updated.messageCount, 0);
   await page.evaluate(
     id => window.nesvo.configuration.revoke(id, 'local'),
     enrollment.device.id,
