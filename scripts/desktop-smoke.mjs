@@ -2988,6 +2988,9 @@ try {
   await page.getByText('Plan needs your approval', { exact: true }).waitFor();
   if (inboxOutcomeScreenshots) {
     await mkdir(inboxOutcomeScreenshots, { recursive: true });
+    const originalSize = await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].getContentSize(),
+    );
     const captureInbox = async name => {
       await page.evaluate(
         () =>
@@ -3034,6 +3037,11 @@ try {
     await captureInbox('result-review.png');
     await doneRow.focus();
     await captureInbox('sidebar-done-unread.png');
+    await application.evaluate(
+      ({ BrowserWindow }, size) =>
+        BrowserWindow.getAllWindows()[0].setContentSize(...size),
+      originalSize,
+    );
   }
   await questionRow
     .getByRole('button', { name: 'Stable', exact: true })

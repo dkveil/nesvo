@@ -65,7 +65,7 @@ export function SessionIndicatorDot({
           align="start"
           variant="panel"
           data-session-lifecycle=""
-          className="space-y-0.5 select-none"
+          className="pointer-events-none space-y-0.5 select-none"
         >
           <p className="font-medium">{indicator.label}</p>
           {lifecycle.map(line => (
