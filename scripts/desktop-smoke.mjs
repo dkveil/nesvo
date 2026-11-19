@@ -5197,9 +5197,13 @@ async function smokeDesktop() {
           : null,
       };
     });
+  const edgeInspector = (from, to) =>
+    inspector.getByRole('group', {
+      name: `Connection ${from} to ${to}`,
+      exact: true,
+    });
   const edgeShown = (from, to) =>
-    inspector
-      .getByText(`${from} -> ${to}`, { exact: true })
+    edgeInspector(from, to)
       .waitFor({ timeout: 4000 })
       .then(
         () => true,
@@ -5228,7 +5232,7 @@ async function smokeDesktop() {
     }
     throw new Error('Graph editor controls stay outside the canvas.');
   };
-  const connectSteps = async (from, to) => {
+  const connectSteps = async (from, to, expectedRefusal) => {
     const sourceHandle = editor.getByLabel(`Connect from ${from}`, {
       exact: true,
     });
@@ -5237,11 +5241,14 @@ async function smokeDesktop() {
     });
     await revealGraphControls([sourceHandle, targetHandle]);
     await sourceHandle.dragTo(targetHandle, { force: true });
+    if (expectedRefusal) {
+      await restartedPage
+        .locator('[data-editor-notice]')
+        .filter({ hasText: expectedRefusal })
+        .waitFor();
+      return;
+    }
     if (await edgeShown(from, to)) return;
-    const notice = await restartedPage
-      .locator('[data-editor-notice]')
-      .allTextContents();
-    if (notice.length) return;
     console.log(
       JSON.stringify({
         graphEditorConnect: {
@@ -5259,7 +5266,8 @@ async function smokeDesktop() {
   await connectSteps('smoke-check', 'smoke-lint');
   await editor.locator('[data-editor-inspector="edge"]').waitFor();
   await connectSteps('smoke-check', 'smoke-report');
-  await inspector
+  const reportEdge = edgeInspector('smoke-check', 'smoke-report');
+  await reportEdge
     .getByRole('button', { name: 'On failure', exact: true })
     .click();
   await editor
@@ -5268,7 +5276,7 @@ async function smokeDesktop() {
     )
     .waitFor();
   assert.equal(
-    await inspector
+    await reportEdge
       .getByRole('button', { name: 'On failure', exact: true })
       .getAttribute('aria-pressed'),
     'true',
@@ -5322,11 +5330,9 @@ async function smokeDesktop() {
   await editor.locator('[data-editor-node="smoke-report"]').waitFor();
   assert.equal(await editor.locator('[data-editor-node]').count(), 3);
   await addGraphStep('smoke-approve');
-  await connectSteps('smoke-lint', 'smoke-approve');
-  const refusal = restartedPage.locator('[data-editor-notice]');
-  await refusal.waitFor();
-  assert.match(
-    await refusal.textContent(),
+  await connectSteps(
+    'smoke-lint',
+    'smoke-approve',
     /^Edge "smoke-lint -> smoke-approve" crosses phases; "smoke-lint" is pre-done and "smoke-approve" is pre-push$/,
   );
   assert.equal(await editor.locator('[data-editor-edge-label]').count(), 1);
