@@ -710,13 +710,13 @@ export function ReviewInbox({
   );
   const [assistant, setAssistant] = useState<AssistantSelection | null>(null);
   const changes = useConfigurationChanges(computers);
-  const shownChanges = changes.filter(
-    change =>
-      filter === 'all' ||
-      (filter === 'pending'
-        ? change.status === 'pending'
-        : change.status !== 'pending'),
-  );
+  const shownChanges = changes.filter(change => {
+    const needsReview =
+      change.status === 'pending' || change.status === 'conflicted';
+    return (
+      filter === 'all' || (filter === 'pending' ? needsReview : !needsReview)
+    );
+  });
   const activeComputer = computers.find(
     computer => computer.id === assistant?.hostId,
   );

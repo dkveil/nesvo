@@ -1045,14 +1045,10 @@ test('configuration permission proposals require exact owner confirmation and ho
     assert.equal(current.mode, 'supervised');
     assert.equal(current.messages.length, 0);
     assert.equal(current.stageRecords.at(-1).kind, 'mode-change');
-    assert.equal(
-      (
-        await decide(duplicate.change, {
-          confirmSessionMode: confirm(duplicate.change),
-        })
-      ).receipt.status,
-      'conflicted',
-    );
+    const conflicted = await decide(duplicate.change, {
+      confirmSessionMode: confirm(duplicate.change),
+    });
+    assert.equal(conflicted.receipt.status, 'conflicted');
     const undo = await request('undo-config-change', {
       id: applied.receipt.id,
       revision: applied.receipt.revision,
@@ -1065,17 +1061,35 @@ test('configuration permission proposals require exact owner confirmation and ho
       },
     });
     assert.equal(undo.receipt.status, 'undone');
-    const pending = await request('propose-config-change', {
-      ...mutation,
+    const edited = await request('decide-config-proposal', {
+      id: conflicted.receipt.id,
+      revision: conflicted.receipt.revision,
+      decision: 'edit',
       actionId: randomUUID(),
-      baseVersion: undo.receipt.resultingVersion,
+      draft: mutation.draft,
     });
+    assert.equal(edited.receipt.status, 'pending');
+    const history = await request('list-config-changes', { area: 'authority' });
+    const pending = history.page.changes.find(
+      change => change.id === edited.receipt.id,
+    );
+    assert.equal(
+      pending.sessionMode.modeRevision,
+      undo.receipt.resultingVersion.revision,
+    );
+    assert.equal(pending.sessionMode.from, 'read-only');
+    assert.equal(pending.sessionMode.to, 'supervised');
+    assert.equal(
+      (await decide(pending, { confirmSessionMode: confirm(duplicate.change) }))
+        .code,
+      'review-required',
+    );
     await host.stop();
     host = open(true);
     assert.equal(
       (
-        await decide(pending.change, {
-          confirmSessionMode: confirm(pending.change),
+        await decide(pending, {
+          confirmSessionMode: confirm(pending),
         })
       ).code,
       'unsupported',

@@ -72,6 +72,8 @@ export function ConfigurationChangeRow({
   const [editPending, setEditPending] = useState(false);
   const { target, source } = change;
   const permission = change.sessionMode;
+  const canReview =
+    change.status === 'pending' || change.status === 'conflicted';
   const name =
     change.label ??
     ('scope' in target
@@ -102,7 +104,21 @@ export function ConfigurationChangeRow({
         setError(current.message);
         return;
       }
-      if (current.kind !== 'draft' || !current.draft) return;
+      if (current.kind !== 'draft') return;
+      if (!current.draft) {
+        const refreshed = await window.nesvo.configuration.decide(
+          {
+            id: change.id,
+            revision: change.revision,
+            decision: 'edit',
+            actionId: crypto.randomUUID(),
+            draft: null,
+          },
+          change.hostId,
+        );
+        if (!refreshed.ok) setError(refreshed.message);
+        return;
+      }
       const markdown = current.draft.kind === 'markdown';
       setEditing({
         revision: change.revision,
@@ -267,50 +283,58 @@ export function ConfigurationChangeRow({
               Preview exceeded the display limit.
             </StatusMessage>
           )}
+          {change.status === 'conflicted' && (
+            <StatusMessage tone="warning">
+              The target changed after this preview. Review an updated diff.
+            </StatusMessage>
+          )}
           <div className="flex flex-wrap items-center gap-1.5">
-            {(change.status === 'pending' || change.status === 'conflicted') &&
-              change.operation !== 'delete' && (
+            {canReview &&
+              (change.operation !== 'delete' ||
+                change.status === 'conflicted') && (
                 <Button
                   variant="ghost"
                   size="sm"
                   disabled={!online || !!working}
                   onClick={() => void openEditor()}
                 >
-                  {change.status === 'conflicted'
-                    ? 'Prepare fresh draft'
-                    : 'Edit proposal'}
+                  {change.operation === 'delete'
+                    ? 'Refresh delete preview'
+                    : change.status === 'conflicted'
+                      ? 'Prepare fresh draft'
+                      : 'Edit proposal'}
                 </Button>
               )}
             {change.status === 'pending' && (
-              <>
-                <Button
-                  size="sm"
-                  disabled={!online || !!working || change.diff.truncated}
-                  onClick={() => {
-                    if (change.classification === 'authority')
-                      setConfirm({
-                        action: 'accept',
-                        revision: change.revision,
-                        reason:
-                          target.area === 'budgets'
-                            ? `${name} on ${computer} will refuse new turns after the budget is reached.`
-                            : `Confirm the change in authority for ${name} on ${computer}.`,
-                        revoked: false,
-                      });
-                    else void act('accept');
-                  }}
-                >
-                  {permission ? 'Review permission change' : 'Accept'}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={!online || !!working}
-                  onClick={() => void act('dismiss')}
-                >
-                  Dismiss
-                </Button>
-              </>
+              <Button
+                size="sm"
+                disabled={!online || !!working || change.diff.truncated}
+                onClick={() => {
+                  if (change.classification === 'authority')
+                    setConfirm({
+                      action: 'accept',
+                      revision: change.revision,
+                      reason:
+                        target.area === 'budgets'
+                          ? `${name} on ${computer} will refuse new turns after the budget is reached.`
+                          : `Confirm the change in authority for ${name} on ${computer}.`,
+                      revoked: false,
+                    });
+                  else void act('accept');
+                }}
+              >
+                {permission ? 'Review permission change' : 'Accept'}
+              </Button>
+            )}
+            {canReview && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!online || !!working}
+                onClick={() => void act('dismiss')}
+              >
+                Dismiss
+              </Button>
             )}
             {change.status === 'applied' &&
               permission?.from !== 'full-access' && (

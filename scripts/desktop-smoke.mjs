@@ -394,9 +394,40 @@ async function smokeConfigurationProfile(app, page) {
   const row = inbox.getByRole('article', {
     name: 'Configuration change cli-delivery',
   });
+  const manualRules = await page.evaluate(() =>
+    window.nesvo.saveInboxRule(
+      {
+        scope: 'global',
+        expectedHash: null,
+        text: '---\nname: cli-delivery\ntrigger: external\naction: route\nroute: both\n---\n',
+      },
+      'local',
+    ),
+  );
+  const manual = manualRules.rules.find(rule => rule.name === 'cli-delivery');
+  assert.ok(manual);
   await row
     .getByRole('button', { name: 'Review diff for cli-delivery' })
     .click();
+  await row.getByRole('button', { name: 'Accept', exact: true }).click();
+  await row.getByText('Needs a fresh proposal', { exact: true }).waitFor();
+  await row
+    .getByText('The target changed after this preview. Review an updated diff.')
+    .waitFor();
+  await page.evaluate(
+    expectedHash =>
+      window.nesvo.deleteInboxRule(
+        { scope: 'global', name: 'cli-delivery', expectedHash },
+        'local',
+      ),
+    manual.contentHash,
+  );
+  await row.getByRole('button', { name: 'Prepare fresh draft' }).click();
+  await page
+    .getByRole('dialog', { name: 'Edit proposal' })
+    .getByRole('button', { name: 'Review updated diff' })
+    .click();
+  await row.getByText('Needs review', { exact: true }).waitFor();
   await row.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await row.waitFor({ state: 'hidden' });
   const steps = [

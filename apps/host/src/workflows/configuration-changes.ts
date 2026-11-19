@@ -252,6 +252,28 @@ function modeConfirmation(
   };
 }
 
+function reviewFields(
+  target: ConfigurationTarget,
+  before: ConfigurationSnapshot,
+  after: ConfigurationSnapshot,
+  classification: Classification,
+) {
+  const mode =
+    target.area === 'authority'
+      ? modeConfirmation(target, before, after)
+      : undefined;
+  return {
+    label: before.label ?? resourceLabel(after.value ?? before.value),
+    sessionMode:
+      mode && before.provider
+        ? { ...mode, provider: before.provider }
+        : undefined,
+    baseVersion: before.version,
+    classification,
+    diff: preview(before, after),
+  };
+}
+
 export class ConfigurationChanges {
   private tail: Promise<unknown> = Promise.resolve();
   private writers = new Map<ConfigurationTarget['area'], ConfigurationWriter>();
@@ -461,9 +483,9 @@ export class ConfigurationChanges {
       const duplicate = this.retry(action);
       if (duplicate) return duplicate;
       const record =
-        input.decision === 'edit'
-          ? this.requireProposal(input)
-          : this.require(input.id, input.revision, 'pending');
+        input.decision === 'accept'
+          ? this.require(input.id, input.revision, 'pending')
+          : this.requireProposal(input);
       if (input.decision === 'edit') {
         const writer = this.writer(record.change.target);
         const revise = (slot: ConfigurationSlot<unknown>) => {
@@ -486,9 +508,7 @@ export class ConfigurationChanges {
             after,
             change: {
               ...change,
-              classification,
-              baseVersion: before.version,
-              diff: preview(before, after),
+              ...reviewFields(mutation.target, before, after, classification),
             },
           };
           return next;
@@ -739,10 +759,6 @@ export class ConfigurationChanges {
     verb: 'apply' | 'propose',
   ): StoredConfigurationChange {
     const at = now();
-    const mode =
-      mutation.target.area === 'authority'
-        ? modeConfirmation(mutation.target, before, after)
-        : undefined;
     return {
       mutation,
       before,
@@ -753,16 +769,9 @@ export class ConfigurationChanges {
         revision: 1,
         source,
         target: mutation.target,
-        label: before.label ?? resourceLabel(after.value ?? before.value),
-        sessionMode:
-          mode && before.provider
-            ? { ...mode, provider: before.provider }
-            : undefined,
+        ...reviewFields(mutation.target, before, after, classification),
         operation: mutation.operation,
-        baseVersion: before.version,
-        classification,
         status: verb === 'propose' ? 'pending' : 'applied',
-        diff: preview(before, after),
         createdAt: at,
         updatedAt: at,
         resultingVersion: verb === 'apply' ? after.version : null,

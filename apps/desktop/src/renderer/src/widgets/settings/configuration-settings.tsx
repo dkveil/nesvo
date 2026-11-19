@@ -114,6 +114,10 @@ export function ConfigurationHistorySettings({
           ? undefined
           : (status as ConfigurationChange['status']),
     };
+    let duringLoad: Map<string, ConfigurationChange> | null = new Map();
+    const matches = (change: ConfigurationChange) =>
+      (!input.area || change.target.area === input.area) &&
+      (!input.status || change.status === input.status);
     const load = () =>
       void window.nesvo.configuration
         .history(input, hostId)
@@ -122,25 +126,42 @@ export function ConfigurationHistorySettings({
           if (!result.ok) setError(result.message);
           else if (result.kind === 'history') {
             setError('');
+            const snapshot = new Map(
+              result.page.changes.map(change => [change.id, change]),
+            );
+            const updates: ConfigurationChange[] = [];
+            for (const change of duringLoad?.values() ?? []) {
+              if ((snapshot.get(change.id)?.revision ?? 0) >= change.revision)
+                continue;
+              snapshot.delete(change.id);
+              if (matches(change)) updates.push(change);
+            }
+            duringLoad = null;
             setPage({
               area,
               status,
-              records: result.page.changes.map(change => ({
-                ...change,
-                hostId,
-              })),
+              records: [...updates.reverse(), ...snapshot.values()].map(
+                change => ({
+                  ...change,
+                  hostId,
+                }),
+              ),
               next: result.page.next,
             });
           }
         })
         .catch(issue => {
           if (active) setError(errorDetail(issue));
+        })
+        .finally(() => {
+          duringLoad = null;
         });
-    load();
     const unsubscribe = window.nesvo.subscribe(event => {
       if (event.type !== 'configuration-changed' || event.hostId !== hostId)
         return;
       const change = event.change;
+      if ((duringLoad?.get(change.id)?.revision ?? 0) < change.revision)
+        duringLoad?.set(change.id, change);
       setPage(previous => {
         if (!previous || previous.area !== area || previous.status !== status)
           return previous;
@@ -149,14 +170,11 @@ export function ConfigurationHistorySettings({
         const records = previous.records.filter(
           record => record.id !== change.id,
         );
-        if (
-          (!input.area || change.target.area === input.area) &&
-          (!input.status || change.status === input.status)
-        )
-          records.unshift({ ...change, hostId });
+        if (matches(change)) records.unshift({ ...change, hostId });
         return { ...previous, records };
       });
     });
+    load();
     return () => {
       active = false;
       unsubscribe();
