@@ -138,7 +138,7 @@ import { SessionError } from './session-error';
 import {
   FolderLocks,
   folderWaitMessage,
-  foldersOverlap,
+  worktreeAttachmentClaimed,
   type FolderAccess,
   type FolderOperation,
   type FolderRequest,
@@ -1843,14 +1843,7 @@ export class SessionService {
           );
         const attachment = input.isolation.attach;
         const sessionId = input.requestId ?? randomUUID();
-        const claimed = this.store
-          .list()
-          .some(
-            session =>
-              session.worktree?.state !== 'removed' &&
-              foldersOverlap(attachment.checkout, session.directory),
-          );
-        if (claimed)
+        if (worktreeAttachmentClaimed(this.store.list(), attachment.checkout))
           throw new SessionError(
             'busy',
             'Another session already uses this checkout.',

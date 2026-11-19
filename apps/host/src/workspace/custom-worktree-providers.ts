@@ -11,6 +11,7 @@ import {
   type DirectCommand,
   type AttachWorktree,
   type RepositoryIdentity,
+  type Session,
   type SessionWorktreeBinding,
   type WorktreeProviderDefinition,
   type WorktreeProviderInput,
@@ -27,6 +28,7 @@ import {
   inspectRepositoryIdentity,
   matchesRepositoryPattern,
 } from '../repositories/identity';
+import { worktreeAttachmentClaimed } from '../sessions/folder-locks';
 import { SessionError } from '../sessions/session-error';
 import {
   readHeadCommit,
@@ -150,6 +152,10 @@ export class CustomWorktreeProviders {
   constructor(
     private readonly database: DatabaseSync,
     private readonly directory: string,
+    private readonly sessions: () => readonly Pick<
+      Session,
+      'directory' | 'worktree'
+    >[],
   ) {
     database
       .prepare(
@@ -1044,10 +1050,15 @@ export class CustomWorktreeProviders {
       { action: 'attachments' }
     >['rows'] = [];
     const builtin = this.builtin(identity);
+    const sessions = this.sessions();
     for (const entry of entries.slice(1, 41)) {
       if (entry.prunable || !entry.branch || !entry.head) continue;
       const checkout = await realpath(entry.worktree).catch(() => null);
-      if (!checkout || directoryKey(checkout) !== directoryKey(entry.worktree))
+      if (
+        !checkout ||
+        directoryKey(checkout) !== directoryKey(entry.worktree) ||
+        worktreeAttachmentClaimed(sessions, checkout)
+      )
         continue;
       const binding: SessionWorktreeBinding = {
         version: 1,

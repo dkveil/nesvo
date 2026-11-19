@@ -434,7 +434,11 @@ export const serveHost = ({
       const control: { current?: SessionControl } = {};
       const controlStore = new SessionControlStore(database);
       const mcpPolicy = new McpPolicy(database);
-      const customWorktrees = new CustomWorktreeProviders(database, directory);
+      const customWorktrees = new CustomWorktreeProviders(
+        database,
+        directory,
+        () => store.list(),
+      );
       const ingress: { current?: ExternalSessionIngress } = {};
       const readonlyGrants = new ReadonlyMcpGrants(
         database,

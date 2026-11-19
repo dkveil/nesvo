@@ -1,5 +1,5 @@
 import { basename, isAbsolute, relative, sep } from 'node:path';
-import type { SessionFolderWait } from '@nesvo/contracts';
+import type { Session, SessionFolderWait } from '@nesvo/contracts';
 
 export type FolderAccess = 'read' | 'write';
 
@@ -31,6 +31,16 @@ const contains = (parent: string, child: string) => {
 
 export const foldersOverlap = (left: string, right: string) =>
   contains(left, right) || contains(right, left);
+
+export const worktreeAttachmentClaimed = (
+  sessions: readonly Pick<Session, 'directory' | 'worktree'>[],
+  checkout: string,
+) =>
+  sessions.some(
+    session =>
+      session.worktree?.state !== 'removed' &&
+      foldersOverlap(checkout, session.directory),
+  );
 
 const conflicts = (request: FolderRequest, claim: FolderClaim) =>
   (request.access === 'write' || claim.access === 'write') &&

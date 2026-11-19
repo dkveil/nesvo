@@ -711,6 +711,14 @@ test(
     assert.equal(adopted.type, 'session', JSON.stringify(adopted));
     assert.equal(adopted.session.worktree.binding.ownership, 'adopted');
     assert.equal(adopted.session.worktree.binding.providerKind, 'builtin');
+    const remaining = await host.request('custom-worktree-providers', {
+      action: 'attachments',
+      directory: project,
+    });
+    assert.equal(
+      remaining.reply.rows.some(row => row.branch === 'existing'),
+      false,
+    );
     const finished = await host.request('finish-session-worktree', {
       sessionId: adopted.session.id,
       action: { kind: 'keep' },
