@@ -7,6 +7,7 @@ type Props = {
   details: ReactNode;
   children?: ReactNode;
   alignActions?: 'heading' | 'summary';
+  className?: string;
 };
 
 export function DecisionRow({
@@ -14,6 +15,7 @@ export function DecisionRow({
   details,
   children,
   alignActions = 'heading',
+  className,
 }: Props) {
   const centerOnSummary = alignActions === 'summary';
   return (
@@ -25,6 +27,7 @@ export function DecisionRow({
         centerOnSummary
           ? '[&_[data-inbox-actions]]:row-end-3 [&_[data-inbox-actions]]:self-center'
           : '[&_[data-inbox-actions]]:self-start',
+        className,
       )}
     >
       <div

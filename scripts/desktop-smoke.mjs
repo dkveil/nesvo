@@ -129,8 +129,8 @@ async function configurationShot(app, page, name, ready) {
     BrowserWindow.getAllWindows()[0].getContentSize(),
   );
   for (const size of [
-    [1280, 800],
     [1920, 1080],
+    [1280, 800],
   ]) {
     await app.evaluate(
       ({ BrowserWindow }, [width, height]) =>
@@ -148,6 +148,7 @@ async function configurationShot(app, page, name, ready) {
           requestAnimationFrame(() => requestAnimationFrame(resolve)),
         ),
     );
+    await delay(200);
     const image = await app.evaluate(async ({ BrowserWindow }) =>
       (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
         .toPNG()
@@ -163,9 +164,21 @@ async function configurationShot(app, page, name, ready) {
       BrowserWindow.getAllWindows()[0].setContentSize(width, height),
     original,
   );
+  await page.waitForFunction(
+    ([width, height]) => innerWidth === width && innerHeight === height,
+    original,
+  );
 }
 
 async function smokeConfigurationInbox(app, page) {
+  await page.waitForFunction(async () =>
+    (await window.nesvo.listComputers()).some(
+      computer =>
+        computer.id === 'local' &&
+        computer.status === 'connected' &&
+        computer.capabilities.includes('configuration'),
+    ),
+  );
   const closeSettings = page.getByRole('button', {
     name: 'Close settings',
     exact: true,
@@ -197,7 +210,7 @@ async function smokeConfigurationInbox(app, page) {
     { env: cliEnv, windowsHide: true },
   );
   const item = JSON.parse(post.stdout);
-  await page.getByRole('button', { name: /^Inbox/ }).click();
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   const source = page.getByRole('article', {
     name: 'External Inbox item: Release check',
   });
@@ -263,10 +276,13 @@ async function smokeConfigurationProfile(app, page) {
   await configurationShot(app, page, 'stage-2-device-grants');
   await grantsDialog
     .getByRole('button', { name: 'Cancel', exact: true })
-    .click();
-  await page
-    .getByRole('button', { name: 'Close settings', exact: true })
-    .click();
+    .press('Enter');
+  await grantsDialog.waitFor({ state: 'hidden' });
+  const closeSettings = page.getByRole('button', {
+    name: 'Close settings',
+    exact: true,
+  });
+  if (await closeSettings.isVisible()) await closeSettings.click();
   const enrollment = await page.evaluate(() =>
     window.nesvo.configuration.enroll(
       {
@@ -718,7 +734,7 @@ async function smokeDesktop() {
   if (process.env.NESVO_D85_SMOKE_ONLY === '1') {
     application = await launchApplication();
     const page = await application.firstWindow();
-    await page.getByRole('button', { name: /^Inbox/ }).waitFor();
+    await page.getByRole('button', { name: 'Inbox', exact: true }).waitFor();
     await page.waitForFunction(async () => {
       try {
         return !!(await window.nesvo.configuration.profile({ action: 'read' }))
@@ -1108,7 +1124,7 @@ async function smokeDesktop() {
     );
   };
   const openInbox = async () => {
-    await page.getByRole('button', { name: /^Inbox/ }).click();
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click();
     await page.getByRole('region', { name: 'Inbox', exact: true }).waitFor();
   };
   const skillsOpener = page.getByRole('button', {
@@ -4189,7 +4205,9 @@ async function smokeDesktop() {
     .focus();
   await restartedPage.keyboard.press('Escape');
   await restartedDiff.waitFor({ state: 'hidden' });
-  await restartedPage.getByRole('button', { name: /^Inbox/ }).click();
+  await restartedPage
+    .getByRole('button', { name: 'Inbox', exact: true })
+    .click();
   const restartedInbox = restartedPage.getByRole('region', {
     name: 'Inbox',
     exact: true,
@@ -5743,7 +5761,9 @@ async function smokeDesktop() {
     restartedPage
       .getByRole('article')
       .filter({ hasText: 'Automation · Smoke automation' });
-  await automationShell.getByRole('button', { name: /^Inbox/ }).click();
+  await automationShell
+    .getByRole('button', { name: 'Inbox', exact: true })
+    .click();
   await automationResult().waitFor({ state: 'hidden' });
   const [smokeAutomation] = await restartedPage.evaluate(() =>
     window.nesvo.scheduledJobs.list('local'),
@@ -6058,7 +6078,7 @@ async function smokeDesktop() {
   await writeFile(checkSource, 'changed');
   seedNextRunAt(new Date(Date.now() - 10000).toISOString(), changedJobId);
   const changePage = await relaunchApplication();
-  await changePage.getByRole('button', { name: /^Inbox/ }).click();
+  await changePage.getByRole('button', { name: 'Inbox', exact: true }).click();
   const startRequest = changePage.getByRole('article', {
     name: 'Automation start: Smoke change trigger',
   });

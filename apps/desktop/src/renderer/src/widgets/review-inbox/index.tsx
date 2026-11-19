@@ -284,8 +284,9 @@ function ActionItem({
   ...props
 }: ActionItemProps) {
   return (
-    <article {...props}>
+    <article {...props} className="@container/inbox-item">
       <DecisionRow
+        className="@max-[520px]/inbox-item:[&>div]:grid-cols-1! @max-[520px]/inbox-item:[&>div>*]:col-start-1! @max-[520px]/inbox-item:[&>div>*]:row-start-auto!"
         heading={
           <>
             {typeLabel && (
@@ -809,7 +810,7 @@ export function ReviewInbox({
           )}
         {shownChanges.map(change => (
           <ConfigurationChangeRow
-            key={change.id}
+            key={`${change.hostId}/${change.id}`}
             change={change}
             computer={location(change.hostId) || 'Local'}
             online={isOperationEnabled(change)}
