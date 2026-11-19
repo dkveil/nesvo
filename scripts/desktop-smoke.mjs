@@ -760,6 +760,35 @@ try {
     .getByRole('status')
     .filter({ hasText: 'Connected to local host' })
     .waitFor();
+  const settingsSearch = initialContext.getByLabel('Search settings');
+  const searchResults = initialContext.getByRole('region', {
+    name: 'Settings search results',
+  });
+  await settingsSearch.fill('quota');
+  await searchResults
+    .getByRole('button', { name: 'Account and limits', exact: true })
+    .waitFor();
+  assert.equal(
+    await initialContext
+      .getByRole('region', { name: 'General', exact: true })
+      .isVisible(),
+    false,
+  );
+  await settingsSearch.fill('no matching setting fixture');
+  await searchResults
+    .getByText('No matching settings', { exact: true })
+    .waitFor();
+  await settingsSearch.press('Escape');
+  await initialContext
+    .getByRole('region', { name: 'General', exact: true })
+    .waitFor();
+  const settingsNav = initialContext.getByRole('navigation', {
+    name: 'Settings sections',
+  });
+  await settingsNav.getByRole('button', { name: 'About', exact: true }).click();
+  await initialContext
+    .getByRole('region', { name: 'About', exact: true })
+    .waitFor();
   await initialContext
     .getByRole('button', { name: 'Session control', exact: true })
     .click();
@@ -1033,6 +1062,7 @@ try {
     'history-search',
     'session-groups',
     'costs',
+    'group-cost-budgets',
     'mcp-servers',
     'conversation-import',
     'scheduled-job-change-triggers',
