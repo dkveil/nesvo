@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode, type RefObject } from 'react';
-import { X } from 'lucide-react';
+import { ChevronRight, Search, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import {
   Dialog,
@@ -58,7 +58,12 @@ export function Settings({
   const visible = settingsPages.filter(entry =>
     matchesSettingsPage(entry, query),
   );
-  const groups = [...new Set(visible.map(entry => entry.group))];
+  const groups = [...new Set(settingsPages.map(entry => entry.group))];
+  const searching = query.trim().length > 0 && !busy;
+  const selectPage = (next: SettingsPage) => {
+    setQuery('');
+    onPageChange(next);
+  };
   const current = settingsPages.find(entry => entry.id === page)!;
   return (
     <Dialog
@@ -94,7 +99,7 @@ export function Settings({
             search.current?.focus();
           }
         }}
-        className="flex h-[min(50rem,calc(100dvh-2rem))] w-[min(66.5rem,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden bg-background p-0 sm:max-w-none"
+        className="flex h-[min(54rem,calc(100dvh-2rem))] w-[min(72rem,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden bg-background p-0 sm:max-w-none"
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription id="settings-description" className="sr-only">
@@ -107,42 +112,43 @@ export function Settings({
             placeholder="Search"
             shortcut="/"
             value={query}
+            disabled={busy}
             onChange={event => setQuery(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter' && visible[0] && !busy) {
                 event.preventDefault();
-                onPageChange(visible[0].id);
+                selectPage(visible[0].id);
               }
             }}
             containerClassName="mb-1.5"
           />
-          <NavList label="Settings sections">
+          <NavList
+            label="Settings sections"
+            className="min-h-0 flex-1 overflow-y-auto py-1 [scrollbar-gutter:stable]"
+          >
             {groups.map(group => (
-              <div key={group || 'main'} className="flex flex-col gap-0.5">
+              <div key={group || 'main'} className="flex shrink-0 flex-col">
                 {group && (
-                  <SectionLabel as="p" className="mt-2">
+                  <SectionLabel as="p" className="mt-1">
                     {group}
                   </SectionLabel>
                 )}
-                {visible
+                {settingsPages
                   .filter(entry => entry.group === group)
                   .map(entry => (
                     <NavItem
                       key={entry.id}
                       tone="flat"
                       icon={<entry.icon aria-hidden="true" />}
-                      selected={entry.id === page}
+                      selected={!searching && entry.id === page}
                       disabled={busy && entry.id !== page}
-                      onClick={() => onPageChange(entry.id)}
+                      onClick={() => selectPage(entry.id)}
                     >
                       {entry.label}
                     </NavItem>
                   ))}
               </div>
             ))}
-            {visible.length === 0 && (
-              <EmptyState size="sm" title="No matching settings" />
-            )}
           </NavList>
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
@@ -154,7 +160,7 @@ export function Settings({
                   /
                 </li>
                 <li aria-current="page" className="truncate font-medium">
-                  {current.label}
+                  {searching ? 'Search results' : current.label}
                 </li>
               </ol>
             </nav>
@@ -168,7 +174,11 @@ export function Settings({
               </IconButton>
             </DialogClose>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+          <div
+            hidden={searching}
+            key={page}
+            className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+          >
             <section
               aria-label={current.label}
               className={cn(
@@ -177,6 +187,41 @@ export function Settings({
               )}
             >
               {children(page, setBusy)}
+            </section>
+          </div>
+          <div
+            hidden={!searching}
+            className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+          >
+            <section
+              aria-label="Settings search results"
+              className="mx-auto w-full max-w-[44rem] px-6 py-7"
+            >
+              {visible.length ? (
+                <NavList
+                  label="Matching settings"
+                  className="divide-y rounded-none"
+                >
+                  {visible.map(entry => (
+                    <NavItem
+                      key={entry.id}
+                      size="md"
+                      icon={<entry.icon aria-hidden="true" />}
+                      trailing={<ChevronRight aria-hidden="true" />}
+                      onClick={() => selectPage(entry.id)}
+                    >
+                      {entry.label}
+                    </NavItem>
+                  ))}
+                </NavList>
+              ) : (
+                <EmptyState
+                  size="sm"
+                  icon={Search}
+                  title="No matching settings"
+                  description="Try a page name or another keyword."
+                />
+              )}
             </section>
           </div>
         </div>

@@ -157,7 +157,8 @@ export function DataPrivacySettings({
           description="Permanently removes local sessions, backups, attachments, logs and Nesvo settings, then closes the app."
         >
           <Button
-            variant="destructive"
+            variant="outline"
+            className="text-error-foreground"
             disabled={pending}
             onClick={() => setDialog('delete')}
           >

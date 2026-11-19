@@ -10,7 +10,7 @@ type CodeBlockProps = Omit<ComponentProps<'pre'>, 'children'> & {
   label?: string;
   copyable?: boolean;
   wrap?: boolean;
-  maxHeightClassName?: string;
+  maxHeightClassName?: string | null;
   variant?: 'panel' | 'flat';
 };
 
@@ -80,9 +80,9 @@ export function CodeBlock({
       )}
       <pre
         className={cn(
-          'overflow-auto px-3 py-2 font-mono text-xs leading-5 text-foreground',
+          'overflow-x-auto px-3 py-2 font-mono text-xs leading-5 text-foreground',
           wrap ? 'break-words whitespace-pre-wrap' : 'whitespace-pre',
-          maxHeightClassName,
+          maxHeightClassName ?? 'overflow-y-hidden pb-3',
           className,
         )}
         {...props}

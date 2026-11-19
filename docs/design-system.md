@@ -232,11 +232,11 @@ Hovering the dot or, after a short delay, the row, or focusing the row from the 
 
 **KeyValueList** — `shared/ui/key-value-list.tsx`. Two-column `dl` for details and metadata.
 
-**CodeBlock** — `shared/ui/code-block.tsx`. Monospace block with an optional file `label`, copy button and `wrap`. Use the `flat` variant for setup snippets in Settings.
+**CodeBlock** — `shared/ui/code-block.tsx`. Monospace block with an optional file `label`, copy button and `wrap`. Use the `flat` variant for setup snippets in Settings. Set `maxHeightClassName={null}` for snippets that should expand to their full height and scroll horizontally without wrapping.
 
 **Disclosure / NativeDisclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `icon`, `meta`, muted `description` lines under the title (a string clamps to two lines; a node renders its own lines) and collapsible content; controlled or uncontrolled. `triggerLabel` names the trigger when the visible title is not enough. `triggerTone="muted"` uses the helper text scale for secondary details. NativeDisclosure renders the same row with `<details>` and `<summary>`: use it when the content must stay in the document while collapsed (find in page, deep links that open a section) or when callers rely on the `open` attribute, such as activity rows and saved result versions. Use `variant="flat"` for a disclosure inside a popover that should retain the surface color on hover.
 
-**MiddleTruncatedText** — `shared/ui/middle-truncated-text.tsx`. Displays long paths with both ends visible and exposes the complete value on hover.
+**MiddleTruncatedText** — `shared/ui/middle-truncated-text.tsx`. Displays long paths with both ends visible and exposes the complete value on hover. Use its `path` variant to preserve the final path segment. Editable folder and file fields use `PathInput`, which shows the full value while focused.
 
 **AddTile** — `shared/ui/add-tile.tsx`. A dashed tile that starts something new in an empty space: a dashed icon square (`icon`, default Plus), a `text-ui` title and an optional `text-2xs` description. Size it from the caller (the graph editor's empty canvas gives it the step node size). Not for regular commands (use Button) or list rows.
 

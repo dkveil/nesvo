@@ -1,3 +1,4 @@
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { useState } from 'react';
 import type { Computer, TrackedRepository } from '@nesvo/contracts';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
@@ -68,17 +69,19 @@ export function TrackedRepositoriesSettings({
       <SettingsSection
         title="Tracked repositories"
         action={
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={pending}
-            aria-haspopup="dialog"
-            onClick={() => setAdding(true)}
-          >
-            <Plus />
-            Add repository
-          </Button>
+          repositories?.length ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={pending}
+              aria-haspopup="dialog"
+              onClick={() => setAdding(true)}
+            >
+              <Plus />
+              Add repository
+            </Button>
+          ) : undefined
         }
       >
         {loading ? (
@@ -90,14 +93,38 @@ export function TrackedRepositoriesSettings({
         ) : repositories.length === 0 ? (
           <SettingsRow
             title="No tracked repositories"
-            description="Track a repository by owner/name or link to list its pull requests next to your session folders."
+            description={
+              <span className="block space-y-2">
+                <span className="block">
+                  Track a repository by owner/name or link to list its pull
+                  requests next to your session folders.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  disabled={pending}
+                  aria-haspopup="dialog"
+                  onClick={() => setAdding(true)}
+                >
+                  <Plus />
+                  Add repository
+                </Button>
+              </span>
+            }
           />
         ) : (
           repositories.map((item, index) => (
             <SettingsRow
               key={item.id}
               title={item.repository}
-              description={item.directory ?? 'No local checkout'}
+              description={
+                item.directory ? (
+                  <MiddleTruncatedText path value={item.directory} />
+                ) : (
+                  'No local checkout'
+                )
+              }
             >
               <IconButton
                 label={`Move ${item.repository} up`}

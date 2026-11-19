@@ -26,7 +26,7 @@ type SessionControlSettingsProps = {
 
 const PROVIDERS: Provider[] = ['Claude Code', 'Codex'];
 const CHILD_MODES: { mode: SessionMode; label: string }[] = [
-  { mode: 'read-only', label: 'Plan and Read-only' },
+  { mode: 'read-only', label: 'Plan / Read-only' },
   { mode: 'accept-edits', label: 'Accept edits' },
   { mode: 'supervised', label: 'Workspace edits' },
   { mode: 'auto', label: 'Auto' },
@@ -224,7 +224,7 @@ export function SessionControlSettings({
           title="Child permission modes"
           description="The most a coordinating session can give a child. It can never turn on permission bypass."
         >
-          <div className="flex max-w-72 flex-wrap justify-end gap-3">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
             {CHILD_MODES.map(({ mode, label }) => (
               <Label key={mode} className="flex items-center gap-2">
                 <Checkbox

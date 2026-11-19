@@ -86,9 +86,7 @@ export function SharingSettings({ api }: Props) {
                 {settings?.defaultOrigin ?? 'https://nesvo.dev'} open in Nesvo.
               </p>
               {settings?.overriddenByEnvironment && (
-                <p>
-                  NESVO_SHARE_ORIGIN sets the site for this development run.
-                </p>
+                <p>The app was started with a fixed share site.</p>
               )}
               {message && (
                 <StatusMessage tone={message.tone}>
@@ -108,7 +106,7 @@ export function SharingSettings({ api }: Props) {
             <Input
               aria-label="Share site address"
               size="md"
-              className="w-56"
+              className="w-56 disabled:opacity-100"
               value={origin}
               maxLength={2048}
               disabled={!settings || settings.overriddenByEnvironment}

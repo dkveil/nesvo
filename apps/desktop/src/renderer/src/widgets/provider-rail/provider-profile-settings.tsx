@@ -1,3 +1,4 @@
+import { PathInput } from '@/shared/ui/path-input';
 import { useState } from 'react';
 import type {
   Computer,
@@ -218,7 +219,7 @@ export function ProviderProfileSettings({
               id="provider-account-directory"
               label="Configuration directory"
             >
-              <Input
+              <PathInput
                 id="provider-account-directory"
                 value={selected?.configDirectory ?? directory}
                 readOnly={!!selected}

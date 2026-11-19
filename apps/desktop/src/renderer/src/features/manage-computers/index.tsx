@@ -1,3 +1,5 @@
+import { PathInput } from '@/shared/ui/path-input';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   sshComputerInputSchema,
@@ -32,6 +34,7 @@ type Props = {
     | 'disconnectComputer'
     | 'removeComputer'
   >;
+  onEditingChange?: (editing: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
   chooseLocalDirectory?: () => Promise<string | null>;
 };
@@ -62,7 +65,20 @@ function connectionEntries({ lastSyncedAt, ssh }: Computer): KeyValueEntry[] {
     ['runtime', 'Runtime directory', ssh?.runtimeDirectory],
   ];
   return entries.flatMap(([key, label, value]) =>
-    value ? [{ key, label, value }] : [],
+    value
+      ? [
+          {
+            key,
+            label,
+            value:
+              key === 'synced' ? (
+                value
+              ) : (
+                <MiddleTruncatedText path value={value} />
+              ),
+          },
+        ]
+      : [],
   );
 }
 
@@ -80,6 +96,7 @@ export function ManageComputers({
   defaultFolders,
   api,
   onBusyChange,
+  onEditingChange,
   chooseLocalDirectory,
 }: Props) {
   const [error, setError] = useState('');
@@ -91,6 +108,9 @@ export function ManageComputers({
       .catch(failure => setError(errorDetail(failure)));
   }, [workLaptopPolicy]);
   const [adding, setAdding] = useState(false);
+  useEffect(() => {
+    onEditingChange?.(adding);
+  }, [adding, onEditingChange]);
   const [removing, setRemoving] = useState<Computer | null>(null);
   const [pending, setPending] = useState('');
   const waitingForConnection = computers.some(
@@ -167,24 +187,36 @@ export function ManageComputers({
     label: string,
     placeholder = '',
     required = false,
-  ) => (
-    <Field id={`computer-${name}`} label={label}>
-      <Input
-        size="md"
-        id={`computer-${name}`}
-        value={fields[name]}
-        onChange={event =>
-          setFields(previous => ({ ...previous, [name]: event.target.value }))
-        }
-        placeholder={placeholder}
-        required={required}
-        disabled={!!pending}
-        maxLength={name === 'name' ? 80 : name === 'port' ? 5 : 4096}
-        type={name === 'port' ? 'number' : 'text'}
-        {...(name === 'port' ? { min: 1, max: 65535 } : {})}
-      />
-    </Field>
-  );
+  ) => {
+    const Control = [
+      'entryPath',
+      'runtimeDirectory',
+      'defaultFolder',
+      'nodePath',
+      'identityFile',
+      'knownHostsFile',
+    ].includes(name)
+      ? PathInput
+      : Input;
+    return (
+      <Field id={`computer-${name}`} label={label}>
+        <Control
+          size="md"
+          id={`computer-${name}`}
+          value={fields[name]}
+          onChange={event =>
+            setFields(previous => ({ ...previous, [name]: event.target.value }))
+          }
+          placeholder={placeholder}
+          required={required}
+          disabled={!!pending}
+          maxLength={name === 'name' ? 80 : name === 'port' ? 5 : 4096}
+          type={name === 'port' ? 'number' : 'text'}
+          {...(name === 'port' ? { min: 1, max: 65535 } : {})}
+        />
+      </Field>
+    );
+  };
   return (
     <div className="space-y-8">
       <div className="space-y-2" hidden={!!chooseLocalDirectory && adding}>
@@ -303,7 +335,7 @@ export function ManageComputers({
               {(computer.error || computer.lastSyncedAt || computer.ssh) && (
                 <Disclosure
                   title="Connection details"
-                  triggerTone={chooseLocalDirectory ? 'muted' : 'default'}
+                  triggerTone="default"
                   className="ml-5"
                   contentClassName="space-y-2 pt-1 pb-0 leading-5"
                 >

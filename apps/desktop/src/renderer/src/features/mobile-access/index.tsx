@@ -189,41 +189,43 @@ export function MobileAccess({ api }: Props) {
               </div>
             )}
           </SettingsSection>
-          <SettingsSection title="Paired devices">
-            {status.devices.length === 0 ? (
-              <SettingsRow
-                title="No paired devices yet"
-                description="Devices you pair appear here and can be revoked at any time."
-              />
-            ) : (
-              status.devices.map(device => (
+          {(status.enabled || status.devices.length > 0) && (
+            <SettingsSection title="Paired devices">
+              {status.devices.length === 0 ? (
                 <SettingsRow
-                  key={device.id}
-                  title={
-                    <span className="flex items-center gap-2">
-                      <Smartphone className="size-3.5 text-muted-foreground" />
-                      <span className="truncate">{device.name}</span>
-                    </span>
-                  }
-                  description={
-                    device.lastSeenAt
-                      ? `Last seen ${new Date(device.lastSeenAt).toLocaleString()}`
-                      : 'Paired, waiting for connection'
-                  }
-                >
-                  <Button
-                    variant="ghost"
-                    disabled={!!pending}
-                    aria-label={`Revoke ${device.name}`}
-                    aria-haspopup="dialog"
-                    onClick={() => setRevoking(device)}
+                  title="No paired devices yet"
+                  description="Devices you pair appear here and can be revoked at any time."
+                />
+              ) : (
+                status.devices.map(device => (
+                  <SettingsRow
+                    key={device.id}
+                    title={
+                      <span className="flex items-center gap-2">
+                        <Smartphone className="size-3.5 text-muted-foreground" />
+                        <span className="truncate">{device.name}</span>
+                      </span>
+                    }
+                    description={
+                      device.lastSeenAt
+                        ? `Last seen ${new Date(device.lastSeenAt).toLocaleString()}`
+                        : 'Paired, waiting for connection'
+                    }
                   >
-                    Revoke
-                  </Button>
-                </SettingsRow>
-              ))
-            )}
-          </SettingsSection>
+                    <Button
+                      variant="ghost"
+                      disabled={!!pending}
+                      aria-label={`Revoke ${device.name}`}
+                      aria-haspopup="dialog"
+                      onClick={() => setRevoking(device)}
+                    >
+                      Revoke
+                    </Button>
+                  </SettingsRow>
+                ))
+              )}
+            </SettingsSection>
+          )}
         </>
       )}
       <ConfirmDialog

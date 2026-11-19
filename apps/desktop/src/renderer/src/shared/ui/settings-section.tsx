@@ -17,7 +17,7 @@ export function SettingsSection({
 }: SectionProps) {
   return (
     <section aria-label={title} className="space-y-1.5">
-      <SectionLabel as="h2" action={action} className="px-3">
+      <SectionLabel as="h2" emphasis action={action} className="px-3">
         {title}
       </SectionLabel>
       <div
@@ -55,7 +55,7 @@ export function SettingsRow({
           {title}
         </div>
         {description && (
-          <div className="text-2xs leading-4 text-subtle-foreground [overflow-wrap:anywhere]">
+          <div className="text-xs leading-4 text-subtle-foreground [overflow-wrap:anywhere]">
             {description}
           </div>
         )}

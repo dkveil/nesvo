@@ -1,3 +1,4 @@
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { useEffect, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import {
@@ -45,7 +46,7 @@ function platformLabel(about: AboutInfo) {
 
 function diagnosticsSummary(about: AboutInfo, computers: Computer[]) {
   return [
-    `Nesvo ${about.version}${about.packaged ? '' : ' (development)'}`,
+    `Nesvo ${about.version}${about.packaged ? '' : ' (unpackaged)'}`,
     `Electron ${about.electron} · Node ${about.node} · Chrome ${about.chrome}`,
     `Platform ${platformLabel(about)}`,
     `Host contract revision ${HOST_CONTRACT_REVISION}`,
@@ -107,7 +108,7 @@ export function AboutSettings({ api, computers, onOpenGettingStarted }: Props) {
                 {
                   key: 'version',
                   label: 'Nesvo',
-                  value: `${about.version}${about.packaged ? '' : ' · development build'}`,
+                  value: `${about.version}${about.packaged ? '' : ' · unpackaged'}`,
                 },
                 { key: 'electron', label: 'Electron', value: about.electron },
                 { key: 'node', label: 'Node.js', value: about.node },
@@ -160,9 +161,11 @@ export function AboutSettings({ api, computers, onOpenGettingStarted }: Props) {
         <SettingsRow
           title="Data folder"
           description={
-            <span className="font-mono text-2xs">
-              {about?.dataDirectory ?? '…'}
-            </span>
+            <MiddleTruncatedText
+              path
+              className="font-mono"
+              value={about?.dataDirectory ?? '…'}
+            />
           }
         >
           <Button
@@ -178,9 +181,11 @@ export function AboutSettings({ api, computers, onOpenGettingStarted }: Props) {
         <SettingsRow
           title="Logs"
           description={
-            <span className="font-mono text-2xs">
-              {about?.logsDirectory ?? '…'}
-            </span>
+            <MiddleTruncatedText
+              path
+              className="font-mono"
+              value={about?.logsDirectory ?? '…'}
+            />
           }
         >
           <Button

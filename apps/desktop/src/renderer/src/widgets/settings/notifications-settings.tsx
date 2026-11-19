@@ -13,7 +13,7 @@ type TestResult = { tone: StatusTone; message: string } | null;
 const backgroundDescription =
   document.documentElement.dataset.platform === 'mac'
     ? 'Closing the window keeps Nesvo running so notifications and the Dock badge keep working. Quit from the Dock or with Command Q.'
-    : 'Closing the window keeps Nesvo running in the system tray so notifications and the attention count keep working. Quit from the tray menu.';
+    : 'Keep notifications active after closing the window. Quit from the system tray.';
 
 const blockedMessage =
   'Notifications are blocked for Nesvo. Allow them in the system notification settings.';

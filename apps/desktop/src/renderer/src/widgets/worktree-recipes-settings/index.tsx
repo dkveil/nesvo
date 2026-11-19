@@ -66,28 +66,27 @@ export function WorktreeRecipesSettings({
   const computerName = computer?.name ?? 'This computer';
   return (
     <div className="space-y-6">
-      <p className="text-xs leading-5 text-muted-foreground">
-        A recipe prepares every new session worktree of a repository: it copies
-        ignored files such as <span className="font-mono">.env.local</span> from
-        the main checkout, runs a setup command and gives the session unique
-        ports, a resource tag and a temporary folder. Recipes are stored by{' '}
-        {computerName}’s host, so the repository stays untouched.
+      <p className="max-w-prose px-3 text-xs leading-5 text-muted-foreground">
+        Recipes prepare worktrees on {computerName}. Choose which files and
+        setup steps a new worktree needs.
       </p>
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       <SettingsSection
         title="Worktree recipes"
         action={
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={pending || !recipes}
-            aria-haspopup="dialog"
-            onClick={() => setEditing({ recipe: null })}
-          >
-            <Plus />
-            New recipe
-          </Button>
+          recipes?.length ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={pending || !recipes}
+              aria-haspopup="dialog"
+              onClick={() => setEditing({ recipe: null })}
+            >
+              <Plus />
+              New recipe
+            </Button>
+          ) : undefined
         }
       >
         {!recipes && !error ? (
@@ -99,7 +98,25 @@ export function WorktreeRecipesSettings({
         ) : !recipes?.length ? (
           <SettingsRow
             title="No worktree recipes"
-            description="Add a recipe for a repository so its session worktrees start ready for tests."
+            description={
+              <span className="block space-y-2">
+                <span className="block">
+                  Add a recipe for a repository so its session worktrees start
+                  ready for tests.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  disabled={pending || !recipes}
+                  aria-haspopup="dialog"
+                  onClick={() => setEditing({ recipe: null })}
+                >
+                  <Plus />
+                  New recipe
+                </Button>
+              </span>
+            }
           />
         ) : (
           recipes.map(recipe => (

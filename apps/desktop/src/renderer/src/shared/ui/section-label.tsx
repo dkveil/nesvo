@@ -5,12 +5,14 @@ type SectionLabelProps = ComponentProps<'div'> & {
   as?: 'h2' | 'h3' | 'h4' | 'p';
   action?: ReactNode;
   count?: number;
+  emphasis?: boolean;
 };
 
 export function SectionLabel({
   as: Heading = 'h3',
   action,
   count,
+  emphasis = false,
   className,
   children,
   ...props
@@ -24,7 +26,14 @@ export function SectionLabel({
       )}
       {...props}
     >
-      <Heading className="flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium text-muted-foreground">
+      <Heading
+        className={cn(
+          'flex min-w-0 items-center gap-1.5 truncate font-medium',
+          emphasis
+            ? 'text-ui text-foreground'
+            : 'text-2xs text-muted-foreground',
+        )}
+      >
         {children}
         {count != null && (
           <span className="text-micro text-muted-foreground/80 tabular-nums">

@@ -1,3 +1,4 @@
+import { PathInput } from '@/shared/ui/path-input';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { WorktreeRecipe, WorktreeRecipeMatch } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
@@ -238,7 +239,7 @@ export function RecipeEditorDialog({
                     : []
               }
             >
-              <Input
+              <PathInput
                 id="recipe-directory"
                 size="md"
                 value={values.directory}

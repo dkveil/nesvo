@@ -1,3 +1,4 @@
+import { Badge } from '@/shared/ui/badge';
 import { useState } from 'react';
 import { PermissionRules } from '@/features/session-mode/permission-rules';
 import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
@@ -52,6 +53,12 @@ export function PermissionSettings({
           title="Allow Full access mode"
           description="Confirm each session. Turning this off stops active Full access turns and revokes confirmations."
         >
+          <Badge
+            appearance="outline"
+            tone={data.fullAccessEnabled ? 'warning' : 'neutral'}
+          >
+            {data.fullAccessEnabled ? 'On' : 'Off'}
+          </Badge>
           <Switch
             aria-label="Allow Full access mode"
             checked={data.fullAccessEnabled}

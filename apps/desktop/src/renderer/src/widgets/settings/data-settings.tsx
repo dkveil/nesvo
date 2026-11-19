@@ -1,3 +1,4 @@
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { useState } from 'react';
 import type { Computer, DatabaseBackup, DesktopApi } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
@@ -100,9 +101,11 @@ export function DataSettings({ api, computers }: Props) {
                       <StatusMessage tone="success">
                         Backup written · {formatBytes(state.backup.bytes)}
                       </StatusMessage>
-                      <p className="font-mono text-2xs text-foreground">
-                        {state.backup.path}
-                      </p>
+                      <MiddleTruncatedText
+                        path
+                        value={state.backup.path}
+                        className="font-mono"
+                      />
                     </>
                   )}
                 </div>

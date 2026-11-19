@@ -19,25 +19,31 @@ export function RuleUsage({ metrics, kind, since, now }: Props) {
     Number.isFinite(unusedAt) && (now ?? mountedAt) - unusedAt >= UNUSED_MS;
   const repeatedlyCited = kind === 'instruction' && (metrics?.cited ?? 0) >= 2;
   return (
-    <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground tabular-nums">
-      <span>Delivered {metrics?.delivered ?? 0}</span>
-      <span>Cited {metrics?.cited ?? 0}</span>
-      <span>
-        Last cited{' '}
-        {metrics?.lastCited ? (
-          <time dateTime={metrics.lastCited}>
-            {formatDate(metrics.lastCited)}
-          </time>
-        ) : (
-          '—'
-        )}
-      </span>
-      {repeatedlyCited && (
-        <Badge tone="warning" size="xs">
-          Keeps failing, consider a check
-        </Badge>
+    <div className="mt-2 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+        <span>Delivered {metrics?.delivered ?? 0}</span>
+        <span>Cited {metrics?.cited ?? 0}</span>
+        <span>
+          Last cited{' '}
+          {metrics?.lastCited ? (
+            <time dateTime={metrics.lastCited}>
+              {formatDate(metrics.lastCited)}
+            </time>
+          ) : (
+            '—'
+          )}
+        </span>
+      </div>
+      {(repeatedlyCited || unused) && (
+        <div className="flex flex-wrap gap-1.5">
+          {repeatedlyCited && (
+            <Badge tone="warning" size="xs">
+              Keeps failing, consider a check
+            </Badge>
+          )}
+          {unused && <Badge size="xs">Unused</Badge>}
+        </div>
       )}
-      {unused && <Badge size="xs">Unused</Badge>}
-    </span>
+    </div>
   );
 }

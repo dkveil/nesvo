@@ -1,3 +1,4 @@
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { useEffect, useState } from 'react';
 import {
   externalInboxLimits,
@@ -155,8 +156,6 @@ export function DevicesSettings({ computer, api }: Props) {
           >
             <Input
               id="inbox-device-name"
-              variant="ghost"
-              className="focus-ring rounded-control px-2"
               placeholder="e.g. Release runner"
               value={name}
               onChange={event => setName(event.target.value)}
@@ -178,7 +177,7 @@ export function DevicesSettings({ computer, api }: Props) {
         </form>
         {available && enrollment && (
           <SettingsRow
-            title="Token created"
+            title={<StatusMessage tone="success">Token created</StatusMessage>}
             description="Copy it now and store it as a secret. The host can only verify it after this."
           >
             <Button
@@ -201,7 +200,7 @@ export function DevicesSettings({ computer, api }: Props) {
           devices.map(device => (
             <SettingsRow key={device.id} title={device.name}>
               <Button
-                variant="destructive"
+                variant="ghost"
                 disabled={busy}
                 aria-label={`Revoke ${device.name}`}
                 onClick={() => void revoke(device.id)}
@@ -233,15 +232,17 @@ export function DevicesSettings({ computer, api }: Props) {
               as="span"
               layout="inline"
             >
-              <code className="block py-1.5 font-mono text-2xs break-all">
-                {cli.entryPath}
-              </code>
+              <MiddleTruncatedText
+                path
+                className="py-1.5 font-mono text-xs"
+                value={cli.entryPath}
+              />
             </Field>
             <CodeBlock
               variant="flat"
               label="Add to PATH"
+              maxHeightClassName={null}
               code={cli.addToPathCommand}
-              wrap
             />
             <p className="text-2xs leading-4 text-muted-foreground">
               Run this in your terminal to use <code>nesvo</code> in that shell.
@@ -268,16 +269,14 @@ export function DevicesSettings({ computer, api }: Props) {
             <CodeBlock
               variant="flat"
               label="Claude Code · JSON"
+              maxHeightClassName={null}
               code={claude}
-              maxHeightClassName="max-h-36"
-              wrap
             />
             <CodeBlock
               variant="flat"
               label="Codex · TOML"
+              maxHeightClassName={null}
               code={codex}
-              maxHeightClassName="max-h-36"
-              wrap
             />
           </div>
         </SettingsSection>

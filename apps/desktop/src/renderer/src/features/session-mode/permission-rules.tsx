@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import type { AllowRule } from '@nesvo/contracts';
-import { directoryLabel } from '@/entities/session';
-import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { Button } from '@/shared/ui/button';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { StatusMessage } from '@/shared/ui/status-message';
 
@@ -43,9 +42,11 @@ export function PermissionRules({
               />
             }
             description={
-              <span title={rule.directory}>
-                {rule.scope === 'session' ? 'This session' : 'This project'} ·{' '}
-                {directoryLabel(rule.directory)}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="shrink-0">
+                  {rule.scope === 'session' ? 'This session' : 'This project'} ·
+                </span>
+                <MiddleTruncatedText path value={rule.directory} />
               </span>
             }
           >
@@ -63,7 +64,10 @@ export function PermissionRules({
         ))
       ) : (
         <div className="px-3 py-2">
-          <StatusMessage tone="info">No saved allow rules.</StatusMessage>
+          <StatusMessage tone="info">
+            No saved allow rules. Choose Always allow on an eligible Claude tool
+            request to save one.
+          </StatusMessage>
         </div>
       )}
       {failure && (

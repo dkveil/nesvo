@@ -1,3 +1,4 @@
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { RuleUsage } from '@/features/gate-rules/rule-usage';
 import { useState } from 'react';
 import {
@@ -126,7 +127,7 @@ export function LessonsSettings({
       {lessons.error && (
         <StatusMessage tone="error">{lessons.error}</StatusMessage>
       )}
-      <SettingsSection title="Proposals">
+      <SettingsSection title="Learning schedule">
         <SettingsRow
           title={
             <label htmlFor="lessons-daily">Propose lessons every day</label>
@@ -188,7 +189,7 @@ export function LessonsSettings({
           />
         </SettingsRow>
         <SettingsRow
-          title="Propose now"
+          title="Review incidents"
           description={
             <StatusMessage
               tone={
@@ -358,15 +359,25 @@ export function LessonsSettings({
       </SettingsSection>
       {overview.issues.length > 0 && (
         <SettingsSection title="Lesson files that need attention">
-          {overview.issues.map(issue => (
-            <SettingsRow
-              key={issue}
-              title="Not added to prompts"
-              description={
-                <StatusMessage tone="warning">{issue}</StatusMessage>
-              }
-            />
-          ))}
+          {overview.issues.map(issue => {
+            const separator = issue.indexOf(': ');
+            const path = separator >= 0 ? issue.slice(0, separator) : '';
+            const hasPath = path.includes('/') || path.includes('\\');
+            return (
+              <SettingsRow
+                key={issue}
+                title="Not added to prompts"
+                description={
+                  <div className="space-y-1">
+                    {hasPath && <MiddleTruncatedText path value={path} />}
+                    <StatusMessage tone="warning">
+                      {hasPath ? issue.slice(separator + 2) : issue}
+                    </StatusMessage>
+                  </div>
+                }
+              />
+            );
+          })}
         </SettingsSection>
       )}
       <SettingsSection title="Recent incidents">

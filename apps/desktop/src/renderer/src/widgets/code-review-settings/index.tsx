@@ -118,16 +118,18 @@ export function CodeReviewSettings({
       <SettingsSection
         title="Reviewer profiles"
         action={
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={pending || editing?.kind === 'profile'}
-            onClick={() => open({ kind: 'profile', profile: null })}
-          >
-            <Plus />
-            Add profile
-          </Button>
+          profiles?.length ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={pending || editing?.kind === 'profile'}
+              onClick={() => open({ kind: 'profile', profile: null })}
+            >
+              <Plus />
+              Add profile
+            </Button>
+          ) : undefined
         }
       >
         {editing?.kind === 'profile' && !editing.profile && (
@@ -181,23 +183,42 @@ export function CodeReviewSettings({
         {!profiles.length && editing?.kind !== 'profile' && (
           <SettingsRow
             title="No reviewer profiles"
-            description="Add a profile to choose the provider, model and rules for agent reviews."
+            description={
+              <span className="block space-y-2">
+                <span className="block">
+                  Add a profile to choose the provider, model and rules for
+                  agent reviews.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  disabled={pending}
+                  onClick={() => open({ kind: 'profile', profile: null })}
+                >
+                  <Plus />
+                  Add profile
+                </Button>
+              </span>
+            }
           />
         )}
       </SettingsSection>
       <SettingsSection
         title="Conventions"
         action={
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={pending || editing?.kind === 'convention'}
-            onClick={() => open({ kind: 'convention', convention: null })}
-          >
-            <Plus />
-            Add convention
-          </Button>
+          conventions?.length ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={pending || editing?.kind === 'convention'}
+              onClick={() => open({ kind: 'convention', convention: null })}
+            >
+              <Plus />
+              Add convention
+            </Button>
+          ) : undefined
         }
       >
         {editing?.kind === 'convention' && !editing.convention && (
@@ -265,7 +286,25 @@ export function CodeReviewSettings({
         {!conventions.length && editing?.kind !== 'convention' && (
           <SettingsRow
             title="No conventions"
-            description="Global conventions apply to every review, language conventions to matching changed files and project conventions to one repository or folder."
+            description={
+              <span className="block space-y-2">
+                <span className="block">
+                  Global conventions apply to every review, language conventions
+                  to matching changed files and project conventions to one
+                  repository or folder.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  disabled={pending}
+                  onClick={() => open({ kind: 'convention', convention: null })}
+                >
+                  <Plus />
+                  Add convention
+                </Button>
+              </span>
+            }
           />
         )}
       </SettingsSection>

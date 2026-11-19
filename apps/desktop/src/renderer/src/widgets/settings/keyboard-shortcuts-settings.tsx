@@ -18,14 +18,30 @@ export function KeyboardShortcutsSettings() {
         <SettingsSection key={group} title={group}>
           {entries
             .filter(([, entry]) => entry.group === group)
+            .filter(
+              ([id, entry], index, rows) =>
+                rows.findIndex(
+                  ([, candidate]) => candidate.label === entry.label,
+                ) === index && id !== undefined,
+            )
             .map(([id, entry]) => (
               <SettingsRow
                 key={id}
                 title={entry.label}
                 className="min-h-10 py-2"
               >
-                <span className="sr-only">{entry.keys}</span>
-                <KeyCombo keys={entry.keys} size="md" />
+                {entries
+                  .filter(
+                    ([, shortcut]) =>
+                      shortcut.group === group &&
+                      shortcut.label === entry.label,
+                  )
+                  .map(([id, shortcut]) => (
+                    <div key={id}>
+                      <span className="sr-only">{shortcut.keys}</span>
+                      <KeyCombo keys={shortcut.keys} size="md" />
+                    </div>
+                  ))}
               </SettingsRow>
             ))}
         </SettingsSection>

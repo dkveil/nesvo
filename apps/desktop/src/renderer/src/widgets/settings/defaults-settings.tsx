@@ -1,3 +1,4 @@
+import { PathInput } from '@/shared/ui/path-input';
 import { useState } from 'react';
 import type { DesktopApi, ProviderProfile } from '@nesvo/contracts';
 import { DefaultFolderField } from '@/features/default-session-folder';
@@ -16,7 +17,6 @@ import {
   saveNewSessionDefaults,
   type NewSessionDefaults,
 } from '@/features/new-thread/new-session-defaults';
-import { Input } from '@/shared/ui/input';
 import {
   Select,
   SelectContent,
@@ -226,7 +226,7 @@ export function DefaultsSettings({
             title={<label htmlFor="defaults-directory">Folder</label>}
             description="Leave blank to keep the last folder."
           >
-            <Input
+            <PathInput
               id="defaults-directory"
               size="md"
               className="w-52 font-mono"

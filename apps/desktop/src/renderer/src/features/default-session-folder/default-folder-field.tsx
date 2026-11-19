@@ -1,10 +1,10 @@
+import { PathInput } from '@/shared/ui/path-input';
 import { useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Field, FieldLabel } from '@/shared/ui/field';
-import { Input } from '@/shared/ui/input';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 
 type Props = {
@@ -65,6 +65,7 @@ export function DefaultFolderField({
             </FieldLabel>
             {value ? (
               <MiddleTruncatedText
+                path
                 value={value}
                 className="text-xs leading-5 text-muted-foreground"
               />
@@ -119,10 +120,11 @@ export function DefaultFolderField({
           if (changed) void save(async () => current.trim() || null);
         }}
       >
-        <Input
+        <PathInput
           id={id}
           size="md"
-          className="min-w-0 flex-1 font-mono"
+          containerClassName="flex-1"
+          className="font-mono"
           placeholder={`Absolute path on ${computerName}`}
           spellCheck={false}
           maxLength={4096}
