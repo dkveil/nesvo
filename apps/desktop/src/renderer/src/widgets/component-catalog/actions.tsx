@@ -286,6 +286,11 @@ export function ActionsSection() {
             <span>Disabled</span>
           </Chip>
         </SpecimenRow>
+        <SpecimenRow label="inline (h-5)" className="gap-1">
+          <Chip size="inline" icon={<Folder />}>
+            <span>Release notes</span>
+          </Chip>
+        </SpecimenRow>
         <SpecimenRow label="sm (h-6)" className="gap-1">
           <Chip size="sm" icon={<Folder />}>
             <span>a-very-long-folder-name-that-truncates-inside-the-chip</span>

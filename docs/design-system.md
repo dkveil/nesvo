@@ -21,6 +21,8 @@ The development build lists **Settings → Development → Components**, a catal
 - [ ] Describe only features that exist. Explain how to enable disabled controls.
 - [ ] Review screenshots at 1280 × 800 and 1920 × 1080 against this checklist before presenting the change.
 
+Use the inline Chip in messages for supported destinations. Keep labels on the text line, give icon-only actions accessible names, and use the existing file and diff drawers. Put turn changes and child sessions in flat rows below the assistant response.
+
 ## Tokens
 
 All colours are CSS variables defined for light on `:root` and for dark on `:root.dark`; components use the Tailwind names in the first column.

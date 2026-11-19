@@ -75,9 +75,13 @@ import { interruptionLabels } from './interruption-labels';
 import { MessageArticle } from './message-article';
 import { isDelegationReply } from '@/entities/session/delegation-reply';
 import {
-  PullRequestMentionContext,
-  type PullRequestMentionRenderer,
-} from './pull-request-mentions';
+  MessageLinkContext,
+  type MessageLinkScope,
+} from './message-link-context';
+import type { Review } from '@/entities/review';
+import { TurnChanges } from './turn-changes';
+import { activeChild } from '@/widgets/delegations/worker-status';
+import { TurnChildren } from './turn-children';
 
 const MESSAGE_MAX_LENGTH = 32000;
 const PASTE_NOTICE_MS = 5000;
@@ -115,7 +119,10 @@ type Props = {
   activityBar?: ReactNode;
   delegations: ReactNode;
   preparation?: ReactNode;
-  renderPullRequest?: PullRequestMentionRenderer;
+  messageLinks?: MessageLinkScope;
+  turnReviews: Review[];
+  onOpenTurnDiff: (id: string, path?: string) => void;
+  onOpenChild: (session: Session) => void;
   draft: string;
   selectedSkill: SelectedSkill | null;
   connected: boolean;
@@ -169,7 +176,10 @@ export function Conversation({
   activityBar,
   delegations,
   preparation,
-  renderPullRequest,
+  messageLinks,
+  turnReviews,
+  onOpenTurnDiff,
+  onOpenChild,
   draft,
   selectedSkill,
   connected,
@@ -300,6 +310,28 @@ export function Conversation({
         (delegation.status === 'pending' || delegation.childSessionId),
     ) ||
       workers.some(worker => worker.parentRunId === session.runId));
+  const workersByAge = workers.toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) ||
+      left.id.localeCompare(right.id),
+  );
+  const wait = session.coordinatorWait;
+  const waitingChildren =
+    running && wait?.runId === session.runId && !wait.away
+      ? workersByAge.filter(
+          worker =>
+            (wait.workers.length
+              ? wait.workers.some(item => item.sessionId === worker.id)
+              : worker.parentRunId === session.runId) &&
+            (activeChild(worker) || worker.queue.some(item => !item.held)),
+        )
+      : [];
+  const waitingLabel = waitingChildren.length
+    ? 'Waiting on ' +
+      waitingChildren.length +
+      (waitingChildren.length === 1 ? ' child session' : ' child sessions')
+    : '';
+  const waitingTitles = waitingChildren.map(child => child.title).join(', ');
   const stopLabel = groupRun ? 'Stop group' : 'Stop';
   const threadStarts = new Set(session.providerThreadStarts);
   const compactedAt = new Set(
@@ -485,6 +517,18 @@ export function Conversation({
   for (const message of session.messages)
     if (message.author === 'agent' && !firstAgents.has(message.runId))
       firstAgents.set(message.runId, message.id);
+  const lastAgents = new Map(
+    session.messages
+      .filter(message => message.author === 'agent')
+      .map(message => [message.runId, message.id]),
+  );
+  const reviewsByRun = new Map(
+    turnReviews
+      .filter(
+        review => review.diff.status === 'complete' && review.diff.files.length,
+      )
+      .map(review => [review.runId, review]),
+  );
   const queueButton = (
     <Hint
       label={
@@ -606,7 +650,30 @@ export function Conversation({
           }}
         >
           {mcpNotice}
-          {activityBar}
+          {waitingLabel ? (
+            <div className="flex min-h-7 items-center justify-between gap-2 text-xs text-muted-foreground">
+              <p
+                role="status"
+                title={waitingLabel + ' · ' + waitingTitles}
+                className="min-w-0 truncate"
+              >
+                <span className="text-foreground">{waitingLabel}</span> ·{' '}
+                {waitingTitles}
+              </p>
+              <Button
+                size="xs"
+                variant="ghost"
+                type="button"
+                disabled={!connected || session.status === 'stopping'}
+                onClick={onStop}
+              >
+                <Square className="fill-current" />
+                {session.status === 'stopping' ? 'Stopping…' : 'Stop'}
+              </Button>
+            </div>
+          ) : (
+            activityBar
+          )}
           {anchor(
             <Composer
               className={cn(
@@ -823,30 +890,34 @@ export function Conversation({
                     />
                     {running && !!draft.trim() && queueButton}
                     {running ? (
-                      <Hint
-                        label={
-                          groupRun
-                            ? 'Stop this session and its workers'
-                            : 'Stop this session'
-                        }
-                      >
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="rounded-full"
-                          disabled={!connected || session.status === 'stopping'}
-                          onClick={onStop}
-                          aria-label={stopLabel}
+                      !waitingLabel && (
+                        <Hint
+                          label={
+                            groupRun
+                              ? 'Stop this session and its workers'
+                              : 'Stop this session'
+                          }
                         >
-                          <Square className="fill-current" />
-                          {session.status === 'stopping'
-                            ? groupRun
-                              ? 'Stopping group…'
-                              : 'Stopping…'
-                            : stopLabel}
-                        </Button>
-                      </Hint>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full"
+                            disabled={
+                              !connected || session.status === 'stopping'
+                            }
+                            onClick={onStop}
+                            aria-label={stopLabel}
+                          >
+                            <Square className="fill-current" />
+                            {session.status === 'stopping'
+                              ? groupRun
+                                ? 'Stopping group…'
+                                : 'Stopping…'
+                              : stopLabel}
+                          </Button>
+                        </Hint>
+                      )
                     ) : otherRun ? (
                       queueButton
                     ) : (
@@ -1011,9 +1082,7 @@ export function Conversation({
                 Claude Code will fork the conversation on your next message.
               </StatusMessage>
             )}
-            <PullRequestMentionContext.Provider
-              value={renderPullRequest ?? null}
-            >
+            <MessageLinkContext.Provider value={messageLinks ?? null}>
               <div
                 role="log"
                 aria-live="polite"
@@ -1034,6 +1103,23 @@ export function Conversation({
                     message.author === 'agent' &&
                     message.runId === session.runId &&
                     running;
+                  const lastOfTurn =
+                    lastAgents.get(message.runId) === message.id;
+                  const review = lastOfTurn
+                    ? reviewsByRun.get(message.runId)
+                    : undefined;
+                  const sent = new Set(
+                    session.turnChildren?.find(
+                      turn => turn.runId === message.runId,
+                    )?.sessionIds,
+                  );
+                  const children = lastOfTurn
+                    ? workersByAge.filter(
+                        child =>
+                          child.parentRunId === message.runId ||
+                          sent.has(child.id),
+                      )
+                    : [];
                   const showActivity =
                     message.origin !== 'imported' &&
                     firstAgents.get(message.runId) === message.id &&
@@ -1045,7 +1131,7 @@ export function Conversation({
                     message.author === 'agent' &&
                     delegatedRuns.has(message.runId);
                   return (
-                    <Fragment key={message.id}>
+                    <div key={message.id} className="space-y-2">
                       <MessageArticle
                         message={message}
                         provider={session.provider}
@@ -1070,6 +1156,7 @@ export function Conversation({
                                 completedAt: message.completedAt,
                                 status: live ? session.status : message.state,
                                 live: live && connected,
+                                waiting: live && !!waitingLabel,
                                 offline: live && !connected,
                                 truncated: truncatedRuns.has(message.runId),
                               }
@@ -1080,14 +1167,23 @@ export function Conversation({
                         threadStart={threadStarts.has(firstIndex + index)}
                         compacted={compactedAt.has(firstIndex + index)}
                       />
+                      {children.length > 0 && (
+                        <TurnChildren
+                          children={children}
+                          onOpen={onOpenChild}
+                        />
+                      )}
+                      {review && (
+                        <TurnChanges review={review} onOpen={onOpenTurnDiff} />
+                      )}
                       {stageItems(stagesAfter.get(message.id))}
-                    </Fragment>
+                    </div>
                   );
                 })}
                 {compactedAt.has(session.messageCount) && (
                   <Separator label="Conversation compacted" />
                 )}
-                {runWithoutMessages && (
+                {runWithoutMessages && !waitingLabel && (
                   <StatusMessage tone="loading">
                     {session.activity ?? `${session.provider} is working…`}
                   </StatusMessage>
@@ -1096,7 +1192,7 @@ export function Conversation({
                   <Separator label="Session restarted" />
                 )}
               </div>
-            </PullRequestMentionContext.Provider>
+            </MessageLinkContext.Provider>
             {session.error &&
               session.status !== 'interrupted' &&
               session.status !== 'completed' && (

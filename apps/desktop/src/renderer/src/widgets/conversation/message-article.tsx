@@ -20,7 +20,6 @@ import {
   SessionActivity,
   type SessionActivityProps,
 } from '@/widgets/session-activity';
-import { MessagePullRequests } from './message-pull-requests';
 
 type Message = Session['messages'][number];
 
@@ -79,6 +78,7 @@ function sameActivity(
       left.completedAt === right.completedAt &&
       left.status === right.status &&
       left.live === right.live &&
+      left.waiting === right.waiting &&
       left.offline === right.offline &&
       left.truncated === right.truncated &&
       (left.items === right.items ||
@@ -272,10 +272,6 @@ export const MessageArticle = memo(function MessageArticle({
               !!message.codeComments?.length && (
                 <CodeCommentCards comments={message.codeComments} />
               )}
-            {!suppressBody &&
-              message.author === 'agent' &&
-              !live &&
-              message.body && <MessagePullRequests body={message.body} />}
             {!suppressBody &&
               message.author === 'agent' &&
               !live &&

@@ -43,6 +43,7 @@ import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { FileGlyph } from './file-glyph';
 
 type Props = {
+  initialFile?: { path: string; line?: number };
   session: Session;
   api: Pick<
     DesktopApi,
@@ -277,7 +278,45 @@ class PreviewBoundary extends Component<
   }
 }
 
-function SourceCode({ file, wrap }: { file: WorkspaceFile; wrap: boolean }) {
+function SourceCode({
+  file,
+  wrap,
+  line,
+}: {
+  file: WorkspaceFile;
+  wrap: boolean;
+  line?: number;
+}) {
+  const code =
+    useRef<import('@pierre/diffs/react').CodeViewHandle<undefined, undefined>>(
+      null,
+    );
+  const scrollContainer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = scrollContainer.current;
+    if (!line || !container) return;
+    const lineNumber = Math.min(line, (file.text ?? '').split('\n').length);
+    let timer: number | undefined;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!container.clientHeight) return;
+        observer.disconnect();
+        code.current?.scrollTo({
+          type: 'line',
+          id: file.path,
+          lineNumber,
+          align: 'center',
+          behavior: 'instant',
+        });
+      }, 80);
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [file, line]);
   const items = useMemo<CodeViewItem<undefined>[]>(
     () => [
       {
@@ -305,6 +344,8 @@ function SourceCode({ file, wrap }: { file: WorkspaceFile; wrap: boolean }) {
   return (
     <PreviewBoundary text={file.text ?? ''}>
       <CodeView
+        ref={code}
+        containerRef={scrollContainer}
         items={items}
         options={options}
         disableWorkerPool
@@ -319,8 +360,10 @@ function FilePreview({
   sessionId,
   api,
   wrap,
+  line,
 }: {
   path: string;
+  line?: number;
   sessionId: string;
   api: Props['api'];
   wrap: boolean;
@@ -373,7 +416,7 @@ function FilePreview({
       ) : state.file.text === '' ? (
         <EmptyState size="sm" icon={FileText} title="Empty file" />
       ) : (
-        <SourceCode file={state.file} wrap={wrap} />
+        <SourceCode file={state.file} wrap={wrap} line={line} />
       )}
     </section>
   );
@@ -381,14 +424,17 @@ function FilePreview({
 
 export default function WorkspaceFiles({
   session,
+  initialFile,
   api,
   savedVersion,
   onSavedDiff,
   onClose,
 }: Props) {
   const [query, setQuery] = useState('');
-  const [tabs, setTabs] = useState<string[]>([]);
-  const [path, setPath] = useState('');
+  const [tabs, setTabs] = useState<string[]>(
+    initialFile ? [initialFile.path] : [],
+  );
+  const [path, setPath] = useState(initialFile?.path ?? '');
   const [refresh, setRefresh] = useState(0);
   const [wrap, setWrap] = useState(false);
   const [collapse, setCollapse] = useState(0);
@@ -587,6 +633,7 @@ export default function WorkspaceFiles({
             <FilePreview
               key={`${path}:${refresh}`}
               path={path}
+              line={path === initialFile?.path ? initialFile.line : undefined}
               sessionId={session.id}
               api={api}
               wrap={wrap}

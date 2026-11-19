@@ -157,6 +157,7 @@ import {
 } from '@/shared/ui/sheet';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
+import type { FileTarget } from '@/widgets/conversation/message-link-target';
 import { Delegations } from '@/widgets/delegations';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 import { WorkflowStatus } from '@/widgets/workflow-status';
@@ -385,6 +386,13 @@ export function Workspace({
   const [location] = useState(readWorkspaceLocation);
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
+  const [inboxLink, setInboxLink] = useState<{
+    hostId: string;
+    id: string;
+  } | null>(null);
+  const [fileLink, setFileLink] = useState<
+    (FileTarget & { sessionKey: string; request: string }) | null
+  >(null);
   const [costsView, setCostsView] = useState(false);
   const [showBudgets, setShowBudgets] = useState(false);
   const [automation, setAutomation] = useState(location.automation);
@@ -1504,6 +1512,7 @@ export function Workspace({
     setPanel('diff');
   };
   const openFiles = () => {
+    setFileLink(null);
     diffTrigger.current = panelTrigger();
     if (!diffReview) {
       const latest = store.reviews
@@ -1581,7 +1590,11 @@ export function Workspace({
     setAutomation('');
     setNavigationOpen(false);
   };
-  const openInbox = () => guardEditor(openInboxNow);
+  const openInbox = () =>
+    guardEditor(() => {
+      setInboxLink(null);
+      openInboxNow();
+    });
   const openInboxDiff = (review: Review) =>
     guardEditor(() => {
       selectNow(hostKey(review.sessionId, review.hostId));
@@ -3367,6 +3380,38 @@ ${text}`
       ((sidebarOpen && viewportWidth >= 768) || navigationOpen),
     runningAppsEnabled && !browsing && !creating ? (selected ?? null) : null,
   );
+  const readableMessageSession =
+    selected && store.hostReady(selectedHostId) ? selected.id : null;
+  const checkMessageFile = useMemo(() => {
+    const directories = new Map<string, Promise<Set<string>>>();
+    return async (path: string) => {
+      if (!readableMessageSession) return false;
+      const directory = path.slice(0, Math.max(0, path.lastIndexOf('/')));
+      let entries = directories.get(directory);
+      if (!entries) {
+        if (directories.size >= 64) return false;
+        entries = desktopApi(selectedHostId)
+          .listWorkspaceDirectory({
+            sessionId: readableMessageSession,
+            path: directory,
+          })
+          .then(
+            result =>
+              new Set(
+                result.entries
+                  .filter(entry => entry.kind === 'file')
+                  .map(entry => entry.path),
+              ),
+            () => {
+              directories.delete(directory);
+              return new Set<string>();
+            },
+          );
+        directories.set(directory, entries);
+      }
+      return (await entries).has(path);
+    };
+  }, [readableMessageSession, selectedHostId]);
   const selectedApps = selected
     ? (runningApps.get(entityKey(selected)) ?? [])
     : [];
@@ -4773,6 +4818,7 @@ ${text}`
             <ReviewInbox
               {...reviewDecisionProps}
               gateRules={inboxGateRules}
+              linkedItem={inboxLink}
               ruleItems={inboxRules.items}
               rulePending={inboxRules.pending}
               ruleErrors={inboxRules.errors}
@@ -4914,26 +4960,60 @@ ${text}`
                 }
                 messageTarget={messageTarget}
                 workers={workers}
-                renderPullRequest={reference => (
-                  <PullRequestCard
-                    hostId={selectedHostId}
-                    reference={reference}
-                    api={pullRequestApi(selectedHostId)}
-                    unavailableReason={pullRequestBlockedReason(selectedHostId)}
-                    onReview={next =>
-                      reviewPullRequest({
-                        hostId: selectedHostId,
-                        reference: next,
-                      })
+                messageLinks={{
+                  directory: selected.directory,
+                  ports: new Set(selectedApps.map(app => app.port)),
+                  hostId: selected.hostId,
+                  hostName:
+                    selectedComputer?.name ??
+                    (selected.hostId === 'local' ? 'Local' : 'Remote computer'),
+                  local: selected.hostId === 'local',
+                  pullRequests: pullRequestApi(selected.hostId),
+                  openPullRequest: reference =>
+                    reviewPullRequest({ hostId: selected.hostId, reference }),
+                  openFile: file => {
+                    openFiles();
+                    setFileLink({
+                      ...file,
+                      sessionKey: selectedKey,
+                      request: crypto.randomUUID(),
+                    });
+                  },
+                  fileExists: checkMessageFile,
+                  internalLink: (kind, id, hostId = selected.hostId) => {
+                    if (kind === 'session') {
+                      const session = store.sessions.find(
+                        item => item.id === id && item.hostId === hostId,
+                      );
+                      return session
+                        ? {
+                            label: session.title,
+                            open: () => select(entityKey(session)),
+                          }
+                        : null;
                     }
-                    onOpen={next =>
-                      openPullRequestSurface({
-                        hostId: selectedHostId,
-                        reference: next,
-                      })
-                    }
-                  />
+                    const item = inboxRules.items.find(
+                      item => item.id === id && item.hostId === hostId,
+                    );
+                    return item
+                      ? {
+                          label: item.subject,
+                          open: () =>
+                            guardEditor(() => {
+                              setInboxLink({ hostId, id });
+                              openInboxNow();
+                            }),
+                        }
+                      : null;
+                  },
+                }}
+                turnReviews={store.reviews.filter(
+                  review =>
+                    review.sessionId === selected.id &&
+                    review.hostId === selected.hostId,
                 )}
+                onOpenTurnDiff={openDiff}
+                onOpenChild={child => select(entityKey(child))}
                 activityBar={
                   subsessionActivity?.visible && (
                     <SubsessionBar
@@ -5606,7 +5686,14 @@ ${text}`
             }
           >
             <WorkspaceFiles
-              key={selectedKey}
+              key={
+                fileLink?.sessionKey === selectedKey
+                  ? fileLink.request
+                  : selectedKey
+              }
+              initialFile={
+                fileLink?.sessionKey === selectedKey ? fileLink : undefined
+              }
               session={selected}
               api={desktopApi(selectedHostId)}
               savedVersion={diffReview?.version}

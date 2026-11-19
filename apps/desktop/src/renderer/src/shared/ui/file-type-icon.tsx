@@ -1,6 +1,9 @@
 import type { ComponentProps } from 'react';
 import {
   File,
+  CodeXml,
+  ListTree,
+  Palette,
   FileArchive,
   FileAudio,
   FileBraces,
@@ -12,7 +15,7 @@ import {
   FileVideo,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
-import { fileCategory } from '@/shared/lib/file-category';
+import { fileCategory, fileExtension } from '@/shared/lib/file-category';
 
 type FileTypeIconProps = Omit<ComponentProps<'svg'>, 'name'> & {
   name: string;
@@ -24,6 +27,18 @@ export function FileTypeIcon({ name, className, ...props }: FileTypeIconProps) {
     className: cn('shrink-0 text-muted-foreground', className),
     ...props,
   };
+  switch (fileExtension(name)) {
+    case 'ts':
+    case 'tsx':
+    case 'js':
+    case 'jsx':
+      return <CodeXml {...iconProps} />;
+    case 'css':
+      return <Palette {...iconProps} />;
+    case 'yaml':
+    case 'yml':
+      return <ListTree {...iconProps} />;
+  }
   switch (fileCategory(name)) {
     case 'image':
       return <FileImage {...iconProps} />;

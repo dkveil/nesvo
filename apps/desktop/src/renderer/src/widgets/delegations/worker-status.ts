@@ -45,3 +45,7 @@ export function workerStatus(
       status === 'pending' ? 'Needs approval' : delegationStatusLabels[status],
   };
 }
+
+export function activeChild(child: Session) {
+  return child.status === 'running' || child.status === 'stopping';
+}

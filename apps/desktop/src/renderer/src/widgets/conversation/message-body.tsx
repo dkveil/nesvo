@@ -12,12 +12,14 @@ import {
   type ReactNode,
 } from 'react';
 import Markdown, {
+  defaultUrlTransform,
   type Components,
   type ExtraProps,
   type Options,
 } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
+import { InlineFileCode, MessageLink } from './message-links';
 import { Check, Copy, WrapText } from 'lucide-react';
 import type { MessageAttachment } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
@@ -42,7 +44,7 @@ type HastNode = {
   type: string;
   tagName?: string;
   value?: string;
-  properties?: { className?: unknown };
+  properties?: { className?: unknown; href?: string };
   children?: HastNode[];
 };
 
@@ -72,8 +74,49 @@ const markLargeCodeAsPlain = () => (tree: HastNode) => {
 };
 
 const remarkPlugins: Options['remarkPlugins'] = [remarkGfm];
+const linkBareUrls = () => (tree: HastNode) => {
+  const visit = (node: HastNode) => {
+    if (!node.children || ['a', 'pre', 'code'].includes(node.tagName ?? ''))
+      return;
+    node.children = node.children.flatMap(child => {
+      if (child.type !== 'text' || !child.value) {
+        visit(child);
+        return [child];
+      }
+      const nodes: HastNode[] = [];
+      let start = 0;
+      for (const match of child.value.matchAll(
+        /(?:https?:\/\/|nesvo:\/\/)[^\s<>"'’]+/gi,
+      )) {
+        const index = match.index;
+        if (index > 0 && /[\w@]/.test(child.value[index - 1]!)) continue;
+        let href = match[0].replace(/[.,!?;:]+$/, '');
+        while (
+          href.endsWith(')') &&
+          href.split(')').length > href.split('(').length
+        )
+          href = href.slice(0, -1);
+        if (!URL.canParse(href)) continue;
+        nodes.push({ type: 'text', value: child.value.slice(start, index) });
+        nodes.push({
+          type: 'element',
+          tagName: 'a',
+          properties: { href },
+          children: [{ type: 'text', value: href }],
+        });
+        start = index + href.length;
+      }
+      return start
+        ? [...nodes, { type: 'text', value: child.value.slice(start) }]
+        : [child];
+    });
+  };
+  visit(tree);
+};
+
 const rehypePlugins: Options['rehypePlugins'] = [
   markLargeCodeAsPlain,
+  linkBareUrls,
   [rehypeHighlight, { detect: false }],
 ];
 
@@ -161,22 +204,7 @@ function MarkdownLink({ href, children }: ComponentProps<'a'> & ExtraProps) {
   const attachmentIndex = attachmentIndexOf(href);
   if (renderAttachment && attachmentIndex != null)
     return renderAttachment(attachmentIndex);
-  const url = externalUrl(href);
-  if (!url) return <span>{children}</span>;
-  return (
-    <a
-      href={url}
-      title={url}
-      rel="noreferrer"
-      className="underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground"
-      onClick={event => {
-        event.preventDefault();
-        void window.nesvo?.openExternal(url)?.catch(() => undefined);
-      }}
-    >
-      {children}
-    </a>
-  );
+  return <MessageLink href={href}>{children}</MessageLink>;
 }
 
 const components: Components = {
@@ -245,14 +273,16 @@ const components: Components = {
   ),
   hr: () => <hr className="border-border" />,
   code: ({ children, className }) => (
-    <code
-      className={cn(
-        'rounded-control border bg-code-background px-1 py-px font-mono text-[0.85em]',
-        className,
-      )}
-    >
-      {children}
-    </code>
+    <InlineFileCode candidate={typeof children === 'string' ? children : ''}>
+      <code
+        className={cn(
+          'rounded-control border bg-code-background px-1 py-px font-mono text-[0.85em]',
+          className,
+        )}
+      >
+        {children}
+      </code>
+    </InlineFileCode>
   ),
   pre: CodeBlock,
   a: MarkdownLink,
@@ -337,6 +367,11 @@ export const MessageBody = memo(function MessageBody({
             remarkPlugins={remarkPlugins}
             rehypePlugins={rehypePlugins}
             components={components}
+            urlTransform={(url, key, node) =>
+              node.tagName === 'a' && key === 'href'
+                ? url
+                : defaultUrlTransform(url)
+            }
           >
             {markdown}
           </Markdown>

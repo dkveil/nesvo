@@ -10,6 +10,7 @@ import { entityKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { WorkerItem } from './worker-item';
+import { activeChild } from './worker-status';
 import { WorkerWorktree } from './worker-worktree';
 import { ContinueAllWorkers, WorkerContinue } from './worker-restart';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -53,14 +54,39 @@ export function Delegations({
   onSelect,
 }: Props) {
   const now = useNow(ELAPSED_TICK_MS);
+  const agentTurnVisible = session.messages.some(
+    message => message.runId === session.runId && message.author === 'agent',
+  );
+  const waiting =
+    session.status === 'running' &&
+    session.coordinatorWait?.runId === session.runId &&
+    !session.coordinatorWait.away &&
+    agentTurnVisible;
+  const inlineIds = new Set(
+    waiting
+      ? children
+          .filter(
+            child => child.parentRunId === session.runId && activeChild(child),
+          )
+          .map(child => child.id)
+      : [],
+  );
   const current = session.delegations.filter(
     delegation => delegation.runId === session.runId,
   );
+  const displayed = current.filter(
+    delegation =>
+      delegation.status !== 'running' ||
+      !delegation.childSessionId ||
+      !inlineIds.has(delegation.childSessionId),
+  );
   const previousChildren = children.filter(
     child =>
+      !inlineIds.has(child.id) &&
       !current.some(delegation => delegation.childSessionId === child.id),
   );
-  if (current.length === 0 && children.length === 0) return null;
+  if (displayed.length === 0 && previousChildren.length === 0 && !restartError)
+    return null;
   const entries = listSubsessions(session, children);
   const elapsedOf = (child: Session | undefined) => {
     const entry = child && entries.find(item => item.session.id === child.id);
@@ -91,7 +117,7 @@ export function Delegations({
     <section aria-label="Workers" data-workers="">
       <SectionLabel
         as="h2"
-        count={current.length + previousChildren.length}
+        count={displayed.length + previousChildren.length}
         action={
           restarted.length > 0 && (
             <ContinueAllWorkers workers={restarted} {...restartActions} />
@@ -104,7 +130,7 @@ export function Delegations({
         <StatusMessage tone="error">{restartError}</StatusMessage>
       )}
       <ul role="list" className="divide-y divide-border/40">
-        {current.map(delegation => {
+        {displayed.map(delegation => {
           const child = childOf(delegation.childSessionId);
           const deciding =
             !!pending[

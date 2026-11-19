@@ -28,6 +28,7 @@ export type SessionActivityProps = {
   completedAt: string | null;
   status: Session['status'];
   live: boolean;
+  waiting?: boolean;
   truncated: boolean;
   offline?: boolean;
 };
@@ -126,6 +127,7 @@ export function SessionActivity({
   completedAt,
   status,
   live,
+  waiting,
   truncated,
   offline = false,
 }: SessionActivityProps) {
@@ -161,7 +163,9 @@ export function SessionActivity({
       : '';
   const label = offline
     ? `Last known: ${status === 'stopping' ? 'Stopping' : 'Working'}`
-    : runLabel(status, elapsed, live);
+    : waiting
+      ? 'Waiting for children'
+      : runLabel(status, elapsed, live);
   const completedTime =
     !live && !offline && completedAt
       ? new Date(completedAt).toLocaleTimeString(undefined, {
@@ -195,7 +199,7 @@ export function SessionActivity({
             )}
             <span
               className="activity-shimmer tabular-nums"
-              data-animate={live && visible}
+              data-animate={live && visible && !waiting}
             >
               {label}
             </span>

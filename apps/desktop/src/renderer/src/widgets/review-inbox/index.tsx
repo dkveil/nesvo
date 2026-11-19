@@ -1,4 +1,9 @@
-import { useState, type ComponentProps, type ReactNode } from 'react';
+import {
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 import {
   pendingStageQuestion,
   pendingTurnQuestion,
@@ -68,6 +73,7 @@ import { TurnQuestionReply } from '@/features/review-decision/turn-question-repl
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 
 type Props = ReviewDecisionProps & {
+  linkedItem?: { hostId: string; id: string } | null;
   onContinueCoordinator: (session: Session) => Promise<void>;
   reviews: Review[];
   workflowRuns: WorkflowRun[];
@@ -415,6 +421,7 @@ export function ReviewInbox({
   gateRules,
   stages,
   ruleItems,
+  linkedItem,
   rulePending,
   ruleErrors,
   onRuleDecision,
@@ -423,6 +430,14 @@ export function ReviewInbox({
   routeOf,
   ...decisionProps
 }: Props) {
+  useEffect(() => {
+    if (!linkedItem) return;
+    const row = document.getElementById(
+      `inbox-${linkedItem.hostId}-${linkedItem.id}`,
+    );
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [linkedItem, ruleItems]);
   const [filter, setFilter] = useState<Filter>('pending');
   const heldSessions = new Set(
     ruleItems
@@ -989,6 +1004,8 @@ export function ReviewInbox({
                         ? `External Inbox item: ${item.subject}`
                         : `Inbox rule ${item.rule.name}: ${item.sessionTitle}`
                     }
+                    id={`inbox-${item.hostId}-${item.id}`}
+                    tabIndex={-1}
                     data-host-id={item.hostId}
                     typeLabel={
                       item.status !== 'pending'
