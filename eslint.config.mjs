@@ -54,6 +54,40 @@ export default tseslint.config(
             '../../main/*',
             '../../preload/*',
           ],
+          paths: [
+            {
+              name: '@/shared/lib/use-panel-width',
+              importNames: ['usePanelWidth'],
+              message: 'SidePanel owns drawer widths.',
+            },
+            {
+              name: '@/shared/ui/panel-resizer',
+              message: 'SidePanel owns drawer resizing.',
+            },
+            {
+              name: '@/shared/ui/sheet',
+              importNames: ['SheetContent'],
+              message:
+                'Use SidePanel for right drawers or LeftSheetContent for navigation.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      'apps/desktop/src/renderer/src/features/edit-automation/automation-editor.tsx',
+      'apps/desktop/src/renderer/src/features/new-workflow/new-workflow-drawer.tsx',
+      'apps/desktop/src/renderer/src/widgets/workflow-assistant/index.tsx',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'ImportDeclaration[source.value="@/shared/ui/dialog"], ImportDeclaration[source.value="@/shared/ui/sheet"]',
+          message: 'Use SidePanel for this right drawer.',
         },
       ],
     },

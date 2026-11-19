@@ -51,6 +51,8 @@ Discuss changes in Polish. Write code, repository documentation and commit messa
 
 ## Product and design
 
+Every right-side panel uses the shared drawer that matches the session file explorer; no other right panels or side modals.
+
 Use base shadcn components with neutral dark defaults. Black is the primary appearance, including native window chrome.
 Use the component library in shared/ui and docs/design-system.md; do not hand-roll controls.
 Before presenting any UI change, review screenshots against the checklist in docs/design-system.md.
