@@ -413,7 +413,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       installLessonTables(database);
       installGateRuleTables(database);
       installHistoryIndex(database, version < 12, version < 15);
-      if (version < 14) migrateCosts(database);
+      migrateCosts(database);
       if (version < 28) migrateTranscriptCosts(database);
       installTranscriptIndex(database);
       installInboxTables(database);
