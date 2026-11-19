@@ -62,10 +62,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
       <DialogContent
         data-automation-editor=""
         showCloseButton={!editor.pending}
-        surface="panel"
+
         className="flex h-[min(calc(100dvh-2rem),52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
       >
-        <DialogHeader className="border-b border-info-panel-divider px-5 py-2.5">
+        <DialogHeader className="border-b border-border px-5 py-2.5">
           <DialogTitle>{automationEditorTitle(editor.editing)}</DialogTitle>
           <DialogDescription>
             {automationEditorDescription(editor.values)}
@@ -106,7 +106,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
               </div>
             </div>
           </ScrollArea>
-          <DialogFooter className="flex-wrap border-t border-info-panel-divider px-6 py-4 sm:flex-wrap">
+          <DialogFooter className="flex-wrap border-t border-border px-6 py-4 sm:flex-wrap">
             <AutomationEditorMessages editor={editor} />
             <AutomationEditorButtons editor={editor} />
           </DialogFooter>

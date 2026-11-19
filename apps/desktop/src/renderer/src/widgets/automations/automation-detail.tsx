@@ -289,7 +289,7 @@ export function AutomationDetail({
               ]}
             />
           )}
-          <p className="line-clamp-3 rounded-surface border bg-card px-3 py-2 text-ui whitespace-pre-wrap text-card-foreground [overflow-wrap:anywhere]">
+          <p className="line-clamp-3 px-2 text-ui whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
             {job.workflow
               ? `Workflow ${job.workflow.name} · ${job.workflow.specPath}`
               : job.prompt}
@@ -320,8 +320,8 @@ export function AutomationDetail({
                   >
                     <ListRow
                       title={
-                        <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-ui">
-                          <RunStatus run={run} />
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui">
+                          <RunStatus run={run} className="text-ui" />
                           <span className="text-muted-foreground">
                             {run.trigger === 'manual' ? 'Run now' : 'Scheduled'}
                           </span>

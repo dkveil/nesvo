@@ -110,14 +110,18 @@ export function AutomationList({
                 >
                   <ListRow
                     density="two-line"
+                    className="[&>button>span:first-child]:h-7 [&>button>span:first-child]:self-start [&>button>span:last-child]:h-7 [&>button>span:last-child]:self-start [&>[data-slot=list-row-actions]]:mt-1 [&>[data-slot=list-row-actions]]:h-7 [&>[data-slot=list-row-actions]]:self-start"
                     leading={
                       <StatusDot tone={job.active ? 'success' : 'neutral'} />
                     }
                     title={
-                      <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        data-automation-heading
+                        className="flex h-7 min-w-0 items-center gap-2"
+                      >
                         <span className="truncate">{job.name}</span>
                         {added && <AddedByAssistantBadge />}
-                        <span className="text-xs font-normal text-muted-foreground">
+                        <span className="text-ui font-normal text-muted-foreground">
                           {job.active && job.nextRunAt
                             ? `Next ${formatUntil(job.nextRunAt, now)}`
                             : 'Paused'}
@@ -125,7 +129,7 @@ export function AutomationList({
                       </span>
                     }
                     description={
-                      <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+                      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                         <ScheduleChip job={job} />
                         <ComputerChip computer={computer} />
                         <FolderChip directory={job.directory} />
@@ -133,9 +137,9 @@ export function AutomationList({
                       </span>
                     }
                     trailing={
-                      <span className="flex flex-col items-end gap-0.5">
+                      <span className="flex items-center text-ui">
                         {run ? (
-                          <RunStatus run={run} className="max-w-56" />
+                          <RunStatus run={run} className="max-w-56 text-ui" />
                         ) : (
                           <span>No runs yet</span>
                         )}
