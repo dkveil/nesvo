@@ -411,7 +411,7 @@ export function SetupProfileSettings({
                 title={item.label}
                 description={
                   item.state === 'pending'
-                    ? 'Awaiting review on this computer'
+                    ? (item.preview ?? 'Awaiting review on this computer')
                     : item.state === 'reviewed'
                       ? 'Reviewed on this computer'
                       : item.state === 'masked'

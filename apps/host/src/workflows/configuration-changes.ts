@@ -277,6 +277,7 @@ function reviewFields(
         ? { ...mode, provider: before.provider }
         : undefined,
     ownerEffect: after.ownerEffect,
+    setupVerified: after.setupVerified,
     baseVersion: before.version,
     classification,
     diff: preview(before, after),

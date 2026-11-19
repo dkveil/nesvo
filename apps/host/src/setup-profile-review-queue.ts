@@ -61,26 +61,27 @@ export class SetupProfileReviewQueue {
     changes.register('setup-review', this.writer());
   }
 
-  async synchronize() {
+  async synchronize(prefix?: string) {
     const live = this.live();
     if (!live) return;
     const scope = this.scope(live);
-    const inspections = await Promise.all(
-      live.profile.declarations
-        .filter(entry => entry.state === 'pending')
-        .map(async entry => ({
-          entry,
-          review: await this.inspect?.(live.profile, entry, live.instanceId),
-        })),
+    const pending = live.profile.declarations.filter(
+      entry =>
+        entry.state === 'pending' && (!prefix || entry.key.startsWith(prefix)),
     );
+    if (prefix && !pending.length) return;
+    const reviews = prefix
+      ? new Map(this.reviews)
+      : new Map<string, SetupNativeReview | string>();
+    for (const entry of pending) {
+      if (this.live()?.profile.revision !== live.profile.revision) return;
+      const review = await this.inspect?.(live.profile, entry, live.instanceId);
+      if (review) reviews.set(this.key(live, entry), review);
+      else reviews.delete(this.key(live, entry));
+    }
     if (this.live()?.profile.revision !== live.profile.revision) return;
-    this.reviews = new Map(
-      inspections.flatMap(({ entry, review }) =>
-        review ? [[this.key(live, entry), review] as const] : [],
-      ),
-    );
-    for (const entry of live.profile.declarations) {
-      if (entry.state !== 'pending') continue;
+    this.reviews = reviews;
+    for (const entry of pending) {
       const review = this.reviews.get(this.key(live, entry));
       if (typeof review === 'object' && review.applied?.()) continue;
       const current = this.live();
@@ -140,13 +141,8 @@ export class SetupProfileReviewQueue {
     entry: SetupProfileDeclaration,
   ) {
     const review = this.reviews.get(this.key(live, entry));
-    return review
-      ? configurationHash(
-          JSON.stringify([
-            entry.revision,
-            typeof review === 'string' ? review : review.fingerprint,
-          ]),
-        )
+    return typeof review === 'object'
+      ? configurationHash(JSON.stringify([entry.revision, review.fingerprint]))
       : entry.revision;
   }
 
@@ -157,6 +153,15 @@ export class SetupProfileReviewQueue {
   ) {
     const review = this.reviews.get(this.key({ profile, instanceId }, entry));
     return typeof review === 'object' && review.applied?.();
+  }
+
+  reason(
+    profile: LoadedSetupProfile,
+    instanceId: string,
+    entry: SetupProfileDeclaration,
+  ) {
+    const review = this.reviews.get(this.key({ profile, instanceId }, entry));
+    return typeof review === 'string' ? review : undefined;
   }
 
   private writer(): ConfigurationWriter {
@@ -226,10 +231,11 @@ export class SetupProfileReviewQueue {
                 ...before,
                 value: draft,
                 version: { type: 'revision', revision: 2 },
+                ...(native ? { setupVerified: true as const } : {}),
                 document:
                   typeof review === 'object'
                     ? review.description
-                    : description(entry, review),
+                    : description(entry),
               },
             };
           },
@@ -261,13 +267,12 @@ export class SetupProfileReviewQueue {
   }
 }
 
-function description(entry: SetupProfileDeclaration, reason?: string) {
+function description(entry: SetupProfileDeclaration) {
   const native = setupRuntimeRequirement(entry.key);
   return [
     entry.label,
     'Desired definition is withheld pending local runtime verification.',
     'Definition digest: ' + entry.revision,
-    ...(reason ? [reason] : []),
     ...(native
       ? [
           native.description,

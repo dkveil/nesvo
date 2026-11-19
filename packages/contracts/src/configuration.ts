@@ -416,6 +416,7 @@ export const configurationChangeSchema = z.strictObject({
     .extend({ provider: providerSchema })
     .optional(),
   ownerEffect: configurationOwnerEffectSchema.optional(),
+  setupVerified: z.literal(true).optional(),
   outcome: configurationOwnerFlowOutcomeSchema.omit({ id: true }).optional(),
   diff: configurationDiffSchema,
   createdAt: z.iso.datetime(),

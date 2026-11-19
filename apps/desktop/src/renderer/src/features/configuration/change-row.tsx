@@ -80,7 +80,8 @@ export function ConfigurationChangeRow({
   const [reviewRevocation, setReviewRevocation] = useState(false);
   const openAuthoritySettings = useContext(AuthoritySettingsContext);
   const { target, source } = change;
-  const withheldSetup = target.area === 'setup-review';
+  const setupReview = target.area === 'setup-review';
+  const withheldSetup = setupReview && !change.setupVerified;
   const recipeDraft =
     target.area === 'setup-profile-file' && target.key === 'recipe';
   const effect = change.ownerEffect;
@@ -412,7 +413,7 @@ export function ConfigurationChangeRow({
           )}
           <div className="flex flex-wrap items-center gap-1.5">
             {canReview &&
-              !withheldSetup &&
+              !setupReview &&
               (change.operation !== 'delete' ||
                 change.status === 'conflicted') && (
                 <Button
@@ -440,9 +441,11 @@ export function ConfigurationChangeRow({
                       revision: change.revision,
                       reason: recipeDraft
                         ? 'Save this definition as a pending recipe in the active profile.'
-                        : target.area === 'budgets'
-                          ? `${name} on ${computer} will refuse new turns after the budget is reached.`
-                          : `Confirm the change in authority for ${name} on ${computer}.`,
+                        : setupReview
+                          ? 'Approve this exact definition on the selected computer.'
+                          : target.area === 'budgets'
+                            ? `${name} on ${computer} will refuse new turns after the budget is reached.`
+                            : `Confirm the change in authority for ${name} on ${computer}.`,
                       revoked: false,
                     });
                   else void act('accept');

@@ -24,6 +24,7 @@ export type ConfigurationSnapshot = {
   label?: string;
   provider?: Provider;
   ownerEffect?: ConfigurationOwnerEffect;
+  setupVerified?: true;
 };
 
 type CommitAction = { apply: () => void; rollback?: () => void };
