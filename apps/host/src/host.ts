@@ -2966,6 +2966,8 @@ export const serveHost = ({
           request.method === 'send-message' ||
           request.method === 'compact-session' ||
           request.method === 'resume-session' ||
+          request.method === 'continue-coordinator' ||
+          request.method === 'continue-worker' ||
           request.method === 'run-scheduled-job-now'
         )
           yield* Effect.promise(() => costs.refreshBudgets());
