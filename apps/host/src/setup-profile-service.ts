@@ -22,6 +22,7 @@ import {
   readSetupProfile,
   readSetupRouteSource,
   replaceSetupProfileFile,
+  writeNewSetupProfile,
   SetupProfileFileError,
   type LoadedSetupProfile,
 } from './setup-profile-file';
@@ -251,6 +252,32 @@ export class SetupProfileService {
         draft: { kind: 'route', value: input.route },
       },
     );
+  }
+
+  saveAs(input: Extract<SetupProfileInput, { action: 'save-as' }>) {
+    const current = this.inspect();
+    if (
+      current.instanceId !== input.instanceId ||
+      current.effectiveRevision !== input.effectiveRevision
+    )
+      throw new ConfigurationRefusal(
+        'conflict',
+        'The computer settings changed. Review the export again.',
+      );
+    const file = writeNewSetupProfile(
+      input.file,
+      current.routing.effective,
+      this.defaultFile,
+    );
+    const candidate = readSetupProfile(file);
+    return this.apply({
+      action: 'apply',
+      file,
+      instanceId: input.instanceId,
+      effectiveRevision: input.effectiveRevision,
+      revision: candidate.revision,
+      actionId: input.actionId,
+    });
   }
 
   async refresh() {

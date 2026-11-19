@@ -45,6 +45,7 @@ export type WorkspaceCommandActions = {
   pullRequests: Action;
   costs: Action;
   settings: () => void;
+  detectSetup: () => void;
   shortcuts: () => void;
   gettingStarted: () => void;
   toggleSidebar: Action;
@@ -210,6 +211,13 @@ export function workspaceCommands(
       shortcut: shortcutKeys('toggleSidebar'),
       keywords: 'hide show collapse expand',
       run: actions.toggleSidebar,
+    },
+    {
+      id: 'detect-setup',
+      label: 'Detect setup',
+      icon: <Compass />,
+      keywords: 'profile computer tools setup configuration',
+      run: actions.detectSetup,
     },
     {
       id: 'settings',

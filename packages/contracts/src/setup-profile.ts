@@ -313,5 +313,12 @@ export const setupProfileInputSchema = z.discriminatedUnion('action', [
     layer: z.enum(['machine', 'shared']),
     actionId: z.uuid(),
   }),
+  z.strictObject({
+    action: z.literal('save-as'),
+    file: setupProfilePathSchema,
+    instanceId: z.uuid(),
+    effectiveRevision: z.number().int().nonnegative(),
+    actionId: z.uuid(),
+  }),
 ]);
 export type SetupProfileInput = z.output<typeof setupProfileInputSchema>;

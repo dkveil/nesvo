@@ -6,7 +6,7 @@ import {
   SquarePen,
   Workflow,
 } from 'lucide-react';
-import type { Computer } from '@nesvo/contracts';
+import type { Computer, SetupScan } from '@nesvo/contracts';
 import {
   providers,
   providerUsable,
@@ -15,12 +15,17 @@ import {
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
 
 type Props = {
   computers: Computer[];
   statuses: ProviderStates;
   folder: string | null;
   routines: string[];
+  setup?: SetupScan | null;
+  pending?: boolean;
+  error?: string;
   onStartSession: (provider: Provider | null) => void;
   onClose: () => void;
 };
@@ -30,6 +35,9 @@ export function FinishStep({
   statuses,
   folder,
   routines,
+  setup,
+  pending,
+  error,
   onStartSession,
   onClose,
 }: Props) {
@@ -68,6 +76,18 @@ export function FinishStep({
       label: 'Routines added',
       value: routines.join(', ') || 'None added',
     },
+    ...(setup
+      ? [
+          {
+            icon: Bot,
+            label: 'Setup awaiting local review',
+            value: String(
+              setup.findings.filter(item => item.readiness === 'withheld')
+                .length,
+            ),
+          },
+        ]
+      : []),
   ];
   return (
     <div className="space-y-6 text-center">
@@ -105,12 +125,28 @@ export function FinishStep({
           </div>
         ))}
       </dl>
+      {error && <StatusMessage tone="error">{error}</StatusMessage>}
+      <div className="flex justify-center">
+        <SetupProfileSettings
+          computer={computers.find(computer => computer.id === 'local')}
+          saveOnly
+        />
+      </div>
       <div className="flex flex-wrap justify-center gap-2">
-        <Button size="md" onClick={() => onStartSession(ready ?? null)}>
+        <Button
+          size="md"
+          disabled={pending}
+          onClick={() => onStartSession(ready ?? null)}
+        >
           <SquarePen />
           Start your first session
         </Button>
-        <Button variant="outline" size="md" onClick={onClose}>
+        <Button
+          variant="outline"
+          size="md"
+          onClick={onClose}
+          disabled={pending}
+        >
           <ArrowRight />
           Open workspace
         </Button>

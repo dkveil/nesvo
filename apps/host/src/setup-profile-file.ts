@@ -12,6 +12,7 @@ import {
   fstatSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readSync,
   realpathSync,
@@ -333,6 +334,41 @@ export function replaceSetupProfileFile(
   } finally {
     if (created) unlinkSync(temporary);
   }
+}
+
+export function writeNewSetupProfile(
+  file: string,
+  route: Route,
+  defaultPath: string,
+) {
+  if (!isAbsolute(file) || !/\.ya?ml$/iu.test(file))
+    fileError(file, 'Use an absolute path ending in .yaml or .yml.');
+  const path = resolve(file);
+  const root = dirname(path);
+  if (path === defaultPath && !lstatSync(root, { throwIfNoEntry: false }))
+    mkdirSync(root, { mode: 0o700 });
+  const directory = lstatSync(root, { throwIfNoEntry: false });
+  if (
+    !directory?.isDirectory() ||
+    directory.isSymbolicLink() ||
+    relative(realpathSync(root), root)
+  )
+    fileError(file, 'Choose a local profile directory without symbolic links.');
+  try {
+    writeFileSync(path, profileWithRoute({ version: 1 }, route), {
+      flag: 'wx',
+      mode: 0o600,
+      flush: true,
+    });
+  } catch (error) {
+    fileError(
+      file,
+      (error as { code?: string }).code === 'EEXIST'
+        ? 'Choose a new file. A profile already exists at this path.'
+        : 'The profile could not be created.',
+    );
+  }
+  return path;
 }
 
 function mergeProfile(

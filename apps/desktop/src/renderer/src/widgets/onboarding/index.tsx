@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   managerImportSources,
   type ManagerImportSource,
+  type SetupScan,
 } from '@nesvo/contracts';
 import type { Provider } from '@/entities/session';
 import { useDefaultSessionFolders } from '@/features/default-session-folder';
@@ -19,7 +20,8 @@ import { FinishStep } from './finish-step';
 import { InboxStep } from './inbox-step';
 import { ProvidersStep } from './providers-step';
 import { RoutinesStep, type RoutineOutcomes } from './routines-step';
-import { SetupStep } from './setup-step';
+import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
+import { SetupFindings } from '@/widgets/settings/setup-findings';
 import { OnboardingStepLayout } from './step-layout';
 import { useOnboardingComputers } from './use-onboarding-computers';
 import { WelcomeStep } from './welcome-step';
@@ -50,7 +52,7 @@ const steps = [
   {
     id: 'setup',
     title: 'Your setup',
-    description: 'See the tools and working rules your agents bring with them.',
+    description: 'Review a profile and what Nesvo found on this computer.',
   },
   {
     id: 'inbox',
@@ -75,6 +77,10 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   const [importing, setImporting] = useState(false);
   const [importCompleted, setImportCompleted] = useState(false);
   const [outcomes, setOutcomes] = useState<RoutineOutcomes>({});
+  const [setupScan, setSetupScan] = useState<SetupScan | null>(null);
+  const [setupImports, setSetupImports] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [setupError, setSetupError] = useState('');
   const { computers, local, error, statuses, checkProviders } =
     useOnboardingComputers(api);
   const defaultFolders = useDefaultSessionFolders(computers);
@@ -138,6 +144,38 @@ export function Onboarding({ onStartSession, onClose }: Props) {
     setStepId(Object.keys(sources).length ? 'import' : 'computers');
   };
 
+  const finish = async (action: () => void) => {
+    if (finishing) return;
+    if (!setupScan || !local || setupScan.instanceId !== local.instanceId) {
+      action();
+      return;
+    }
+    setFinishing(true);
+    setSetupError('');
+    try {
+      const result = await api.setupDetection(
+        {
+          action: 'acknowledge',
+          instanceId: setupScan.instanceId,
+          revision: setupScan.revision,
+          completed: true,
+        },
+        local.id,
+      );
+      if (!result.ok) {
+        setSetupError(result.message);
+        return;
+      }
+      action();
+    } catch {
+      setSetupError(
+        'The reviewed setup could not be saved. Open Your setup to refresh it.',
+      );
+    } finally {
+      setFinishing(false);
+    }
+  };
+
   return (
     <main
       aria-label="Getting started"
@@ -189,13 +227,33 @@ export function Onboarding({ onStartSession, onClose }: Props) {
             />
           )}
           {step.id === 'setup' && (
-            <SetupStep
-              api={api}
-              hostId="local"
-              directory={folder ?? ''}
-              statuses={statuses}
-              onSetupAgents={() => setStepId('providers')}
-            />
+            <div className="space-y-6">
+              <SetupProfileSettings computer={local} onboarding />
+              <SetupFindings
+                computer={local}
+                onboarding
+                onCompleteScan={setSetupScan}
+                openImport={
+                  local?.capabilities.includes('manager-import')
+                    ? () => setSetupImports(!setupImports)
+                    : undefined
+                }
+              />
+              {setupScan && (
+                <p className="text-xs text-muted-foreground">
+                  Scan selected for review at Finish.
+                </p>
+              )}
+              {setupImports && (
+                <ManagerImportPicker
+                  api={api}
+                  computer={local}
+                  detected={detected}
+                  initialSource={foundSource}
+                  onBusyChange={setImporting}
+                />
+              )}
+            </div>
           )}
           {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
           {step.id === 'routines' && (
@@ -219,8 +277,13 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               routines={Object.values(outcomes).flatMap(item =>
                 item.status === 'added' ? [item.name] : [],
               )}
-              onClose={onClose}
-              onStartSession={onStartSession}
+              setup={setupScan}
+              pending={finishing}
+              error={setupError}
+              onClose={() => void finish(onClose)}
+              onStartSession={provider =>
+                void finish(() => onStartSession(provider))
+              }
             />
           )}
         </OnboardingStepLayout>
@@ -247,9 +310,29 @@ export function Onboarding({ onStartSession, onClose }: Props) {
             </div>
             {!last && (
               <div className="flex gap-2">
-                {stepId !== 'import' && (
-                  <Button variant="ghost" size="md" onClick={onClose}>
-                    Skip
+                <Button
+                  variant="ghost"
+                  size="md"
+                  onClick={onClose}
+                  disabled={checkingImports || importing}
+                >
+                  Finish setup later
+                </Button>
+                {!['welcome', 'import'].includes(stepId) && (
+                  <Button
+                    variant="ghost"
+                    size="md"
+                    disabled={checkingImports || importing}
+                    onClick={() => {
+                      if (stepId === 'setup') {
+                        setSetupScan(null);
+                        setSetupImports(false);
+                      }
+                      if (stepId === 'providers') setStepId('computers');
+                      else void advance();
+                    }}
+                  >
+                    Skip this step
                   </Button>
                 )}
                 <Button

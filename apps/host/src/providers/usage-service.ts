@@ -7,6 +7,19 @@ import { inspectClaudeUsage } from './claude';
 import { inspectCodexUsage } from './codex';
 
 export class ProviderUsageService {
+  cachedWindows() {
+    const now = Date.now();
+    const ready = [...this.cached.values()].filter(
+      entry => entry.expiresAt > now && entry.value.status === 'ready',
+    );
+    return {
+      available: ready.length > 0,
+      count: ready.reduce(
+        (count, entry) => count + entry.value.windows.length,
+        0,
+      ),
+    };
+  }
   private readonly controller = new AbortController();
   private readonly cached = new Map<
     string,

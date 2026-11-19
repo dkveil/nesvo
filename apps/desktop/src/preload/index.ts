@@ -39,6 +39,8 @@ import {
   respondApprovalSchema,
   setupProfileInputSchema,
   setupProfileResultSchema,
+  setupDetectionInputSchema,
+  setupDetectionResultSchema,
   desktopConfigurationOwnerInputSchema,
   desktopConfigurationOwnerResultSchema,
   createSessionSchema,
@@ -613,6 +615,14 @@ const workflows: DesktopApi['workflows'] = {
     ),
 };
 const api: DesktopApi = {
+  setupDetection: async (input, hostId) =>
+    setupDetectionResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:setup-detection',
+        setupDetectionInputSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
   setupProfile: async (input, hostId) =>
     setupProfileResultSchema.parse(
       await ipcRenderer.invoke(

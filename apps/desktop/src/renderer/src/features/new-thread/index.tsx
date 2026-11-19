@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GitFork, Globe, ListChecks } from 'lucide-react';
 import {
   sessionIsolationSchema,
@@ -101,6 +101,7 @@ type Props = {
   >;
   onAdopted: (session: DesktopSession) => void;
   gitRepository: boolean;
+  setupSummary?: ReactNode;
   onStart: (
     input: CreateSessionInput,
     text: string,
@@ -124,6 +125,7 @@ export function NewThread({
   onManageComputers,
   busyReason,
   gitRepository,
+  setupSummary,
   hostApi,
   onStart,
   onAdopted,
@@ -678,6 +680,7 @@ export function NewThread({
                 </Composer>,
               )}
               {notice}
+              {setupSummary}
               <div className="flex min-w-0 flex-wrap items-center gap-1 px-2">
                 <HostPicker
                   computers={computers}

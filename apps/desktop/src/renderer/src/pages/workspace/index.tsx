@@ -297,6 +297,10 @@ import { PanelBody } from '@/shared/ui/panel';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
 import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
 import {
+  NewSessionSetupFinding,
+  SetupFindings,
+} from '@/widgets/settings/setup-findings';
+import {
   AuthoritySettingsContext,
   type SettingsAuthorityReview,
 } from '@/features/configuration/authority-review';
@@ -3943,6 +3947,7 @@ ${text}`
       pullRequests: pullRequestsAvailable ? openPullRequests : undefined,
       costs: window.nesvo ? openCosts : undefined,
       settings: () => setSettingsPage('general'),
+      detectSetup: () => setSettingsPage('your-setup'),
       shortcuts: () => setSettingsPage('shortcuts'),
       gettingStarted: () => guardEditor(onOpenOnboarding),
       toggleSidebar: isWide() ? () => toggleSidebar(!sidebarOpen) : undefined,
@@ -4807,6 +4812,18 @@ ${text}`
                 void store.refreshProvider(provider, threadSetup.hostId)
               }
               onManageComputers={() => setSettingsPage('computers')}
+              setupSummary={
+                <NewSessionSetupFinding
+                  computer={store.computers.find(
+                    computer => computer.id === threadSetup.hostId,
+                  )}
+                  directory={threadSetup.directory.trim()}
+                  onReview={() => {
+                    setAccountSettingsHostId(threadSetup.hostId);
+                    setSettingsPage('your-setup');
+                  }}
+                />
+              }
               busyReason={threadBusyReason}
               gitRepository={!!branch && branch.kind !== 'none'}
               hostApi={desktopApi(threadSetup.hostId)}
@@ -6500,13 +6517,18 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <SetupProfileSettings
-                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  key={`profile:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   initialEdit={editProfileRouting}
                   openHistory={() => {
                     setEditProfileRouting(false);
                     setSettingsPage('change-history');
                   }}
+                />
+                <SetupFindings
+                  key={`detection:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  openImport={() => setSettingsPage('import')}
                 />
               </div>
             ) : page === 'change-history' ? (

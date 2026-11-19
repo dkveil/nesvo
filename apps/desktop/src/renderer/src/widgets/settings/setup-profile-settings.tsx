@@ -49,11 +49,13 @@ export function SetupProfileSettings({
   openHistory,
   initialEdit = false,
   onboarding = false,
+  saveOnly = false,
 }: {
   computer?: Computer;
   openHistory?: () => void;
   initialEdit?: boolean;
   onboarding?: boolean;
+  saveOnly?: boolean;
 }) {
   const hostId = computer?.id;
   const connected = computer?.status === 'connected';
@@ -64,6 +66,8 @@ export function SetupProfileSettings({
   const [error, setError] = useState('');
   const [details, setDetails] = useState(false);
   const [skip, setSkip] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [destinationFile, setDestinationFile] = useState('');
   const [editing, setEditing] = useState(false);
   const [route, setRoute] = useState<keyof typeof routeLabels>('inbox');
   const [layer, setLayer] = useState<'machine' | 'shared'>('machine');
@@ -106,6 +110,7 @@ export function SetupProfileSettings({
       if (result.receipt?.status === 'conflicted')
         throw new Error('The profile changed. Refresh the preview.');
       if (input.action === 'edit-routing') setEditing(false);
+      if (input.action === 'save-as') setSaving(false);
     } catch (issue) {
       setError(errorDetail(issue));
     } finally {
@@ -137,143 +142,173 @@ export function SetupProfileSettings({
   const shared = review?.files.find(item => item.layer === 'shared');
   const destination =
     layer === 'shared' ? shared?.path : review?.routing.writesTo;
+  const openSave = () => {
+    setError('');
+    setDestinationFile(review?.status === 'absent' ? review.path : '');
+    setSaving(true);
+  };
   return (
     <div className="relative flex min-w-0 gap-4">
       <div className="min-w-0 flex-1 space-y-4">
-        <SettingsSection title="Profile">
-          {error && !editing && (
-            <StatusMessage tone="error">{error}</StatusMessage>
-          )}
-          {!review && !error && (
-            <StatusMessage tone="loading">Checking profile…</StatusMessage>
-          )}
-          {review && (
-            <>
-              <SettingsRow
-                title={profileStates[review.status]}
-                description={<MiddleTruncatedText path value={review.path} />}
-              >
+        {saveOnly ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!review || busy}
+            onClick={openSave}
+          >
+            Save as profile
+          </Button>
+        ) : (
+          <SettingsSection
+            title="Profile"
+            action={
+              review && !onboarding ? (
                 <Button
-                  variant="ghost"
                   size="sm"
+                  variant="outline"
+                  onClick={openSave}
                   disabled={busy}
-                  onClick={() =>
-                    void request({
-                      action: 'inspect',
-                      file: file.trim() || undefined,
-                    })
-                  }
                 >
-                  Refresh
+                  Save as profile
                 </Button>
-              </SettingsRow>
-              {review.issues.map((issue, index) => (
+              ) : undefined
+            }
+          >
+            {error && !editing && (
+              <StatusMessage tone="error">{error}</StatusMessage>
+            )}
+            {!review && !error && (
+              <StatusMessage tone="loading">Checking profile…</StatusMessage>
+            )}
+            {review && (
+              <>
                 <SettingsRow
-                  key={issue.file + index}
-                  title={issue.field || 'Profile file'}
-                  description={issue.reason}
-                />
-              ))}
-              {(ready || review.routing.managed) && (
-                <SettingsRow
-                  title="Default Inbox route"
-                  description={
-                    ready && review.routing.desired
-                      ? `${routeLabels[review.routing.effective]} → ${routeLabels[review.routing.desired]}`
-                      : `From profile · ${routeLabels[review.routing.effective]}`
-                  }
-                >
-                  {review.status === 'current' && review.routing.managed && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setRoute(review.routing.effective);
-                        setLayer('machine');
-                        setEditing(true);
-                      }}
-                    >
-                      Edit profile setting
-                    </Button>
-                  )}
-                </SettingsRow>
-              )}
-              {review.files.length > 0 && (
-                <SettingsRow
-                  title={
-                    pending
-                      ? `${pending} awaiting local review`
-                      : 'Source files'
-                  }
+                  title={profileStates[review.status]}
+                  description={<MiddleTruncatedText path value={review.path} />}
                 >
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setDetails(true)}
+                    disabled={busy}
+                    onClick={() =>
+                      void request({
+                        action: 'inspect',
+                        file: file.trim() || undefined,
+                      })
+                    }
                   >
-                    Review sources
+                    Refresh
                   </Button>
                 </SettingsRow>
-              )}
-              {ready && review.revision && (
-                <div className="flex flex-wrap gap-2 px-3 py-2">
-                  <Button
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      if (!review.revision) return;
-                      void request({
-                        action: 'apply',
-                        file: review.path,
-                        instanceId: review.instanceId,
-                        revision: review.revision,
-                        effectiveRevision: review.effectiveRevision,
-                        actionId: crypto.randomUUID(),
-                      });
-                    }}
+                {review.issues.map((issue, index) => (
+                  <SettingsRow
+                    key={issue.file + index}
+                    title={issue.field || 'Profile file'}
+                    description={issue.reason}
+                  />
+                ))}
+                {(ready || review.routing.managed) && (
+                  <SettingsRow
+                    title="Default Inbox route"
+                    description={
+                      ready && review.routing.desired
+                        ? `${routeLabels[review.routing.effective]} → ${routeLabels[review.routing.desired]}`
+                        : `From profile · ${routeLabels[review.routing.effective]}`
+                    }
                   >
-                    Load profile
-                  </Button>
-                  {onboarding && (
+                    {review.status === 'current' && review.routing.managed && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setRoute(review.routing.effective);
+                          setLayer('machine');
+                          setEditing(true);
+                        }}
+                      >
+                        Edit profile setting
+                      </Button>
+                    )}
+                  </SettingsRow>
+                )}
+                {review.files.length > 0 && (
+                  <SettingsRow
+                    title={
+                      pending
+                        ? `${pending} awaiting local review`
+                        : 'Source files'
+                    }
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDetails(true)}
+                    >
+                      Review sources
+                    </Button>
+                  </SettingsRow>
+                )}
+                {ready && review.revision && (
+                  <div className="flex flex-wrap gap-2 px-3 py-2">
                     <Button
                       size="sm"
-                      variant="ghost"
                       disabled={busy}
-                      onClick={() => setSkip(true)}
+                      onClick={() => {
+                        if (!review.revision) return;
+                        void request({
+                          action: 'apply',
+                          file: review.path,
+                          instanceId: review.instanceId,
+                          revision: review.revision,
+                          effectiveRevision: review.effectiveRevision,
+                          actionId: crypto.randomUUID(),
+                        });
+                      }}
                     >
-                      Skip profile
+                      Load profile
                     </Button>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-          {!onboarding && (
-            <div className="flex items-end gap-2 px-3 pt-2">
-              <Field
-                id={id}
-                label="Another profile on this computer"
-                className="min-w-0 flex-1"
-              >
-                <PathInput
+                    {onboarding && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => setSkip(true)}
+                      >
+                        Skip profile
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {!onboarding && (
+              <div className="flex items-end gap-2 px-3 pt-2">
+                <Field
                   id={id}
-                  value={file}
-                  onChange={event => setFile(event.target.value)}
-                />
-              </Field>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!file.trim() || busy}
-                onClick={() =>
-                  void request({ action: 'inspect', file: file.trim() })
-                }
-              >
-                Preview
-              </Button>
-            </div>
-          )}
-        </SettingsSection>
+                  label="Another profile on this computer"
+                  className="min-w-0 flex-1"
+                >
+                  <PathInput
+                    id={id}
+                    value={file}
+                    onChange={event => setFile(event.target.value)}
+                  />
+                </Field>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!file.trim() || busy}
+                  onClick={() =>
+                    void request({ action: 'inspect', file: file.trim() })
+                  }
+                >
+                  Preview
+                </Button>
+              </div>
+            )}
+          </SettingsSection>
+        )}
         {openHistory && (
           <Button variant="ghost" size="sm" onClick={openHistory}>
             Open Change history
@@ -400,6 +435,56 @@ export function SetupProfileSettings({
                 }}
               >
                 Save profile setting
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {saving && review && (
+        <Dialog
+          open
+          onOpenChange={open => {
+            if (!open && !busy) setSaving(false);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Save as profile</DialogTitle>
+              <DialogDescription>
+                Save and use the current default Inbox route on {computer.name}.
+              </DialogDescription>
+            </DialogHeader>
+            <SettingsRow
+              title="Default Inbox route"
+              description={routeLabels[review.routing.effective]}
+            />
+            <Field
+              id={id + '-new-profile'}
+              label="New YAML file on this computer"
+            >
+              <PathInput
+                id={id + '-new-profile'}
+                value={destinationFile}
+                onChange={event => setDestinationFile(event.target.value)}
+              />
+            </Field>
+            {error && <StatusMessage tone="error">{error}</StatusMessage>}
+            <DialogFooter>
+              <DialogCancel disabled={busy}>Cancel</DialogCancel>
+              <Button
+                disabled={busy || !review.instanceId || !destinationFile.trim()}
+                onClick={() => {
+                  if (!review.instanceId) return;
+                  void request({
+                    action: 'save-as',
+                    file: destinationFile.trim(),
+                    instanceId: review.instanceId,
+                    effectiveRevision: review.effectiveRevision,
+                    actionId: crypto.randomUUID(),
+                  });
+                }}
+              >
+                Create profile
               </Button>
             </DialogFooter>
           </DialogContent>

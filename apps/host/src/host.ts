@@ -20,6 +20,7 @@ import {
   type Session,
   type SessionWindow,
   type SetupProfileResult,
+  type SetupDetectionResult,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
@@ -101,6 +102,7 @@ import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assista
 import { DesktopConfigurationProfile } from './desktop-configuration-profile';
 import { SetupProfileService } from './setup-profile-service';
 import { SetupProfileFileError } from './setup-profile-file';
+import { SetupDetection } from './setup-detection';
 import {
   authorityConfiguration,
   supportsModeProposal,
@@ -1258,6 +1260,17 @@ export const serveHost = ({
         database,
         configuration,
       );
+      const setupDetection = new SetupDetection(
+        database,
+        computerId,
+        directory,
+        setupProfile,
+        () => ({
+          repositories: trackedRepositories.list().length,
+          usage: usage.cachedWindows(),
+        }),
+        probes.controller.signal,
+      );
       const profile = desktopProfile
         ? new DesktopConfigurationProfile(database)
         : null;
@@ -2134,6 +2147,23 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (request.method === 'setup-detection') {
+          const { id, input } = request;
+          const operation = async (): Promise<SetupDetectionResult> => ({
+            ok: true,
+            scan:
+              input.action === 'scan'
+                ? await setupDetection.scan(input)
+                : setupDetection.acknowledge(input),
+          });
+          const pending = operation()
+            .catch(configurationFailure)
+            .then(result => send({ type: 'setup-detection', id, result }))
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
         if (request.method === 'setup-profile') {
           const { id, input } = request;
           const operation = async (): Promise<SetupProfileResult> => {
@@ -2144,9 +2174,11 @@ export const serveHost = ({
                 'unsupported',
                 'Profile changes are unavailable in Work laptop mode.',
               );
-            const result = await (input.action === 'edit-routing'
-              ? setupProfile.editRouting(input)
-              : setupProfile.apply(input));
+            const result = await (input.action === 'save-as'
+              ? setupProfile.saveAs(input)
+              : input.action === 'edit-routing'
+                ? setupProfile.editRouting(input)
+                : setupProfile.apply(input));
             return {
               ok: true,
               review: setupProfile.inspect(input.file),
