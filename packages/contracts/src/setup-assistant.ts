@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { reasoningEffortSchema } from './reasoning-effort';
 import { providerSchema } from './sessions';
 import {
   setupProfilePathSchema,
@@ -9,6 +10,7 @@ const context = z.strictObject({
   instanceId: z.uuid(),
   provider: providerSchema,
   model: z.string().trim().min(1).max(200),
+  effort: reasoningEffortSchema.optional(),
   directory: setupProfilePathSchema.optional(),
 });
 
