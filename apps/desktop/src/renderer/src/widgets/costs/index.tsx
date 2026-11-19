@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react';
+import { Badge } from '@/shared/ui/badge';
+import { pathBasename } from '@/shared/lib/path-basename';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, RefreshCw, Wallet } from 'lucide-react';
 import type {
   Computer,
@@ -10,6 +13,8 @@ import type {
   DesktopApi,
   DesktopSession,
   ReadCostsInput,
+  SessionGroup,
+  SessionGroupList,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
@@ -45,6 +50,8 @@ type Props = {
   computers: Computer[];
   sessions: DesktopSession[];
   initialHostId: string;
+  showBudgets: boolean;
+  groupsByHost: Record<string, SessionGroupList>;
   onSession: (key: string) => void;
 };
 
@@ -117,14 +124,20 @@ function CostTable({
                   >
                     <span className="truncate">{row.label}</span>
                   </Button>
+                ) : label === 'Project folder' ? (
+                  <MiddleTruncatedText path value={row.label} />
                 ) : (
                   row.label
                 )}
               </td>
-              <td className="w-28 py-1.5 px-2 text-right">
-                <CostAmount cost={row.costUsd} />
+              <td className="w-48 py-1.5 px-2 text-right whitespace-nowrap">
+                {row.costUsd === null && row.unknownCostTurns ? (
+                  <span className="text-muted-foreground">Unpriced</span>
+                ) : (
+                  <CostAmount cost={row.costUsd} />
+                )}
                 <div className="text-2xs text-muted-foreground">
-                  {costCoverage(row)}
+                  {row.costUsd !== null ? costCoverage(row) : null}
                 </div>
               </td>
               <td className="w-20 px-2 text-right text-muted-foreground">
@@ -151,6 +164,8 @@ export function CostsView({
   computers,
   sessions,
   initialHostId,
+  showBudgets,
+  groupsByHost,
   onSession,
 }: Props) {
   const [selected, setSelected] = useState(initialHostId);
@@ -164,7 +179,7 @@ export function CostsView({
       aria-label="Costs"
       className="min-h-0 min-w-0 flex-1 overflow-y-auto"
     >
-      <div className="mx-auto max-w-3xl space-y-6 px-5 py-5 md:px-7">
+      <div className="mx-auto max-w-5xl space-y-6 px-5 py-5 md:px-7">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SegmentedControl
             label="Cost period"
@@ -212,6 +227,10 @@ export function CostsView({
             api={api}
             hostId={hostId}
             range={range}
+            computerName={computer.name}
+            groupBudgets={computer.capabilities.includes('group-cost-budgets')}
+            groups={groupsByHost[hostId]?.groups ?? []}
+            showBudgets={showBudgets && hostId === initialHostId}
             sessions={sessions.filter(item => item.hostId === hostId)}
             onSession={onSession}
           />
@@ -227,8 +246,15 @@ function ComputerCosts({
   range,
   sessions,
   onSession,
-}: Pick<Props, 'api' | 'sessions' | 'onSession'> & {
+  computerName,
+  groupBudgets,
+  groups,
+  showBudgets,
+}: Pick<Props, 'api' | 'sessions' | 'onSession' | 'showBudgets'> & {
   hostId: string;
+  computerName: string;
+  groupBudgets: boolean;
+  groups: SessionGroup[];
   range: CostPeriod;
 }) {
   const [groupBy, setGroupBy] =
@@ -281,6 +307,12 @@ function ComputerCosts({
     ? result.report
     : undefined;
   const budgets = result?.budgets;
+  const budgetSection = useRef<HTMLElement>(null);
+  const budgetsReady = !!budgets;
+  useEffect(() => {
+    if (showBudgets && budgetsReady)
+      budgetSection.current?.scrollIntoView({ block: 'start' });
+  }, [showBudgets, budgetsReady]);
   const error = result?.key === key ? result.error : undefined;
   const closeModal = () => setModal(null);
 
@@ -303,7 +335,7 @@ function ComputerCosts({
           >
             Cost (USD) · {timeZone}
           </SectionLabel>
-          {report && (
+          {report && report.totals.turnCount > 0 && (
             <div className="flex flex-wrap items-baseline gap-x-3">
               <CostAmount
                 cost={report.totals.costUsd}
@@ -357,18 +389,24 @@ function ComputerCosts({
                     </dd>
                   </div>
                 </dl>
-                <CostChart range={range} buckets={report.buckets} />
+                {range !== 'day' && (
+                  <CostChart range={range} buckets={report.buckets} />
+                )}
               </>
-            ) : Object.values(report.transcripts).includes('available') ? (
-              <p className="text-xs text-muted-foreground">
-                No transcript usage found in this period.
-              </p>
-            ) : null}
+            ) : (
+              <EmptyState
+                icon={Wallet}
+                size="sm"
+                title="No usage in this period"
+                description="Costs appear here after this computer records usage in a provider transcript."
+              />
+            )}
             {Object.entries(report.transcripts).map(([provider, status]) =>
-              status === 'available' ? null : (
+              status === 'available' ||
+              (status === 'missing' && !report.totals.turnCount) ? null : (
                 <p key={provider} className="text-xs text-muted-foreground">
                   {status === 'missing'
-                    ? `${provider} transcript folder is missing.`
+                    ? `No transcripts from ${provider} on this computer.`
                     : `Some ${provider} transcripts could not be read. Totals may be incomplete.`}
                 </p>
               ),
@@ -413,7 +451,11 @@ function ComputerCosts({
         </section>
       )}
       {budgets && (
-        <section aria-label="Budgets" className="space-y-1 border-t pt-4">
+        <section
+          ref={budgetSection}
+          aria-label="Budgets"
+          className="space-y-1 border-t pt-4"
+        >
           <SectionLabel
             as="h2"
             className="px-0"
@@ -444,13 +486,18 @@ function ComputerCosts({
             <ul className="divide-y divide-border">
               {budgets.budgets.map(({ budget, totals }) => {
                 const target =
-                  budget.scope === 'session'
-                    ? (sessions.find(session => session.id === budget.target)
-                        ?.title ?? budget.target)
+                  budget.scope === 'computer'
+                    ? computerName
                     : budget.scope === 'directory'
-                      ? budget.target
-                      : null;
-                const label = `${scopeLabels[budget.scope]} budget ${budget.id.slice(0, 8)}`;
+                      ? pathBasename(budget.target)
+                      : budget.scope === 'group'
+                        ? (groups.find(group => group.id === budget.target)
+                            ?.name ?? 'Unavailable group')
+                        : (sessions.find(
+                            session => session.id === budget.target,
+                          )?.title ?? 'Unavailable session');
+                const label =
+                  scopeLabels[budget.scope] + ' budget for ' + target;
                 const spend = totals.costUsd;
                 const limit = budget.limitUsd;
                 const percent =
@@ -459,12 +506,28 @@ function ComputerCosts({
                   <li key={budget.id} className="space-y-2 py-3">
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="text-ui font-medium">{label}</p>
-                        {target && (
-                          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p
+                            className="min-w-0 truncate text-ui font-medium"
+                            title={
+                              budget.scope === 'directory'
+                                ? budget.target
+                                : target
+                            }
+                          >
                             {target}
                           </p>
-                        )}
+                          <Badge
+                            appearance="outline"
+                            tone={budgetTone(percent, budget.action)}
+                          >
+                            {actionLabels[budget.action]}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {scopeLabels[budget.scope]} ·{' '}
+                          {periodLabels[budget.period]}
+                        </p>
                       </div>
                       <span className="pt-0.5 text-xs whitespace-nowrap">
                         <CostAmount cost={spend} />
@@ -498,11 +561,11 @@ function ComputerCosts({
                       tone={budgetTone(percent, budget.action)}
                       aria-valuetext={`${formatSpend(spend)} / ${formatSpend(limit)}`}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {periodLabels[budget.period]} ·{' '}
-                      {actionLabels[budget.action]}
-                      {costCoverage(totals) && ` · ${costCoverage(totals)}`}
-                    </p>
+                    {costCoverage(totals) && (
+                      <p className="text-xs text-muted-foreground">
+                        {costCoverage(totals)}
+                      </p>
+                    )}
                   </li>
                 );
               })}
@@ -514,6 +577,9 @@ function ComputerCosts({
               removing={modal.removing}
               timeZone={budgets.timeZone}
               sessions={sessions}
+              groups={groups}
+              computerName={computerName}
+              groupBudgets={groupBudgets}
               onSave={async input => {
                 if (modal.budget)
                   await api.updateCostBudget(

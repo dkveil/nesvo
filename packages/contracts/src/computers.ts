@@ -42,6 +42,7 @@ export const hostCapabilitySchema = z.enum([
   'history-search',
   'session-groups',
   'costs',
+  'group-cost-budgets',
   'mcp-servers',
   'conversation-import',
   'scheduled-job-change-triggers',

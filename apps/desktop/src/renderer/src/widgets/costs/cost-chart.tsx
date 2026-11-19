@@ -91,6 +91,7 @@ export function CostChart({
 }) {
   const max = Math.max(0, ...buckets.map(bucket => bucket.costUsd ?? 0));
   const slots = periodSlots(range, buckets);
+  const axis = max > 0 ? [max, max / 2, 0] : [0];
   const first = dayLabel.format(new Date(slots[0]!.date));
   const last = dayLabel.format(new Date(slots.at(-1)!.date));
   return (
@@ -100,45 +101,58 @@ export function CostChart({
         className="flex justify-between text-micro text-muted-foreground"
       >
         <span>Daily cost</span>
-        {max > 0 && (
-          <span className="tabular-nums">Peak {formatSpend(max)}</span>
-        )}
       </div>
-      <div className="flex h-24 items-end gap-1">
-        {slots.map(({ date, bucket }) =>
-          bucket ? (
-            <Hint key={date} label={describe(date, bucket)}>
-              <div
-                tabIndex={0}
-                aria-label={describe(date, bucket)}
-                className="group/bar focus-ring flex h-full min-w-0 flex-1 items-end justify-center rounded-sm transition-colors duration-fast hover:bg-accent"
-              >
-                <BarMark bucket={bucket} max={max} />
-              </div>
-            </Hint>
-          ) : (
+      <div className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-2">
+        <div
+          aria-hidden="true"
+          className="flex h-28 flex-col justify-between text-2xs text-muted-foreground tabular-nums"
+        >
+          {axis.map(amount => (
+            <span key={amount}>{formatSpend(amount)}</span>
+          ))}
+        </div>
+        <div className="relative flex h-28 items-end gap-1 border-y">
+          {max > 0 && (
             <div
-              key={date}
               aria-hidden="true"
-              className="flex h-full min-w-0 flex-1 items-end justify-center"
+              className="pointer-events-none absolute inset-x-0 top-1/2 border-t border-dashed"
+            />
+          )}
+          {slots.map(({ date, bucket }) =>
+            bucket ? (
+              <Hint key={date} label={describe(date, bucket)}>
+                <div
+                  tabIndex={0}
+                  aria-label={describe(date, bucket)}
+                  className="group/bar focus-ring flex h-full min-w-0 flex-1 items-end justify-center rounded-sm transition-colors duration-fast hover:bg-accent"
+                >
+                  <BarMark bucket={bucket} max={max} />
+                </div>
+              </Hint>
+            ) : (
+              <div
+                key={date}
+                aria-hidden="true"
+                className="flex h-full min-w-0 flex-1 items-end justify-center"
+              >
+                <BarMark max={max} />
+              </div>
+            ),
+          )}
+        </div>
+        <div aria-hidden="true" className="col-start-2 flex gap-1">
+          {slots.map(({ date }, index) => (
+            <span
+              key={date}
+              className={cn(
+                'min-w-0 flex-1 overflow-visible text-2xs whitespace-nowrap text-muted-foreground',
+                range === 'month' ? 'text-left' : 'text-center',
+              )}
             >
-              <BarMark max={max} />
-            </div>
-          ),
-        )}
-      </div>
-      <div aria-hidden="true" className="flex gap-1">
-        {slots.map(({ date }, index) => (
-          <span
-            key={date}
-            className={cn(
-              'min-w-0 flex-1 overflow-visible text-micro whitespace-nowrap text-muted-foreground',
-              range === 'month' ? 'text-left' : 'text-center',
-            )}
-          >
-            {axisLabel(range, new Date(date), index)}
-          </span>
-        ))}
+              {axisLabel(range, new Date(date), index)}
+            </span>
+          ))}
+        </div>
       </div>
       <figcaption className="sr-only">
         {first === last ? first : `${first} to ${last}`}

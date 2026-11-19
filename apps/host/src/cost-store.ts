@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { join, normalize } from 'node:path';
+import { basename, join, normalize } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   costBudgetSchema,
@@ -185,14 +185,37 @@ function atLimit(spend: number | null, limit: number): boolean {
   );
 }
 
-function budgetLabel(budget: CostBudget): string {
-  return `${budget.scope} budget ${budget.id.slice(0, 8)} (USD ${budget.limitUsd} per ${budget.period})`;
+const budgetMoney = new Intl.NumberFormat('en', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 2,
+});
+
+const budgetSmallMoney = new Intl.NumberFormat('en', {
+  style: 'currency',
+  currency: 'USD',
+  maximumSignificantDigits: 4,
+});
+const formatBudgetAmount = (amount: number) =>
+  (amount > 0 && amount < 0.01 ? budgetSmallMoney : budgetMoney).format(amount);
+
+function budgetLabel(
+  budget: CostBudget,
+  title: string,
+  group: string | undefined,
+) {
+  if (budget.scope === 'session') return `Session budget “${title}”`;
+  if (budget.scope === 'directory')
+    return `Project folder budget “${basename(budget.target)}”`;
+  if (budget.scope === 'group')
+    return 'Session group budget “' + (group ?? 'Session group') + '”';
+  return 'Computer budget';
 }
 
 function budgetDetails(totals: CostTotals) {
   return [
-    totals.estimatedCostTurns ? 'includes estimated cost' : '',
-    totals.unknownCostTurns ? 'includes usage with unavailable cost' : '',
+    totals.estimatedCostTurns ? 'estimated costs' : '',
+    totals.unknownCostTurns ? 'unpriced usage' : '',
   ]
     .filter(Boolean)
     .join(', ');
@@ -400,22 +423,40 @@ export class CostStore {
     );
   }
 
-  check(session: Pick<Session, 'id' | 'directory'>, now: Date) {
+  check(
+    session: Pick<Session, 'id' | 'directory' | 'title' | 'groupId'>,
+    now: Date,
+  ) {
     const budgets = this.budgets().filter(
       budget =>
         budget.scope === 'computer' ||
         (budget.scope === 'directory' &&
           folderKey(budget.target) === folderKey(session.directory)) ||
-        (budget.scope === 'session' && budget.target === session.id),
+        (budget.scope === 'session' && budget.target === session.id) ||
+        (budget.scope === 'group' && budget.target === session.groupId),
     );
     const warnings: string[] = [];
     for (const { budget, totals } of this.spend(budgets, now)) {
       if (!atLimit(totals.costUsd, budget.limitUsd)) continue;
       const details = budgetDetails(totals);
-      const label = budgetLabel(budget) + (details ? ` [${details}]` : '');
+      const group =
+        budget.scope === 'group'
+          ? this.database
+              .prepare('SELECT name FROM session_groups WHERE id = ?')
+              .get(budget.target)?.name
+          : undefined;
+      const rule = budgetLabel(
+        budget,
+        session.title,
+        typeof group === 'string' ? group : undefined,
+      );
+      const spend = formatBudgetAmount(totals.costUsd!);
+      const limit = formatBudgetAmount(budget.limitUsd);
+      const amounts = `${spend} spent of ${limit} per ${budget.period}`;
+      const label = `${rule} (${amounts}${details ? `, ${details}` : ''})`;
       if (budget.action === 'refuse-new-turns')
         return {
-          refusal: `New turn refused. The ${label} has reached its limit.`,
+          refusal: `${rule} refused this turn. ${amounts}.${details ? ` Figures include ${details}.` : ''} Change the rule in Costs → Budgets.`,
         };
       warnings.push(label);
     }
@@ -440,6 +481,7 @@ export class CostStore {
           if (
             budget.scope === 'computer' ||
             (budget.scope === 'session' && row.session_id === budget.target) ||
+            (budget.scope === 'group' && row.group_id === budget.target) ||
             (budget.scope === 'directory' &&
               row.directory !== null &&
               folderKey(row.directory) === folderKey(budget.target))

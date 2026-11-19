@@ -58,6 +58,11 @@ const directoryBudget = z.strictObject({
   scope: z.literal('directory'),
   target: z.string().min(1).max(4096),
 });
+const groupBudget = z.strictObject({
+  ...costBudgetTerms,
+  scope: z.literal('group'),
+  target: z.uuid(),
+});
 const sessionBudget = z.strictObject({
   ...costBudgetTerms,
   scope: z.literal('session'),
@@ -67,12 +72,14 @@ const sessionBudget = z.strictObject({
 export const createCostBudgetSchema = z.discriminatedUnion('scope', [
   computerBudget,
   directoryBudget,
+  groupBudget,
   sessionBudget,
 ]);
 
 export const costBudgetSchema = z.discriminatedUnion('scope', [
   computerBudget.extend({ id: z.uuid() }),
   directoryBudget.extend({ id: z.uuid() }),
+  groupBudget.extend({ id: z.uuid() }),
   sessionBudget.extend({ id: z.uuid() }),
 ]);
 

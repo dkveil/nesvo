@@ -6,7 +6,8 @@ export const periodLabels = {
 } as const;
 export const scopeLabels = {
   computer: 'Computer',
-  directory: 'Directory',
+  directory: 'Project folder',
+  group: 'Session group',
   session: 'Session',
 } as const;
 export const actionLabels = {

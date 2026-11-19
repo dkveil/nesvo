@@ -1,3 +1,4 @@
+import { isCostBudgetRefusal } from '@/shared/lib/cost-budget-refusal';
 import {
   Fragment,
   useEffect,
@@ -132,6 +133,7 @@ type Props = {
     decision: Omit<RespondApprovalInput, 'sessionId' | 'runId' | 'fingerprint'>,
   ) => void;
   error: string;
+  onManageBudget: () => void;
   onDraft: (value: string) => void;
   onSend: (typed?: { text: string; skill: SelectedSkill }) => void;
   onStop: () => void;
@@ -182,6 +184,7 @@ export function Conversation({
   approvalPending,
   onApproval,
   error,
+  onManageBudget,
   onDraft,
   onSend,
   onStop,
@@ -1301,13 +1304,20 @@ export function Conversation({
             })}
             {preparation}
             {error && (
-              <StatusMessage
-                tone="error"
-                variant="notice"
-                className="whitespace-pre-wrap"
-              >
-                {error}
-              </StatusMessage>
+              <div className="space-y-2">
+                <StatusMessage
+                  tone="error"
+                  variant="notice"
+                  className="whitespace-pre-wrap"
+                >
+                  {error}
+                </StatusMessage>
+                {isCostBudgetRefusal(error) && (
+                  <Button size="sm" variant="outline" onClick={onManageBudget}>
+                    Manage budgets
+                  </Button>
+                )}
+              </div>
             )}
             <div ref={bottom} />
           </div>

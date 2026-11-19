@@ -1519,8 +1519,13 @@ test(
     const messageId = randomUUID();
     const refused = await send('fixture:stream', messageId);
     assert.equal(refused.type, 'error');
-    assert.match(refused.message, /New turn refused/);
-    assert.ok(refused.message.includes(refusal.budget.id.slice(0, 8)));
+    assert.ok(
+      refused.message.startsWith(
+        `Computer budget refused this turn. $${budgetUsage.costUsd.toFixed(2)} spent of $0.40 per day.`,
+      ),
+      refused.message,
+    );
+    assert.match(refused.message, /Change the rule in Costs/);
     assert.equal(
       (await request('list-sessions')).sessions.find(
         session => session.id === claude.id,
@@ -1597,7 +1602,7 @@ test(
     const blockedSession = (await request('list-sessions')).sessions.find(
       session => session.id === failed.sessionId,
     );
-    assert.ok(blockedSession.error.includes(refusal.budget.id.slice(0, 8)));
+    assert.match(blockedSession.error, /^Computer budget refused this turn/);
     assert.deepEqual(blockedSession.messages, []);
 
     assert.equal(
@@ -1605,6 +1610,43 @@ test(
       'cost-budget-deleted',
     );
     assert.deepEqual((await request('list-cost-budgets')).list.budgets, []);
+
+    const groupId = randomUUID();
+    assert.equal(
+      (await request('create-session-group', { groupId, name: 'Release work' }))
+        .type,
+      'session-groups',
+    );
+    assert.equal(
+      (
+        await request('move-session', {
+          sessionId: claude.id,
+          groupId,
+          position: 0,
+        })
+      ).type,
+      'session',
+    );
+    const groupBudget = await request('create-cost-budget', {
+      scope: 'group',
+      target: groupId,
+      period: 'day',
+      limitUsd: 0.4,
+      action: 'refuse-new-turns',
+    });
+    assert.equal(groupBudget.type, 'cost-budget');
+    assert.equal(
+      (await request('list-cost-budgets')).list.budgets[0].totals.costUsd,
+      0.5,
+    );
+    assert.match(
+      (await send('fixture:stream')).message,
+      /^Session group budget “Release work” refused this turn/,
+    );
+    assert.equal(
+      (await request('delete-cost-budget', { id: groupBudget.budget.id })).type,
+      'cost-budget-deleted',
+    );
 
     const relativeTime = offset =>
       new Date(Date.parse(timestamp) + offset).toISOString();
@@ -1828,6 +1870,7 @@ test(
         'history-search',
         'session-groups',
         'costs',
+        'group-cost-budgets',
         'mcp-servers',
         'conversation-import',
         'scheduled-job-change-triggers',
@@ -7447,6 +7490,7 @@ test(
       'history-search',
       'session-groups',
       'costs',
+      'group-cost-budgets',
       'mcp-servers',
       'conversation-import',
       'scheduled-job-change-triggers',

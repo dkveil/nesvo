@@ -3120,6 +3120,16 @@ export const serveHost = ({
         }
         const response = yield* Effect.sync((): HostReply => {
           try {
+            if (
+              (request.method === 'create-cost-budget' ||
+                request.method === 'update-cost-budget') &&
+              request.input.scope === 'group' &&
+              !groupStore.get(request.input.target)
+            )
+              throw new SessionError(
+                'not-found',
+                'This session group no longer exists.',
+              );
             if (request.method === 'create-cost-budget') {
               const budget = costs.create(request.input);
               if (!budget)

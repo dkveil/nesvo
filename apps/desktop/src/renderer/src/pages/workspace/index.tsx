@@ -1,3 +1,4 @@
+import { isCostBudgetRefusal } from '@/shared/lib/cost-budget-refusal';
 import {
   lazy,
   Suspense,
@@ -376,6 +377,7 @@ export function Workspace({
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
   const [costsView, setCostsView] = useState(false);
+  const [showBudgets, setShowBudgets] = useState(false);
   const [automation, setAutomation] = useState(location.automation);
   const [editor, setEditor] = useState<{
     initial: AutomationValues;
@@ -1644,7 +1646,8 @@ export function Workspace({
     setAutomation('');
     setCreating(true);
   };
-  const openCosts = () =>
+  const openCosts = () => openCostsView(false);
+  const openCostsView = (budgets: boolean) =>
     guardEditor(() => {
       navigationVersion.current += 1;
       setPanel(null);
@@ -1658,6 +1661,7 @@ export function Workspace({
       setNavigationOpen(false);
       setDetailsOpen(false);
       setCardOpen(false);
+      setShowBudgets(budgets);
       setCostsView(true);
     });
   const changeDraft = (id: string, value: string) => {
@@ -1738,9 +1742,15 @@ export function Workspace({
       store.merge([session]);
       acknowledge();
     } catch (failure) {
+      const detail = errorDetail(failure);
+      if (isCostBudgetRefusal(detail)) {
+        delete sendAttempts.current[sessionKey];
+        setErrors(previous => ({ ...previous, [sessionKey]: detail }));
+        return;
+      }
       setErrors(previous => ({
         ...previous,
-        [sessionKey]: `Could not confirm that the message was sent. ${errorDetail(failure)}`,
+        [sessionKey]: `Could not confirm that the message was sent. ${detail}`,
       }));
       try {
         const history = await store.recover(hostId);
@@ -4717,6 +4727,8 @@ ${text}`
               computers={store.computers}
               sessions={store.sessions}
               initialHostId={selectedHostId}
+              showBudgets={showBudgets}
+              groupsByHost={store.groupLists}
               onSession={select}
             />
           ) : inbox ? (
@@ -5118,6 +5130,7 @@ ${text}`
                   selected.status !== 'stopping'
                 }
                 error={errors[selectedKey] ?? ''}
+                onManageBudget={() => openCostsView(true)}
                 onDraft={value => changeDraft(selectedKey, value)}
                 onSend={typed => void send(typed)}
                 onStop={() => void stop()}

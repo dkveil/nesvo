@@ -1,9 +1,11 @@
+import { pathBasename } from '@/shared/lib/path-basename';
 import { useState, type FormEvent } from 'react';
 import {
   createCostBudgetSchema,
   type CostBudget,
   type CreateCostBudgetInput,
   type DesktopSession,
+  type SessionGroup,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
@@ -34,6 +36,9 @@ type BudgetDialogProps = {
   removing: boolean;
   timeZone: string;
   sessions: DesktopSession[];
+  groups: SessionGroup[];
+  computerName: string;
+  groupBudgets: boolean;
   onSave: (input: CreateCostBudgetInput) => Promise<unknown>;
   onRemove: () => Promise<unknown>;
   onClose: () => void;
@@ -50,7 +55,7 @@ function BudgetSelect<T extends string>({
   id: string;
   label: string;
   value: T;
-  options: Record<T, string>;
+  options: Partial<Record<T, string>>;
   placeholder?: string;
   onChange: (value: T) => void;
 }) {
@@ -83,10 +88,17 @@ export function BudgetDialog({
   removing,
   timeZone,
   sessions,
+  groups,
+  computerName,
+  groupBudgets,
   onSave,
   onRemove,
   onClose,
 }: BudgetDialogProps) {
+  const { group, ...otherScopes } = scopeLabels;
+  const availableScopes = groupBudgets
+    ? { ...otherScopes, group }
+    : otherScopes;
   const [scope, setScope] = useState(budget?.scope ?? 'computer');
   const [target, setTarget] = useState(
     budget && 'target' in budget ? budget.target : '',
@@ -100,10 +112,22 @@ export function BudgetDialog({
     scope === 'directory'
       ? [...new Set(sessions.map(session => session.directory))]
           .sort()
-          .map(directory => ({ value: directory, label: directory }))
-      : sessions.map(session => ({ value: session.id, label: session.title }));
+          .map(directory => ({
+            value: directory,
+            label: pathBasename(directory),
+          }))
+      : scope === 'group'
+        ? groups.map(group => ({ value: group.id, label: group.name }))
+        : sessions.map(session => ({
+            value: session.id,
+            label: session.title,
+          }));
   if (target && !targets.some(option => option.value === target))
-    targets.unshift({ value: target, label: target });
+    targets.unshift({
+      value: target,
+      label:
+        scope === 'directory' ? pathBasename(target) : 'Unavailable target',
+    });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -140,7 +164,7 @@ export function BudgetDialog({
         if (!open && !saving) onClose();
       }}
     >
-      <DialogContent showCloseButton={!saving}>
+      <DialogContent surface="panel" showCloseButton={!saving}>
         <DialogHeader>
           <DialogTitle>
             {removing
@@ -151,7 +175,7 @@ export function BudgetDialog({
           </DialogTitle>
           <DialogDescription>
             {removing && budget
-              ? `Remove the ${budget.scope} budget ${budget.id.slice(0, 8)} of ${formatSpend(budget.limitUsd)} per ${budget.period}.`
+              ? `Remove the budget for ${budget.scope === 'computer' ? computerName : (targets.find(item => item.value === budget.target)?.label ?? 'the selected scope')} of ${formatSpend(budget.limitUsd)} per ${budget.period}.`
               : `Periods follow ${timeZone}. The host checks known transcript costs before each new turn.`}
           </DialogDescription>
         </DialogHeader>
@@ -162,7 +186,7 @@ export function BudgetDialog({
                 id="budget-scope"
                 label="Scope"
                 value={scope}
-                options={scopeLabels}
+                options={availableScopes}
                 onChange={value => {
                   setScope(value);
                   setTarget('');
