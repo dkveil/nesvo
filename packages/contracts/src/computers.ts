@@ -96,6 +96,7 @@ export const hostCapabilitySchema = z.enum([
   'portable-checks',
   'setup-profile-v1',
   'setup-detection-v1',
+  'setup-assistant-v1',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

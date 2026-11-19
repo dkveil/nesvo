@@ -232,6 +232,7 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               <SetupFindings
                 computer={local}
                 onboarding
+                statuses={statuses}
                 onCompleteScan={setSetupScan}
                 openImport={
                   local?.capabilities.includes('manager-import')

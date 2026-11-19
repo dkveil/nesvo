@@ -21,6 +21,7 @@ import {
   type SessionWindow,
   type SetupProfileResult,
   type SetupDetectionResult,
+  type SetupAssistantResult,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
@@ -103,6 +104,7 @@ import { DesktopConfigurationProfile } from './desktop-configuration-profile';
 import { SetupProfileService } from './setup-profile-service';
 import { SetupProfileFileError } from './setup-profile-file';
 import { SetupDetection } from './setup-detection';
+import { SetupAssistant } from './setup-assistant';
 import {
   authorityConfiguration,
   supportsModeProposal,
@@ -1250,7 +1252,15 @@ export const serveHost = ({
           .map(run => run.id);
       const configuration: ConfigurationChanges = new ConfigurationChanges(
         new ConfigurationChangeStore(database),
-        change => emit({ type: 'configuration-changed', change }),
+        change => {
+          emit({ type: 'configuration-changed', change });
+          if (
+            change.status === 'applied' &&
+            change.target.area === 'setup-profile-file' &&
+            change.target.key === 'recipe'
+          )
+            void setupProfile.recoverPendingReviews().catch(() => undefined);
+        },
         (source, target) =>
           configurationDevices.canPropose(source.deviceId, target),
         workLaptopMode,
@@ -1269,6 +1279,16 @@ export const serveHost = ({
           repositories: trackedRepositories.list().length,
           usage: usage.cachedWindows(),
         }),
+        probes.controller.signal,
+      );
+      const setupAssistant = new SetupAssistant(
+        computerId,
+        directory,
+        database,
+        sessions,
+        setupDetection,
+        setupProfile,
+        configuration,
         probes.controller.signal,
       );
       const profile = desktopProfile
@@ -2146,6 +2166,24 @@ export const serveHost = ({
               result: configurationFailure(error),
             }))
             .then(send)
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
+        if (request.method === 'setup-assistant') {
+          const { id, input } = request;
+          const operation = async (): Promise<SetupAssistantResult> => {
+            if (workLaptopMode && input.action === 'send')
+              throw new ConfigurationRefusal(
+                'unsupported',
+                'The setup assistant is unavailable in Work laptop mode.',
+              );
+            return { ok: true, sessionId: await setupAssistant.respond(input) };
+          };
+          const pending = operation()
+            .catch(configurationFailure)
+            .then(result => send({ type: 'setup-assistant', id, result }))
             .catch(() => undefined)
             .finally(() => probes.pending.delete(pending));
           probes.pending.add(pending);

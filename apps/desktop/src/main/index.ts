@@ -193,6 +193,7 @@ import {
   sshComputerInputSchema,
   setupProfileInputSchema,
   setupDetectionInputSchema,
+  setupAssistantInputSchema,
   providerUsageInputSchema,
   readCostsSchema,
   createCostBudgetSchema,
@@ -921,6 +922,14 @@ void app.whenReady().then(async () => {
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  handle('nesvo:setup-assistant', (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'setup-assistant',
+      setupAssistantInputSchema.parse(input),
+      route(hostId),
+    );
+  });
   handle('nesvo:setup-detection', (event, input: unknown, hostId: unknown) => {
     authorize(event);
     return computers.execute(

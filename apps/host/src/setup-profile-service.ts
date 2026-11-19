@@ -2,6 +2,7 @@ import {
   inboxSettingsSchema,
   setupProfileReviewSchema,
   type ConfigurationTarget,
+  type ConfigurationValue,
   type SetupProfileInput,
   type SetupProfileReview,
 } from '@nesvo/contracts';
@@ -19,8 +20,10 @@ import type { ConfigurationSnapshot } from './workflows/assistant-change-store';
 import {
   defaultSetupProfilePath,
   profileWithRoute,
+  profileWithRecipe,
   readSetupProfile,
   readSetupRouteSource,
+  readSetupRecipeSource,
   replaceSetupProfileFile,
   writeNewSetupProfile,
   SetupProfileFileError,
@@ -116,7 +119,7 @@ export class SetupProfileService {
   ) {
     this.defaultFile = defaultSetupProfilePath(directory);
     changes?.register('setup-profile', this.writer());
-    changes?.register('setup-profile-file', this.routeWriter());
+    changes?.register('setup-profile-file', this.fileWriter());
     if (changes)
       this.reviews = new SetupProfileReviewQueue(changes, () => {
         const current = this.current();
@@ -423,24 +426,40 @@ export class SetupProfileService {
     );
   }
 
-  private routeWriter(): ConfigurationWriter {
+  private fileWriter(): ConfigurationWriter {
     return {
       kind: 'file',
       locked: async (requested, use, recovery) => {
         const current = this.current();
-        if (
-          requested.area !== 'setup-profile-file' ||
-          !current.selection?.managed
-        )
+        if (requested.area !== 'setup-profile-file' || !current.selection)
           throw new ConfigurationRefusal(
             'unsupported',
-            'Choose an active profile-managed Inbox route.',
+            'Choose an active profile on this computer.',
+          );
+        const recipeId =
+          requested.key === 'recipe' ? requested.name : undefined;
+        if (requested.key === 'recipe' ? !recipeId : !current.selection.managed)
+          throw new ConfigurationRefusal(
+            'unsupported',
+            'Choose a valid profile setting.',
           );
         const selected = current.selection.profile;
-        const { profile, source } = readSetupRouteSource(
-          selected.path,
-          requested.key === 'shared-routing',
-        );
+        const opened = recipeId
+          ? readSetupRecipeSource(selected.path, recipeId)
+          : readSetupRouteSource(
+              selected.path,
+              requested.key === 'shared-routing',
+            );
+        const { profile, source } = opened;
+        const value: ConfigurationValue = recipeId
+          ? {
+              kind: 'setup-recipe',
+              value: {
+                id: recipeId,
+                definition: opened.definition,
+              },
+            }
+          : { kind: 'route', value: profile.route ?? 'inbox' };
         const ensureFresh = (digest: string) => {
           const now = this.current();
           const loaded = readSetupProfile(selected.path);
@@ -465,25 +484,39 @@ export class SetupProfileService {
           read: () => ({
             identity,
             dependencies: String(current.revision),
-            label: 'Profile Inbox route',
+            label: recipeId ? undefined : 'Profile Inbox route',
             version: { type: 'hash', hash: profile.revision },
-            value: { kind: 'route', value: profile.route ?? 'inbox' },
+            value,
             state: JSON.stringify(state),
           }),
           prepare: ({ draft }, before, restore) => {
             if (
-              draft?.kind !== 'route' ||
+              draft?.kind !== value.kind ||
               (!recovery && selected.revision !== profile.revision)
             )
               throw new ConfigurationRefusal(
                 'conflict',
                 'Review the active profile before editing this setting.',
               );
+            if (
+              draft.kind === 'setup-recipe' &&
+              (draft.value.id !== recipeId ||
+                (!restore && draft.value.definition?.id !== recipeId))
+            )
+              throw new ConfigurationRefusal(
+                'invalid-request',
+                'The recipe does not match the reviewed profile entry.',
+              );
             const replacement: RouteEditorState = restore?.state
               ? JSON.parse(restore.state)
               : {
                   path: source.path,
-                  text: profileWithRoute(source.value, draft.value),
+                  text:
+                    draft.kind === 'setup-recipe' && draft.value.definition
+                      ? profileWithRecipe(source.value, draft.value.definition)
+                      : draft.kind === 'route'
+                        ? profileWithRoute(source.value, draft.value)
+                        : source.text,
                 };
             if (!profile.files.some(file => file.path === replacement.path))
               throw new ConfigurationRefusal(
@@ -491,13 +524,16 @@ export class SetupProfileService {
                 'The original profile fragment is unavailable.',
               );
             const preview = readSetupProfile(selected.path, replacement);
-            if ((preview.route ?? 'inbox') !== draft.value)
+            if (
+              draft.kind === 'route' &&
+              (preview.route ?? 'inbox') !== draft.value
+            )
               throw new ConfigurationRefusal(
                 'conflict',
                 'A higher-priority profile layer overrides this setting.',
               );
             return {
-              classification: 'direct',
+              classification: recipeId ? 'review' : 'direct',
               after: {
                 ...before,
                 value: draft,
@@ -533,7 +569,10 @@ export class SetupProfileService {
                 'Inspect the unconfirmed profile edit.',
               );
             const verified = ensureFresh(to.version.hash);
-            this.save({ profile: verified, managed: true });
+            this.save({
+              profile: verified,
+              managed: Boolean(current.selection?.managed),
+            });
           },
         });
       },

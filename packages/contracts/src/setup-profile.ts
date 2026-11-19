@@ -137,6 +137,7 @@ export const setupProfileRecipeSchema = z.strictObject({
     .max(8)
     .optional(),
 });
+export type SetupProfileRecipe = z.output<typeof setupProfileRecipeSchema>;
 const integration = z.strictObject({
   id,
   provider: providerSchema,

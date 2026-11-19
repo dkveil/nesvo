@@ -81,6 +81,8 @@ export function ConfigurationChangeRow({
   const openAuthoritySettings = useContext(AuthoritySettingsContext);
   const { target, source } = change;
   const withheldSetup = target.area === 'setup-review';
+  const recipeDraft =
+    target.area === 'setup-profile-file' && target.key === 'recipe';
   const effect = change.ownerEffect;
   const permission = change.sessionMode;
   const canReview =
@@ -102,7 +104,9 @@ export function ConfigurationChangeRow({
     source.kind === 'device'
       ? source.name
       : source.kind === 'assistant'
-        ? 'Inbox assistant'
+        ? recipeDraft
+          ? 'Setup assistant'
+          : 'Inbox assistant'
         : source.kind === 'system'
           ? change.target.area === 'setup-review'
             ? 'Setup profile'
@@ -430,12 +434,13 @@ export function ConfigurationChangeRow({
                 disabled={!online || !!working || change.diff.truncated}
                 onClick={() => {
                   if (effect) void reviewAuthority();
-                  else if (change.classification === 'authority')
+                  else if (recipeDraft || change.classification === 'authority')
                     setConfirm({
                       action: 'accept',
                       revision: change.revision,
-                      reason:
-                        target.area === 'budgets'
+                      reason: recipeDraft
+                        ? 'Save this definition as a pending recipe in the active profile.'
+                        : target.area === 'budgets'
                           ? `${name} on ${computer} will refuse new turns after the budget is reached.`
                           : `Confirm the change in authority for ${name} on ${computer}.`,
                       revoked: false,
@@ -586,9 +591,11 @@ export function ConfigurationChangeRow({
           title={
             confirm.revoked
               ? 'Review revoked device proposal'
-              : permission
-                ? 'Confirm session permission change'
-                : 'Confirm configuration change'
+              : recipeDraft
+                ? 'Save profile recipe'
+                : permission
+                  ? 'Confirm session permission change'
+                  : 'Confirm configuration change'
           }
           description={
             permission
@@ -605,9 +612,11 @@ export function ConfigurationChangeRow({
           confirmLabel={
             confirm.action === 'undo'
               ? 'Confirm Undo'
-              : permission
-                ? 'Change permission mode'
-                : 'Confirm and accept'
+              : recipeDraft
+                ? 'Save recipe'
+                : permission
+                  ? 'Change permission mode'
+                  : 'Confirm and accept'
           }
           onConfirm={() => act(confirm.action, true, confirm.revoked)}
         />

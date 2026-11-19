@@ -147,6 +147,8 @@ function recordText(value: ConfigurationValue | null): string {
 }
 
 function resourceLabel(value: ConfigurationValue | null): string | undefined {
+  if (value?.kind === 'setup-recipe')
+    return value.value.definition?.name ?? value.value.id;
   if (value?.kind === 'session-groups' || value?.kind === 'automations')
     return configurationText(value.value.name).slice(0, 160);
   if (value?.kind === 'budgets') {

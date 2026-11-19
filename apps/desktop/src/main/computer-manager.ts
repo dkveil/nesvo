@@ -352,6 +352,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use Your setup.',
   'setup-detection-v1':
     'Update this computer’s Nesvo host and reconnect to detect setup.',
+  'setup-assistant-v1':
+    'Update this computer’s Nesvo host and reconnect to use its setup assistant.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -382,6 +384,7 @@ function requiredCapability(
   if (method === 'gate-rules') return 'gate-rules';
   if (method === 'setup-profile') return 'setup-profile-v1';
   if (method === 'setup-detection') return 'setup-detection-v1';
+  if (method === 'setup-assistant') return 'setup-assistant-v1';
   if (
     method === 'read-config-target' ||
     method === 'inspect-config-draft' ||
@@ -1336,6 +1339,7 @@ export class ComputerManager {
       configuration: 'configuration-result',
       'setup-profile': 'setup-profile',
       'setup-detection': 'setup-detection',
+      'setup-assistant': 'setup-assistant',
       'desktop-configuration-profile': 'desktop-configuration-profile',
       'lookup-inbox-assistant': 'inbox-assistant-context',
       'send-inbox-assistant': 'inbox-assistant-turn',
@@ -1524,6 +1528,8 @@ export class ComputerManager {
       case 'setup-profile':
         return response.result;
       case 'setup-detection':
+        return response.result;
+      case 'setup-assistant':
         return response.result;
       case 'desktop-configuration-profile':
         return response.profile;

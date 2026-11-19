@@ -592,6 +592,8 @@ Adoption records pending executable and authority entries as D85 proposals scope
 
 The profile review lists the required native domain capability alongside pending declarations. The D88 worktree provider, repository trust, read-only integration, provider usage and external session message contracts are separate from profile ownership. The profile foundation defers activation when those contracts and the corresponding admission adapters are unavailable. Existing manual recipes do not become approved profile executables.
 
+The setup assistant runs only after a message from the owner on the selected computer and with the selected provider and model. It uses the same isolated read-only turn path as the Inbox assistant. The prompt contains bounded, redacted findings and profile state. Commands, secret values and raw provider configuration stay out of the setup snapshot. A structured recipe draft must match the explicitly supplied repository and argv and the active profile version. The owner can save it through the configuration ledger and undo the file edit. Saving produces a desired declaration that remains withheld for separate runtime verification.
+
 ## Decision routing
 
 Every human decision item has a route: `inbox` (default), `parent` (the parent or coordinator session's conversation) or `both`. The route resolves from the rule's `route`, then the session's `decisionRoute` (set for children of a workflow whose file declares `decisions:`), then the session group's default (`defaults.decisionRoute`), then the computer's default in Settings › Inbox rules (capability `decision-routing`). A session without a parent always routes to the Inbox.

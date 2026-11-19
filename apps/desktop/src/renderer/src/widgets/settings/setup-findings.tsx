@@ -17,6 +17,8 @@ import {
 } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { useSetupDetection } from './use-setup-detection';
+import { SetupAssistant } from './setup-assistant';
+import type { ProviderStates } from '@/entities/session';
 
 const readiness: Record<SetupFinding['readiness'], string> = {
   observed: 'Observed',
@@ -31,13 +33,15 @@ export function SetupFindings({
   onboarding = false,
   openImport,
   onCompleteScan,
-  openAssistant,
+  statuses,
+  directory,
 }: {
   computer?: Computer;
   onboarding?: boolean;
   openImport?: () => void;
   onCompleteScan?: (scan: SetupScan) => void;
-  openAssistant?: () => void;
+  statuses?: ProviderStates;
+  directory?: string;
 }) {
   const detection = useSetupDetection(computer, {
     trigger: onboarding ? 'onboarding' : 'manual',
@@ -45,6 +49,7 @@ export function SetupFindings({
   const { scan } = detection;
   const [showAll, setShowAll] = useState(false);
   const [panel, setPanel] = useState<string | 'changed' | null>(null);
+  const [assistant, setAssistant] = useState(false);
   const panelRows =
     scan?.findings.filter(row =>
       panel === 'changed' ? scan.changes.includes(row.id) : row.id === panel,
@@ -67,12 +72,15 @@ export function SetupFindings({
           title="Detected setup"
           action={
             <div className="flex flex-wrap gap-1.5">
-              {openAssistant && (
+              {computer?.capabilities.includes('setup-assistant-v1') && (
                 <Button
                   size="sm"
                   variant="ghost"
                   disabled={!detection.online || !scan}
-                  onClick={openAssistant}
+                  onClick={() => {
+                    setPanel(null);
+                    setAssistant(true);
+                  }}
                 >
                   Ask about setup
                 </Button>
@@ -208,7 +216,15 @@ export function SetupFindings({
           )}
         </SettingsSection>
       </div>
-      {panel && scan && (
+      {assistant && computer && (
+        <SetupAssistant
+          computer={computer}
+          statuses={statuses}
+          directory={directory}
+          close={() => setAssistant(false)}
+        />
+      )}
+      {panel && scan && !assistant && (
         <SidePanel
           kind="details"
           resizeLabel="Resize setup review"

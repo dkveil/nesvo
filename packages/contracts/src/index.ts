@@ -54,6 +54,8 @@ import type {
 export * from './configuration-owner-flow';
 export * from './setup-profile';
 export * from './setup-detection';
+export * from './setup-assistant';
+import { setupAssistantInputSchema } from './setup-assistant';
 import { setupDetectionInputSchema, setupScanSchema } from './setup-detection';
 import {
   setupProfileInputSchema,
@@ -800,6 +802,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('setup-detection'),
     input: setupDetectionInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('setup-assistant'),
+    input: setupAssistantInputSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1754,8 +1761,18 @@ export const setupDetectionResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), scan: setupScanSchema }),
 ]);
 export type SetupDetectionResult = z.output<typeof setupDetectionResultSchema>;
+export const setupAssistantResultSchema = z.union([
+  configurationErrorSchema,
+  z.strictObject({ ok: z.literal(true), sessionId: z.uuid().nullable() }),
+]);
+export type SetupAssistantResult = z.output<typeof setupAssistantResultSchema>;
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('setup-assistant'),
+    id: z.uuid(),
+    result: setupAssistantResultSchema,
+  }),
   z.strictObject({
     type: z.literal('setup-detection'),
     id: z.uuid(),
@@ -2448,6 +2465,10 @@ export type WorkflowsApi = {
   ) => Promise<AssistantChangeHistory>;
 };
 export type DesktopApi = {
+  setupAssistant: (
+    input: z.input<typeof setupAssistantInputSchema>,
+    hostId: HostId,
+  ) => Promise<SetupAssistantResult>;
   setupDetection: (
     input: z.input<typeof setupDetectionInputSchema>,
     hostId: HostId,

@@ -7,6 +7,7 @@ import { createCostBudgetSchema } from './costs';
 import { scheduledJobDefinitionSchema } from './scheduled-jobs';
 import { moveSessionGroupSchema, sessionGroupSchema } from './session-groups';
 import { allowScopeSchema } from './claude-autonomy';
+import { setupProfileRecipeSchema } from './setup-profile';
 import {
   externalInboxDeviceSchema,
   externalInboxTokenSchema,
@@ -107,7 +108,8 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
   }),
   z.strictObject({
     area: z.literal('setup-profile-file'),
-    key: z.enum(['routing', 'shared-routing']),
+    key: z.enum(['routing', 'shared-routing', 'recipe']),
+    name: key.optional(),
   }),
   z.strictObject({
     area: z.literal('setup-review'),
@@ -188,6 +190,13 @@ export const configurationValueSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({ kind: z.literal('route'), value: decisionRouteSchema }),
   z.strictObject({
+    kind: z.literal('setup-recipe'),
+    value: z.strictObject({
+      id: key,
+      definition: setupProfileRecipeSchema.nullable(),
+    }),
+  }),
+  z.strictObject({
     kind: z.literal('setup-profile'),
     value: z.strictObject({ path: path.nullable(), digest: hash.nullable() }),
   }),
@@ -233,16 +242,19 @@ export const configurationMutationSchema = z
           ? target.area === 'lessons' || target.area === 'gate-rules'
             ? 'entry'
             : 'markdown'
-          : target.area === 'setup-profile'
-            ? target.area
-            : target.area === 'appearance'
-              ? 'color-scheme'
-              : target.area === 'defaults'
-                ? target.key
-                : target.key === 'inbox-routing' ||
-                    target.area === 'setup-profile-file'
-                  ? 'route'
-                  : 'enabled';
+          : target.area === 'setup-profile-file'
+            ? target.key === 'recipe'
+              ? 'setup-recipe'
+              : 'route'
+            : target.area === 'setup-profile'
+              ? target.area
+              : target.area === 'appearance'
+                ? 'color-scheme'
+                : target.area === 'defaults'
+                  ? target.key
+                  : target.key === 'inbox-routing'
+                    ? 'route'
+                    : 'enabled';
     if (input.draft && input.draft.kind !== kind)
       issue('draft', 'The value does not match the target.');
     if (

@@ -4,6 +4,7 @@ import {
   type SetupProfileDeclaration,
   type SetupProfileDocument,
   type SetupProfileReview,
+  type SetupProfileRecipe,
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -294,7 +295,43 @@ export function readSetupRouteSource(file: string, shared: boolean) {
     : layers.find(layer => layer.path === profile.routeWritePath);
   if (!source)
     fileError(path, 'The profile has no shared fragment.', 'include.shared');
-  return { profile, source };
+  return { profile, source, definition: null };
+}
+
+export function readSetupRecipeSource(file: string, id: string) {
+  const { path, layers } = profileLayers(file);
+  const profile = mergeProfile(path, layers);
+  const active = layers.findLast(layer =>
+    layer.value.recipes?.some(recipe => recipe.id === id),
+  );
+  const value = active?.value.recipes?.find(recipe => recipe.id === id);
+  const source =
+    active?.layer === 'entry'
+      ? active
+      : (layers.find(layer => layer.layer === 'machine') ?? layers.at(-1)!);
+  return {
+    profile,
+    source,
+    definition: value && !('disabled' in value) ? value : null,
+  };
+}
+
+export function profileWithRecipe(
+  document: SetupProfileDocument,
+  recipe: SetupProfileRecipe,
+) {
+  return dump(
+    {
+      ...document,
+      recipes: [
+        ...(document.recipes ?? []).filter(
+          existing => existing.id !== recipe.id,
+        ),
+        recipe,
+      ],
+    },
+    { lineWidth: -1, noRefs: true },
+  );
 }
 
 export function profileWithRoute(document: SetupProfileDocument, route: Route) {

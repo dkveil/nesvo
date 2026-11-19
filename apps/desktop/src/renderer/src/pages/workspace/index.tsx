@@ -922,7 +922,26 @@ export function Workspace({
   }
   const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const [changedSetupHosts, setChangedSetupHosts] = useState<string[]>([]);
+  useEffect(
+    () =>
+      window.nesvo?.subscribe(event => {
+        if (
+          event.type === 'configuration-changed' &&
+          event.change.source.kind === 'system' &&
+          event.change.target.area === 'setup-profile' &&
+          event.change.status === 'applied'
+        )
+          setChangedSetupHosts(previous =>
+            previous.includes(event.hostId)
+              ? previous
+              : [...previous, event.hostId],
+          );
+      }),
+    [],
+  );
   const [editProfileRouting, setEditProfileRouting] = useState(false);
+  const [setupReviewDirectory, setSetupReviewDirectory] = useState<string>();
   const [authoritySettings, setAuthoritySettings] =
     useState<SettingsAuthorityReview | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
@@ -4007,6 +4026,7 @@ ${text}`
   const breadcrumbHostId = showingNewThread
     ? threadSetup.hostId
     : selectedHostId;
+  const setupChangedHere = changedSetupHosts.includes(breadcrumbHostId);
   const branchReadable =
     !!window.nesvo &&
     store.hostReady(breadcrumbHostId) &&
@@ -4799,6 +4819,30 @@ ${text}`
             </Button>
           </div>
         )}
+        {setupChangedHere && (
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-5 py-2">
+            <StatusMessage>
+              Setup changed on{' '}
+              {store.computers.find(
+                computer => computer.id === breadcrumbHostId,
+              )?.name ?? 'this computer'}
+              .
+            </StatusMessage>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setChangedSetupHosts(previous =>
+                  previous.filter(hostId => hostId !== breadcrumbHostId),
+                );
+                setAccountSettingsHostId(breadcrumbHostId);
+                setSettingsPage('your-setup');
+              }}
+            >
+              Review setup changes
+            </Button>
+          </div>
+        )}
         <main className="relative flex min-h-0 min-w-0 flex-1">
           {showingNewThread ? (
             <NewThread
@@ -4820,6 +4864,7 @@ ${text}`
                   directory={threadSetup.directory.trim()}
                   onReview={() => {
                     setAccountSettingsHostId(threadSetup.hostId);
+                    setSetupReviewDirectory(threadSetup.directory.trim());
                     setSettingsPage('your-setup');
                   }}
                 />
@@ -6331,6 +6376,7 @@ ${text}`
           onPageChange={page => {
             setAuthoritySettings(null);
             setEditProfileRouting(false);
+            setSetupReviewDirectory(undefined);
             setSettingsPage(page);
           }}
           fallbackFocus={navigationToggle}
@@ -6338,6 +6384,7 @@ ${text}`
             if (!open) {
               setAuthoritySettings(null);
               setEditProfileRouting(false);
+              setSetupReviewDirectory(undefined);
               setSettingsPage(null);
             }
           }}
@@ -6528,6 +6575,8 @@ ${text}`
                 <SetupFindings
                   key={`detection:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
+                  statuses={store.providerStates(settingsHostId)}
+                  directory={setupReviewDirectory}
                   openImport={() => setSettingsPage('import')}
                 />
               </div>
