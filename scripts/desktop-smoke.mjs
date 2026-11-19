@@ -3651,6 +3651,7 @@ try {
     })
     .waitFor();
   await restartedPage
+    .locator('header [data-coordinator-wait]')
     .getByRole('button', { name: 'Continue', exact: true })
     .waitFor();
   await restartedPage
