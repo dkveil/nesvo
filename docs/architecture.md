@@ -520,6 +520,14 @@ Items are stored in SQLite (`inbox_items`, schema version 27, with the default r
 
 Settings › Inbox rules has a Describe a rule box. The owner picks a provider and a model; the host starts a visible read-only session with the proposal instructions as its system prompt and the sentence as the message, extracts the rule file from the answer and validates it. The proposal opens in the editor; nothing is saved until the owner chooses Save rule.
 
+## Configuration changes
+
+The host keeps configuration proposals, their decisions and Undo records in SQLite. Each writer supplies a versioned view of one typed target. The Inbox route uses a monotonic revision in its existing settings store. The Inbox rule writer checks the file's exact hash, canonical root and regular-file status under the same lock used by the owner editor. Project rules also require current repository trust. The host generates a bounded diff from the observed and validated values, with credential-like text masked.
+
+The host compares the selected proposal revision, the target, its current version and the validated effect again at acceptance. SQLite mutations share a transaction with their receipts and history. A rule file write records an intent with expected before and after identities, then uses the rule writer's atomic replacement. At startup the host inspects the current identity and version and settles the recorded intent. An ambiguous outcome appears in history as requiring inspection. Recovery issues no write. Action IDs are scoped to the authenticated principal in the host database, and repeated identical submissions receive the recorded receipt.
+
+Undo runs through the same writer against the resulting version. A subsequent manual change causes a conflict. Configuration history keeps the source and decision revision, and a routing change affects future evaluations.
+
 ## Decision routing
 
 Every human decision item has a route: `inbox` (default), `parent` (the parent or coordinator session's conversation) or `both`. The route resolves from the rule's `route`, then the session's `decisionRoute` (set for children of a workflow whose file declares `decisions:`), then the session group's default (`defaults.decisionRoute`), then the computer's default in Settings › Inbox rules (capability `decision-routing`). A session without a parent always routes to the Inbox.

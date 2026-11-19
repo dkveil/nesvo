@@ -312,6 +312,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to classify its running apps.',
   'gate-rules':
     'Update this computer’s Nesvo host and reconnect to use gate rules.',
+  configuration:
+    'Update this computer’s Nesvo host and reconnect to use configuration changes.',
   'external-inbox':
     'Update this computer’s Nesvo host and reconnect to manage external Inbox devices.',
   'claude-autonomy':
@@ -354,6 +356,14 @@ function requiredCapability(
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(lessonResponses, method)) return 'lessons';
   if (method === 'gate-rules') return 'gate-rules';
+  if (
+    method === 'read-config-target' ||
+    method === 'propose-config-change' ||
+    method === 'decide-config-proposal' ||
+    method === 'list-config-changes' ||
+    method === 'undo-config-change'
+  )
+    return 'configuration';
   if (Object.hasOwn(trackedRepositoryResponses, method))
     return 'tracked-repositories';
   if (Object.hasOwn(worktreeRecipeResponses, method)) return 'worktree-recipes';
@@ -1233,6 +1243,11 @@ export class ComputerManager {
     const { entry, response } = await this.dispatch(method, input, hostId);
     const expected = {
       health: 'health',
+      'read-config-target': 'configuration-result',
+      'propose-config-change': 'configuration-result',
+      'decide-config-proposal': 'configuration-result',
+      'list-config-changes': 'configuration-result',
+      'undo-config-change': 'configuration-result',
       'claude-status': 'claude-status',
       'codex-status': 'codex-status',
       'provider-usage': 'provider-usage',
@@ -1385,6 +1400,8 @@ export class ComputerManager {
         return response.repositories;
       case 'running-apps':
         return response.list;
+      case 'configuration-result':
+        return response.result;
       case 'inbox-rules':
         return response.catalog;
       case 'inbox-rule-validation':

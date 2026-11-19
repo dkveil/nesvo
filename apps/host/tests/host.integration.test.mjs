@@ -382,6 +382,151 @@ test('Nesvo sources do not register persistence or automate other apps', async (
     assert.match(command, automaticPersistence);
 });
 
+test('configuration reviews bind to live versions and recover completed files', async () => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-config-')),
+  );
+  const launchHost = () =>
+    launch(directory, join(directory, 'pids.json'), {
+        NESVO_TEST_MODE: '1',
+      NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
+    });
+  let host = launchHost();
+  const request = async (method, input) => {
+    const reply = await host.request(method, input);
+    assert.equal(reply.type, 'configuration-result');
+    return reply.result;
+  };
+  try {
+    const route = { area: 'settings', key: 'inbox-routing' };
+    const base = (await request('read-config-target', route)).target.version;
+    const routeChange = {
+      target: route,
+      actionId: randomUUID(),
+      operation: 'update',
+      baseVersion: base,
+      draft: { kind: 'route', value: 'parent' },
+    };
+    const propose = input => request('propose-config-change', input);
+    const first = await propose(routeChange);
+    assert.equal(first.receipt.status, 'pending');
+    assert.deepEqual((await propose(routeChange)).receipt, first.receipt);
+    assert.equal(
+      (
+        await propose({
+          ...routeChange,
+          draft: { kind: 'route', value: 'both' },
+        })
+      ).code,
+      'conflict',
+    );
+    await host.request('save-inbox-settings', { defaultRoute: 'both' });
+    const accept = receipt => ({
+      id: receipt.id,
+      revision: receipt.revision,
+      actionId: randomUUID(),
+      decision: 'accept',
+    });
+    const decide = input => request('decide-config-proposal', input);
+    assert.equal(
+      (await decide(accept(first.receipt))).receipt.status,
+      'conflicted',
+    );
+    assert.equal(
+      (await request('read-config-target', route)).target.value.value,
+      'both',
+    );
+
+    const file = join(directory, 'inbox-rules', 'release-review.md');
+    const document =
+      '---\nname: release-review\ntrigger: external\naction: route\nroute: both\n---\n';
+    const target = {
+      area: 'inbox-rules',
+      scope: { kind: 'global' },
+      name: 'release-review',
+    };
+    const proposal = await propose({
+      target,
+      actionId: randomUUID(),
+      operation: 'create',
+      baseVersion: { type: 'absent' },
+      draft: { kind: 'markdown', document },
+    });
+    assert.equal(proposal.ok, true, JSON.stringify(proposal));
+    assert.equal(proposal.receipt.status, 'pending');
+    assert.match(proposal.change.diff.text, /\+route: both/);
+    assert.equal(existsSync(file), false);
+    const decision = accept(proposal.receipt);
+    const applied = (await decide(decision)).receipt;
+    assert.equal(applied.status, 'applied');
+    assert.equal(await readFile(file, 'utf8'), document);
+    await host.stop();
+
+    const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      const row = database
+        .prepare('SELECT document FROM configuration_changes WHERE id = ?')
+        .get(applied.id);
+      const record = JSON.parse(row.document);
+      const binding = database
+        .prepare(
+          "SELECT fingerprint FROM configuration_receipts WHERE principal = 'owner' AND id = ?",
+        )
+        .get(decision.actionId);
+      const intent = {
+        record,
+        action: {
+          principal: 'owner',
+          id: decision.actionId,
+          fingerprint: binding.fingerprint,
+        },
+        from: record.before,
+        to: record.after,
+      };
+      database
+        .prepare('INSERT INTO configuration_intents VALUES (?, ?)')
+        .run(applied.id, JSON.stringify(intent));
+      database
+        .prepare('DELETE FROM configuration_receipts WHERE id = ?')
+        .run(decision.actionId);
+      database
+        .prepare(
+          'UPDATE configuration_changes SET status = ?, document = ? WHERE id = ?',
+        )
+        .run(
+          'pending',
+          JSON.stringify({ ...record, change: proposal.change }),
+          applied.id,
+        );
+    } finally {
+      database.close();
+    }
+    host = launchHost();
+    assert.deepEqual((await decide(decision)).receipt, applied);
+    assert.equal(
+      (await request('list-config-changes', { status: 'applied' })).page
+        .changes[0].id,
+      applied.id,
+    );
+    const undo = {
+      id: applied.id,
+      revision: applied.revision,
+      actionId: randomUUID(),
+    };
+    const undone = (await request('undo-config-change', undo)).receipt;
+    assert.equal(undone.status, 'undone');
+    assert.equal(existsSync(file), false);
+    assert.deepEqual(
+      (await request('undo-config-change', undo)).receipt,
+      undone,
+    );
+  } finally {
+    if (host.child.exitCode === null && host.child.signalCode === null)
+      await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test(
   'external Inbox CLI and MCP share durable decisions and device limits',
   { timeout: 60000 },
@@ -1213,7 +1358,10 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         groupEvents.push(message.list);
       } else if (message.type === 'pull-request-review-changed') {
         draftEvents.push(message.draft);
-      } else if (message.type === 'inbox-item-changed') {
+      } else if (
+        message.type === 'inbox-item-changed' ||
+        message.type === 'configuration-changed'
+      ) {
         assert.ok(!message.id);
       } else if (message.type === 'sessions-removed') {
         assert.ok(!message.id);
@@ -3450,7 +3598,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      34,
+      35,
     );
     migrated.close();
     const reopened = open();
@@ -5844,7 +5992,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 35');
+    database.exec('PRAGMA user_version = 36');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -5861,7 +6009,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 35);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 36);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -8933,7 +9081,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            34,
+            35,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -9020,7 +9168,7 @@ test(
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 35');
+      newer.exec('PRAGMA user_version = 36');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -9032,7 +9180,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          35,
+          36,
         );
       } finally {
         check.close();
@@ -12073,7 +12221,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        34,
+        35,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -12124,7 +12272,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        34,
+        35,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -21689,7 +21837,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      34,
+      35,
     );
     database
       .prepare(
@@ -22052,7 +22200,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 34);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 35);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -22067,7 +22215,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        34,
+        35,
       );
       assert.deepEqual(
         migrated
@@ -22247,7 +22395,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 34);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 35);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',

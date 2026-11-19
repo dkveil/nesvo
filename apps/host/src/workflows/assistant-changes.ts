@@ -23,6 +23,7 @@ import { RULE_ENTRY_FOLDERS, type RuleEntryType } from '@nesvo/contracts';
 import { realpathSync } from 'node:fs';
 import { ScheduledJobError } from '../scheduled-jobs/service';
 import type { AssistantChangeStore } from './assistant-change-store';
+import type { ConfigurationChanges } from './configuration-changes';
 import {
   DefinitionError,
   EXTERNAL_GUARD_NOTE,
@@ -52,6 +53,7 @@ type SaveAutomationInput = Extract<
 
 type ChangePorts = {
   store: AssistantChangeStore;
+  configuration: ConfigurationChanges;
   definitions: {
     save: (
       input: SaveDefinitionInput,
@@ -210,6 +212,10 @@ export class AssistantChanges {
   private readonly tails = new Map<string, Promise<unknown>>();
 
   constructor(private readonly ports: ChangePorts) {}
+
+  get configuration(): ConfigurationChanges {
+    return this.ports.configuration;
+  }
 
   apply(
     context: ChangeContext,
@@ -396,7 +402,9 @@ export class AssistantChanges {
           kind: operation.type,
           op: operation.op,
           target,
-          before: replaced ? { type: 'hash', hash: replaced.contentHash } : null,
+          before: replaced
+            ? { type: 'hash', hash: replaced.contentHash }
+            : null,
           after:
             operation.op === 'delete'
               ? null
@@ -449,9 +457,7 @@ export class AssistantChanges {
   ): Promise<Applied | Refusal> {
     const target = definitionTarget(operation);
     const invalid = (message: string) =>
-      refusalOf(operation, target, 'invalid', [
-        issueAt(target.path, message),
-      ]);
+      refusalOf(operation, target, 'invalid', [issueAt(target.path, message)]);
     if (operation.op === 'create' && operation.basedOnHash !== null)
       return invalid('A create has no basedOnHash.');
     if (operation.op !== 'create' && operation.basedOnHash === null)
@@ -667,7 +673,9 @@ export class AssistantChanges {
     };
   }
 
-  private async undoNow(input: AssistantUndoInput): Promise<AssistantUndoResult> {
+  private async undoNow(
+    input: AssistantUndoInput,
+  ): Promise<AssistantUndoResult> {
     const stored = this.ports.store.get(input.conversationId, input.changeId);
     if (!stored)
       throw new AssistantChangeError('not-found', 'Change not found.');

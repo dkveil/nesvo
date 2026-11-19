@@ -84,6 +84,7 @@ export const hostCapabilitySchema = z.enum([
   'mcp-auth',
   'group-cost-budgets',
   'manager-import',
+  'configuration',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

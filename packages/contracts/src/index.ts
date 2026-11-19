@@ -8,6 +8,16 @@ import {
   type WorkingRulesReview,
 } from './onboarding';
 export * from './onboarding';
+export * from './configuration';
+import {
+  configurationChangeSchema,
+  configurationDecisionSchema,
+  configurationHistoryInputSchema,
+  configurationMutationSchema,
+  configurationResultSchema,
+  configurationTargetSchema,
+  configurationUndoSchema,
+} from './configuration';
 import {
   claudeAutonomyInputSchema,
   claudeAutonomySchema,
@@ -584,6 +594,10 @@ export * from './lessons';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
+    type: z.literal('configuration-changed'),
+    change: configurationChangeSchema,
+  }),
+  z.strictObject({
     type: z.literal('session-changed'),
     session: sessionWindowSchema,
   }),
@@ -649,6 +663,31 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
 export const hostRequestSchema = z.discriminatedUnion('method', [
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-config-target'),
+    input: configurationTargetSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('propose-config-change'),
+    input: configurationMutationSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-config-proposal'),
+    input: configurationDecisionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-config-changes'),
+    input: configurationHistoryInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('undo-config-change'),
+    input: configurationUndoSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('read-costs'),
@@ -1483,6 +1522,11 @@ export type HostConnect = z.infer<typeof hostConnectSchema>;
 export type HostConnection = z.infer<typeof hostConnectionSchema>;
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    id: z.uuid(),
+    type: z.literal('configuration-result'),
+    result: configurationResultSchema,
+  }),
   z.strictObject({
     type: z.literal('costs'),
     id: z.uuid(),

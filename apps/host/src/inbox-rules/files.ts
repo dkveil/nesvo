@@ -7,8 +7,16 @@ import {
   type InboxRuleScope,
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import {
+  lstat,
+  mkdir,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { ZodIssue } from 'zod';
 import { document } from '../skills/portable';
 import {
@@ -16,7 +24,9 @@ import {
   globalRoot,
   missing,
   readDefinitionFile,
+  type DefinitionFile,
 } from '../workflows/definitions';
+import { ConfigurationRefusal } from '../workflows/configuration-changes';
 
 const subject = 'Inbox rule';
 const knownFields = Object.keys(inboxRuleFieldsSchema.shape).filter(
@@ -325,6 +335,107 @@ const conflict = () =>
     'The rule file changed on disk. Reload the rules and try again.',
   );
 
+async function replaceRule(
+  root: string,
+  name: string,
+  path: string,
+  text: string,
+  beforeReplace?: () => Promise<void>,
+): Promise<void> {
+  const temporary = join(root, `.${name}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, text, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    await beforeReplace?.();
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function withConfigRuleFile<T>(
+  anchor: string,
+  root: string,
+  name: string,
+  signal: AbortSignal,
+  access: () => Promise<void>,
+  use: (
+    file: DefinitionFile | null,
+    identity: string,
+    write: (text: string | null) => Promise<void>,
+  ) => Promise<T>,
+): Promise<T> {
+  const confined = relative(anchor, root);
+  if (!confined || isAbsolute(confined) || confined.split(sep).includes('..'))
+    throw new ConfigurationRefusal(
+      'invalid-request',
+      'Choose an Inbox rule inside the verified root.',
+    );
+  const path = join(root, ruleFileName(name));
+  const identity = async () => {
+    const canonical = await realpath(anchor);
+    const stat = await lstat(anchor, { bigint: true });
+    if (canonical !== anchor || !stat.isDirectory() || stat.isSymbolicLink())
+      throw new ConfigurationRefusal('conflict', 'The Inbox rule root moved.');
+    let directory = anchor;
+    for (const component of confined.split(sep)) {
+      directory = join(directory, component);
+      const info = await lstat(directory).catch(error => {
+        if (!missing(error)) throw error;
+        return null;
+      });
+      if (info && (!info.isDirectory() || info.isSymbolicLink()))
+        throw new ConfigurationRefusal(
+          'conflict',
+          'The Inbox rules folder is no longer confined to its root.',
+        );
+    }
+    return JSON.stringify([anchor, String(stat.dev), String(stat.ino), root]);
+  };
+  const read = async () => {
+    const stat = await lstat(path).catch(error => {
+      if (!missing(error)) throw error;
+      return null;
+    });
+    if (!stat) return null;
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new ConfigurationRefusal(
+        'conflict',
+        'The Inbox rule is no longer a regular file.',
+      );
+    return readDefinitionFile(path, signal);
+  };
+  return exclusive(root, async () => {
+    await access();
+    const rootIdentity = await identity();
+    const file = await read();
+    const check = async () => {
+      if (
+        (await identity()) !== rootIdentity ||
+        (await read())?.contentHash !== file?.contentHash
+      )
+        throw new ConfigurationRefusal(
+          'conflict',
+          'The Inbox rule or its root changed on disk.',
+        );
+    };
+    return use(file, rootIdentity, async text => {
+      await check();
+      if (text === null) {
+        await rm(path);
+        return;
+      }
+      await mkdir(root, { recursive: true, mode: 0o700 });
+      await check();
+      await replaceRule(root, name, path, text, check);
+    });
+  });
+}
+
 export const writeRuleFile = (
   root: string,
   text: string,
@@ -357,12 +468,9 @@ export const writeRuleFile = (
         throw conflict();
     } else if (existing !== expectedHash) throw conflict();
     await mkdir(root, { recursive: true });
-    const temporary = join(root, `.${name}.${randomUUID()}.tmp`);
     try {
-      await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx' });
-      await rename(temporary, path);
+      await replaceRule(root, name, path, text);
     } catch (error) {
-      await rm(temporary, { force: true }).catch(() => undefined);
       throw new InboxRuleFileError(
         'unavailable',
         `The rule could not be written. ${error instanceof Error ? error.message : ''}`.trim(),

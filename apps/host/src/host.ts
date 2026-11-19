@@ -71,7 +71,16 @@ import {
   AssistantChanges,
   automationsIn,
 } from './workflows/assistant-changes';
-import { AssistantChangeStore } from './workflows/assistant-change-store';
+import {
+  AssistantChangeStore,
+  ConfigurationChangeStore,
+} from './workflows/assistant-change-store';
+import {
+  ConfigurationChanges,
+  ConfigurationRefusal,
+  type ConfigurationPrincipal,
+} from './workflows/configuration-changes';
+import type { ConfigurationResult } from '@nesvo/contracts';
 import {
   WorkflowAssistant,
   WorkflowAssistantError,
@@ -912,8 +921,21 @@ export const serveHost = ({
           )
           .map(run => run.id);
       const assistantChangeStore = new AssistantChangeStore(database);
+      const configuration = new ConfigurationChanges(
+        new ConfigurationChangeStore(database),
+        change => emit({ type: 'configuration-changed', change }),
+        () => false,
+      );
+      configuration.register('settings', inboxRules.configurationSettings());
+      configuration.register('inbox-rules', inboxRules.configurationRules());
+      yield* Effect.promise(() => configuration.recover());
+      const configurationOwner: ConfigurationPrincipal = {
+        source: { kind: 'owner' },
+        authorize: () => undefined,
+      };
       const assistantChanges = new AssistantChanges({
         store: assistantChangeStore,
+        configuration,
         definitions: {
           save: (input, options) =>
             saveDefinition(
@@ -1324,6 +1346,76 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (
+          request.method === 'read-config-target' ||
+          request.method === 'propose-config-change' ||
+          request.method === 'decide-config-proposal' ||
+          request.method === 'list-config-changes' ||
+          request.method === 'undo-config-change'
+        ) {
+          const changes = assistantChanges.configuration;
+          const { id } = request;
+          const operation = async (): Promise<ConfigurationResult> => {
+            switch (request.method) {
+              case 'read-config-target':
+                return {
+                  ok: true,
+                  kind: 'read',
+                  target: await changes.get(configurationOwner, request.input),
+                };
+              case 'propose-config-change':
+                return {
+                  ok: true,
+                  kind: 'submission',
+                  ...(await changes.submit(
+                    configurationOwner,
+                    'propose',
+                    request.input,
+                  )),
+                };
+              case 'decide-config-proposal':
+                return {
+                  ok: true,
+                  kind: 'receipt',
+                  receipt: await changes.decide(request.input),
+                };
+              case 'list-config-changes':
+                return {
+                  ok: true,
+                  kind: 'history',
+                  page: changes.list(request.input),
+                };
+              case 'undo-config-change':
+                return {
+                  ok: true,
+                  kind: 'receipt',
+                  receipt: await changes.undo(request.input),
+                };
+            }
+          };
+          const pending = operation()
+            .catch((error: unknown): ConfigurationResult =>
+              error instanceof ConfigurationRefusal
+                ? {
+                    ok: false,
+                    code: error.code,
+                    message: error.message,
+                    issues: error.issues,
+                  }
+                : {
+                    ok: false,
+                    code: 'unavailable',
+                    message: 'The configuration is unavailable.',
+                    issues: [],
+                  },
+            )
+            .then(result => send({ type: 'configuration-result', id, result }))
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
+
         if (
           request.method === 'list-inbox-rules' ||
           request.method === 'validate-inbox-rule' ||

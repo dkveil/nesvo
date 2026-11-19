@@ -39,13 +39,25 @@ import {
   type StageActor,
   type StageReport,
   type WorkflowRun,
+  type ConfigurationValue,
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
-import { hostname } from 'node:os';
-import { basename } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { homedir, hostname } from 'node:os';
+import { basename, dirname, isAbsolute } from 'node:path';
 import type { z } from 'zod';
-import type { StepExecution, StepExecutor, StepOutcome } from '../workflows/runner';
+import type {
+  StepExecution,
+  StepExecutor,
+  StepOutcome,
+} from '../workflows/runner';
 import { hostResult } from '../workflows/steps/host-result';
+import {
+  absentConfigurationVersion,
+  configurationHash,
+  ConfigurationRefusal,
+  type ConfigurationWriter,
+} from '../workflows/configuration-changes';
 import { claudeAskRule, enforcementFor, ruleEnforcement } from './enforcement';
 import {
   InboxRuleFileError,
@@ -55,6 +67,7 @@ import {
   projectRulesRoot,
   readRuleRoot,
   withEnabled,
+  withConfigRuleFile,
   writeRuleFile,
   type RuleFile,
 } from './files';
@@ -211,6 +224,200 @@ export class InboxRules {
   saveSettings(settings: InboxSettings): InboxSettings {
     this.ports.store.saveSetting(DEFAULT_ROUTE_KEY, settings.defaultRoute);
     return this.settings();
+  }
+
+  configurationSettings(): ConfigurationWriter {
+    return {
+      kind: 'database',
+      open: target => {
+        if (target.area !== 'settings' || target.key !== 'inbox-routing')
+          throw new ConfigurationRefusal(
+            'unsupported',
+            'This setting is unavailable on this computer.',
+          );
+        const read = () => ({
+          value: {
+            kind: 'route' as const,
+            value: this.settings().defaultRoute,
+          },
+          version: {
+            type: 'revision' as const,
+            revision: this.ports.store.settingRevision(DEFAULT_ROUTE_KEY),
+          },
+          identity: DEFAULT_ROUTE_KEY,
+          dependencies: '',
+        });
+        return {
+          read,
+          prepare: (mutation, before) => {
+            if (
+              before.version.type !== 'revision' ||
+              mutation.draft?.kind !== 'route'
+            )
+              throw new ConfigurationRefusal(
+                'invalid-request',
+                'Select an Inbox route.',
+              );
+            return {
+              classification: 'review',
+              after: {
+                ...before,
+                value: mutation.draft,
+                version: {
+                  type: 'revision',
+                  revision: before.version.revision + 1,
+                },
+              },
+            };
+          },
+          write: ({ to }) => {
+            if (to.value?.kind !== 'route')
+              throw new ConfigurationRefusal(
+                'invalid-request',
+                'Select an Inbox route.',
+              );
+            this.saveSettings({ defaultRoute: to.value.value });
+          },
+        };
+      },
+    };
+  }
+
+  configurationRules(): ConfigurationWriter {
+    const signal = this.ports.signal;
+    return {
+      kind: 'file',
+      locked: async (target, use, recovery) => {
+        if (target.area !== 'inbox-rules')
+          throw new ConfigurationRefusal(
+            'unsupported',
+            'Choose an Inbox rule.',
+          );
+        const project =
+          target.scope.kind === 'project' ? target.scope.root : null;
+        if (project && !isAbsolute(project))
+          throw new ConfigurationRefusal(
+            'invalid-request',
+            'Choose an absolute project root.',
+          );
+        const globalAnchor =
+          process.env.NESVO_TEST_MODE === '1' &&
+          process.env.NESVO_WORKFLOWS_HOME
+            ? dirname(globalRulesRoot())
+            : homedir();
+        const anchor = await realpath(project ?? globalAnchor).catch(() => {
+          throw new ConfigurationRefusal(
+            'conflict',
+            'The Inbox rule root is unavailable.',
+          );
+        });
+        if (
+          project &&
+          (anchor !== project ||
+            (await this.ports.projectRoot(anchor, signal)) !== anchor)
+        )
+          throw new ConfigurationRefusal(
+            'conflict',
+            'Choose the verified project root.',
+          );
+        const root = project ? projectRulesRoot(anchor) : globalRulesRoot();
+        const access = async () => {
+          if (
+            !recovery &&
+            project &&
+            !(await this.projectTrusted(anchor, null, signal))
+          )
+            throw new ConfigurationRefusal(
+              'unauthorized',
+              'Trust this project before changing Inbox rules.',
+            );
+        };
+        return withConfigRuleFile(
+          anchor,
+          root,
+          target.name,
+          signal,
+          access,
+          (file, identity, write) => {
+            const current = file?.text ?? null;
+            const value: ConfigurationValue | null =
+              current === null ? null : { kind: 'markdown', document: current };
+            const read = () => ({
+              value,
+              identity,
+              dependencies: '',
+              version: file
+                ? { type: 'hash' as const, hash: file.contentHash }
+                : absentConfigurationVersion,
+            });
+            return use({
+              read,
+              prepare: (mutation, before) => {
+                const draft =
+                  mutation.draft?.kind === 'markdown'
+                    ? mutation.draft.document
+                    : null;
+                const old = current
+                  ? parseRuleText(current, '', target.name).rule
+                  : null;
+                const next = draft
+                  ? parseRuleText(draft, '', target.name)
+                  : null;
+                if (next && !next.rule)
+                  throw new ConfigurationRefusal(
+                    'invalid-request',
+                    'The Inbox rule is invalid.',
+                    next.issues.slice(0, 20).map(issue => ({
+                      field: issue.line ? `line ${issue.line}` : 'document',
+                      message: 'Check this part of the Inbox rule definition.',
+                    })),
+                  );
+                if (
+                  old?.enabled &&
+                  old.action === 'hold' &&
+                  old.trigger === 'workflow-step'
+                ) {
+                  const guard = (rule: InboxRule | null) =>
+                    rule &&
+                    JSON.stringify([
+                      rule.enabled,
+                      rule.action,
+                      rule.trigger,
+                      rule.workflow,
+                      rule.step,
+                      rule.phase,
+                      rule.group,
+                      rule.computer,
+                      rule.repository,
+                    ]);
+                  if (guard(old) !== guard(next?.rule ?? null))
+                    throw new ConfigurationRefusal(
+                      'review-required',
+                      'Review workflow guards in the Inbox rule editor before changing this hold.',
+                    );
+                }
+                return {
+                  classification:
+                    old?.enabled && old.action === 'hold'
+                      ? 'authority'
+                      : 'review',
+                  after: {
+                    ...before,
+                    value: mutation.draft,
+                    version:
+                      draft === null
+                        ? absentConfigurationVersion
+                        : { type: 'hash', hash: configurationHash(draft) },
+                  },
+                };
+              },
+              write: ({ to }) =>
+                write(to.value?.kind === 'markdown' ? to.value.document : null),
+            });
+          },
+        );
+      },
+    };
   }
 
   items(): InboxItem[] {

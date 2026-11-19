@@ -1,0 +1,238 @@
+import { z } from 'zod';
+import { decisionRouteSchema } from './decision-route';
+
+export const configurationRevision = 1;
+export const configurationLimits = {
+  document: 64 * 1024,
+  preview: 48 * 1024,
+  page: 25,
+  pendingPerDevice: 10,
+  pendingPerHost: 200,
+} as const;
+
+const key = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
+const path = z.string().min(1).max(4096);
+const hash = z.string().regex(/^[a-f0-9]{64}$/);
+const fileScope = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('global') }),
+  z.strictObject({ kind: z.literal('project'), root: path }),
+]);
+
+export const configurationTargetSchema = z.discriminatedUnion('area', [
+  z.strictObject({
+    area: z.literal('settings'),
+    key: z.enum(['inbox-routing', 'workflow-learning', 'notifications']),
+  }),
+  z.strictObject({ area: z.literal('defaults'), key: z.literal('folder') }),
+  z.strictObject({
+    area: z.literal('appearance'),
+    key: z.literal('color-scheme'),
+  }),
+  z.strictObject({
+    area: z.literal('inbox-rules'),
+    scope: fileScope,
+    name: key,
+  }),
+]);
+
+export const configurationVersionSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('absent') }),
+  z.strictObject({ type: z.literal('hash'), hash }),
+  z.strictObject({
+    type: z.literal('revision'),
+    revision: z.number().int().nonnegative(),
+  }),
+]);
+
+export const configurationValueSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('markdown'),
+    document: z.string().min(1).max(configurationLimits.document),
+  }),
+  z.strictObject({ kind: z.literal('route'), value: decisionRouteSchema }),
+  z.strictObject({ kind: z.literal('enabled'), value: z.boolean() }),
+  z.strictObject({ kind: z.literal('folder'), value: path.nullable() }),
+  z.strictObject({
+    kind: z.literal('color-scheme'),
+    value: z.enum(['system', 'light', 'dark']),
+  }),
+]);
+
+export const configurationMutationSchema = z
+  .strictObject({
+    actionId: z.uuid(),
+    target: configurationTargetSchema,
+    operation: z.enum(['create', 'update', 'delete']),
+    baseVersion: configurationVersionSchema,
+    draft: configurationValueSchema.nullable(),
+  })
+  .superRefine((input, context) => {
+    const issue = (path: string, message: string) =>
+      context.addIssue({ code: 'custom', path: [path], message });
+    if (
+      (input.operation === 'create') !==
+      (input.baseVersion.type === 'absent')
+    )
+      issue('baseVersion', 'Only creation requires an absent base version.');
+    if ((input.operation === 'delete') !== (input.draft === null))
+      issue('draft', 'Supply a draft for creation or update.');
+    const target = input.target;
+    const kind =
+      target.area === 'inbox-rules'
+        ? 'markdown'
+        : target.area === 'appearance'
+          ? 'color-scheme'
+          : target.area === 'defaults'
+            ? 'folder'
+            : target.key === 'inbox-routing'
+              ? 'route'
+              : 'enabled';
+    if (input.draft && input.draft.kind !== kind)
+      issue('draft', 'The value does not match the target.');
+    if (kind !== 'markdown' && input.operation !== 'update')
+      issue('operation', 'This setting supports updates.');
+    if (
+      input.baseVersion.type !== 'absent' &&
+      input.baseVersion.type !== (kind === 'markdown' ? 'hash' : 'revision')
+    )
+      issue('baseVersion', 'The version does not match the target.');
+  });
+
+export const configurationSourceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('owner') }),
+  z.strictObject({ kind: z.literal('assistant'), sessionId: z.uuid() }),
+  z.strictObject({
+    kind: z.literal('device'),
+    deviceId: z.uuid(),
+    name: z.string().min(1).max(64),
+  }),
+]);
+
+export const configurationStatusSchema = z.enum([
+  'pending',
+  'applied',
+  'dismissed',
+  'conflicted',
+  'undone',
+  'inspection-required',
+]);
+export const configurationDecisionSchema = z.strictObject({
+  id: z.uuid(),
+  revision: z.number().int().positive(),
+  actionId: z.uuid(),
+  decision: z.enum(['accept', 'dismiss']),
+  confirmAuthority: z.boolean().default(false),
+  reviewRevocation: z.boolean().default(false),
+});
+export const configurationUndoSchema = z.strictObject({
+  id: z.uuid(),
+  revision: z.number().int().positive(),
+  actionId: z.uuid(),
+  confirmAuthority: z.boolean().default(false),
+});
+
+export const configurationIssueSchema = z.strictObject({
+  field: z.string().max(100),
+  message: z.string().max(400),
+});
+export const configurationErrorSchema = z.strictObject({
+  ok: z.literal(false),
+  code: z.enum([
+    'unauthorized',
+    'unsupported',
+    'invalid-request',
+    'conflict',
+    'busy',
+    'review-required',
+    'unavailable',
+    'rate-limit',
+    'pending-limit',
+  ]),
+  message: z.string().max(400),
+  issues: z.array(configurationIssueSchema).max(20),
+});
+
+export const configurationDiffSchema = z.strictObject({
+  text: z.string().max(configurationLimits.preview),
+  truncated: z.boolean(),
+});
+
+export const configurationChangeSchema = z.strictObject({
+  id: z.uuid(),
+  revision: z.number().int().positive(),
+  target: configurationTargetSchema,
+  operation: configurationMutationSchema.shape.operation,
+  baseVersion: configurationVersionSchema,
+  resultingVersion: configurationVersionSchema.nullable(),
+  source: configurationSourceSchema,
+  status: configurationStatusSchema,
+  classification: z.enum(['direct', 'review', 'authority']),
+  diff: configurationDiffSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  decidedBy: z.enum(['owner', 'device']).nullable(),
+});
+
+export const configurationReceiptSchema = configurationChangeSchema.pick({
+  id: true,
+  revision: true,
+  status: true,
+  resultingVersion: true,
+});
+export const configurationHistoryInputSchema = z.strictObject({
+  after: z.number().int().nonnegative().optional(),
+  area: z
+    .enum(['settings', 'defaults', 'appearance', 'inbox-rules'])
+    .optional(),
+  status: configurationStatusSchema.optional(),
+});
+export const configurationHistorySchema = z.strictObject({
+  changes: z.array(configurationChangeSchema).max(configurationLimits.page),
+  next: z.number().int().positive().nullable(),
+});
+export const configurationReadSchema = z.strictObject({
+  target: configurationTargetSchema,
+  version: configurationVersionSchema,
+  value: configurationValueSchema.nullable(),
+  withheld: z.boolean(),
+});
+export const configurationResultSchema = z.union([
+  configurationErrorSchema,
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('read'),
+    target: configurationReadSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('history'),
+    page: configurationHistorySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('submission'),
+    receipt: configurationReceiptSchema,
+    change: configurationChangeSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('receipt'),
+    receipt: configurationReceiptSchema,
+  }),
+]);
+export type ConfigurationResult = z.infer<typeof configurationResultSchema>;
+
+export type ConfigurationTarget = z.infer<typeof configurationTargetSchema>;
+export type ConfigurationArea = ConfigurationTarget['area'];
+export type ConfigurationVersion = z.infer<typeof configurationVersionSchema>;
+export type ConfigurationValue = z.infer<typeof configurationValueSchema>;
+export type ConfigurationMutation = z.infer<typeof configurationMutationSchema>;
+export type ConfigurationSource = z.infer<typeof configurationSourceSchema>;
+export type ConfigurationDecision = z.infer<typeof configurationDecisionSchema>;
+export type ConfigurationUndo = z.infer<typeof configurationUndoSchema>;
+export type ConfigurationError = z.infer<typeof configurationErrorSchema>;
+export type ConfigurationChange = z.infer<typeof configurationChangeSchema>;
+export type ConfigurationReceipt = z.infer<typeof configurationReceiptSchema>;
+export type ConfigurationHistoryInput = z.infer<
+  typeof configurationHistoryInputSchema
+>;
