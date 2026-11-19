@@ -39,8 +39,24 @@ type DiffOptions = NonNullable<
   DiffBasePropsReact<NoteGroup, undefined>['options']
 >;
 
-const DIFF_CSS =
-  ':host{--diffs-font-size:12px;--diffs-line-height:20px;--diffs-bg:var(--code-background);--diffs-fg:var(--foreground)} [data-diffs]{background:var(--code-background)} [data-code]{font-family:Consolas,monospace}';
+const DIFF_CSS = `
+  :host {
+    color-scheme: inherit;
+    --diffs-font-size: 12px;
+    --diffs-line-height: 20px;
+    --diffs-bg: var(--code-background);
+    --diffs-fg: var(--foreground);
+    --diffs-addition-text: color-mix(in oklab, var(--success-foreground), var(--foreground));
+    --diffs-deletion-text: color-mix(in oklab, var(--error-foreground), var(--foreground));
+  }
+  [data-diffs] { background: var(--code-background); }
+  [data-code] { font-family: Consolas, monospace; }
+  [data-line][data-line-type=change-addition] { --diff-line-text: var(--diffs-addition-text); }
+  [data-line][data-line-type=change-deletion] { --diff-line-text: var(--diffs-deletion-text); }
+  [data-line][data-line-type^=change-], [data-line][data-line-type^=change-] span {
+    color: var(--diff-line-text, var(--diffs-fg));
+  }
+`;
 
 const annotationsOf = (
   notes: readonly DiffNote[],
