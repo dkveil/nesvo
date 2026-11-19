@@ -32,6 +32,7 @@ import type {
 import {
   AGENT_REVIEW_BRANCH_PREFIX,
   isGroupableSession,
+  routesToParent,
 } from '@nesvo/contracts';
 import {
   Archive,
@@ -1298,7 +1299,7 @@ export function Workspace({
       hostId: selected.hostId,
       coordinatorId: selected.id,
       childId: child.id,
-      runId: runId ?? child.runId,
+      runId: runId ?? null,
     });
     setPanel('child-work');
   };
@@ -5217,6 +5218,18 @@ ${text}`
                 )}
                 onOpenTurnDiff={openDiff}
                 onOpenChild={child => select(entityKey(child))}
+                childReviewPending={child =>
+                  orchestration &&
+                  store.reviews.some(
+                    review =>
+                      review.hostId === child.hostId &&
+                      review.sessionId === child.id &&
+                      review.runId === child.runId &&
+                      review.status === 'pending' &&
+                      !!review.route &&
+                      routesToParent(review.route),
+                  )
+                }
                 coordinatorRecovery={!!wakeControl.state?.continueRequired}
                 coordinationFooter={
                   wakeControl.state?.pending || wakeControl.state?.effective ? (

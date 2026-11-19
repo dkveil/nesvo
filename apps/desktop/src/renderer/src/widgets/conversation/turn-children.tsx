@@ -12,10 +12,12 @@ export function TurnChildren({
   children,
   onOpen,
   onInspect,
+  reviewPending,
 }: {
   children: Session[];
   onOpen: (session: Session) => void;
   onInspect?: (session: Session, trigger: HTMLElement) => void;
+  reviewPending?: (session: Session) => boolean;
 }) {
   const live = children.some(activeChild);
   const [now, setNow] = useState(Date.now);
@@ -36,7 +38,8 @@ export function TurnChildren({
           child.plan?.status === 'plan-ready' ||
           !!pendingStageQuestion(child) ||
           !!pendingTurnQuestion(child) ||
-          !!child.steeringRequests?.length;
+          !!child.steeringRequests?.length ||
+          !!reviewPending?.(child);
         const status = needsDecision
           ? 'Needs a decision'
           : running

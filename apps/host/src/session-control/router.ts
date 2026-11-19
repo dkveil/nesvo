@@ -656,7 +656,7 @@ export class SessionControl {
     if (!record || !session.parentId || record.parentId !== session.parentId)
       return;
     for (const entry of records) {
-      if (entry.kind === 'question') {
+      if (entry.kind === 'question' && entry.status === 'pending') {
         for (const wake of this.waiters.get(record.parentId) ?? []) wake();
         continue;
       }
@@ -1292,6 +1292,7 @@ export class SessionControl {
           coordinator.id,
           coordinator.runId!,
           child.id,
+          messageId,
           queued.messages.find(message => message.id === messageId)?.runId,
         );
         return success({
@@ -1351,6 +1352,7 @@ export class SessionControl {
         coordinator.id,
         coordinator.runId!,
         child.id,
+        messageId,
         queued.messages.find(message => message.id === messageId)?.runId,
       );
       return success({

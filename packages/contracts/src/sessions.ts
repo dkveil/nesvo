@@ -626,6 +626,10 @@ export const sessionSchema = z.strictObject({
           .array(z.strictObject({ sessionId: z.uuid(), runId: z.uuid() }))
           .max(8)
           .optional(),
+        pendingChildMessages: z
+          .array(z.strictObject({ sessionId: z.uuid(), messageId: z.uuid() }))
+          .max(8)
+          .optional(),
       }),
     )
     .max(200)

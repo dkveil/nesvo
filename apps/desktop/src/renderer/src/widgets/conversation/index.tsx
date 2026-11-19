@@ -125,6 +125,7 @@ type Props = {
   turnReviews: Review[];
   onOpenTurnDiff: (id: string, path?: string) => void;
   onOpenChild: (session: Session) => void;
+  childReviewPending?: (session: Session) => boolean;
   onInspectChild?: (
     session: Session,
     trigger: HTMLElement,
@@ -192,6 +193,7 @@ export function Conversation({
   turnReviews,
   onOpenTurnDiff,
   onOpenChild,
+  childReviewPending,
   onInspectChild,
   steeringFeedback,
   canSteer,
@@ -1219,6 +1221,7 @@ export function Conversation({
                         <TurnChildren
                           children={children}
                           onOpen={onOpenChild}
+                          reviewPending={childReviewPending}
                           onInspect={
                             onInspectChild &&
                             ((child, trigger) =>

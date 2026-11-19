@@ -2645,6 +2645,7 @@ export class SessionService {
     sessionId: string,
     runId: string,
     childId: string,
+    messageId: string,
     childRunId?: string,
   ): void {
     const session = this.active.get(sessionId)?.session;
@@ -2653,22 +2654,52 @@ export class SessionService {
     const turn = history.find(item => item.runId === runId);
     const children = turn?.sessionIds ?? [];
     const childRuns = turn?.childRuns ?? [];
+    const pending = turn?.pendingChildMessages ?? [];
     if (children.includes(childId) || children.length >= 8) return;
     session.turnChildren = [
       ...history.filter(turn => turn.runId !== runId),
       {
         runId,
         sessionIds: [...children, childId],
-        ...(childRunId || childRuns.length
-          ? {
-              childRuns: childRunId
-                ? [...childRuns, { sessionId: childId, runId: childRunId }]
-                : childRuns,
-            }
-          : {}),
+        childRuns: childRunId
+          ? [...childRuns, { sessionId: childId, runId: childRunId }]
+          : childRuns,
+        pendingChildMessages: childRunId
+          ? pending
+          : [...pending, { sessionId: childId, messageId }],
       },
     ].slice(-200);
     this.publish(session);
+  }
+
+  private bindChildRun(child: Session, messageId: string): Session | undefined {
+    const { id, parentId, runId } = child;
+    if (!parentId || !runId) return undefined;
+    const parent =
+      this.active.get(parentId)?.session ?? this.store.get(parentId);
+    const history = parent?.turnChildren;
+    if (!parent || !history) return undefined;
+    const turn = history.find(item =>
+      item.pendingChildMessages?.some(
+        link => link.sessionId === id && link.messageId === messageId,
+      ),
+    );
+    if (!turn?.pendingChildMessages) return undefined;
+    const pending = turn.pendingChildMessages.filter(
+      link => link.sessionId !== id,
+    );
+    return {
+      ...parent,
+      turnChildren: history.map(item =>
+        item === turn
+          ? {
+              ...item,
+              pendingChildMessages: pending,
+              childRuns: [...(item.childRuns ?? []), { sessionId: id, runId }],
+            }
+          : item,
+      ),
+    };
   }
 
   recordCoordinatorWait(
@@ -3008,7 +3039,8 @@ export class SessionService {
     session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
     let externalData: ReturnType<ExternalSessionIngress['claim']> = [];
-    this.store.saveMany([session], () => {
+    const parent = this.bindChildRun(session, input.messageId);
+    this.store.saveMany(parent ? [session, parent] : [session], () => {
       this.reviews.saveMany(superseded);
       if (turn.operatorInitiated)
         externalData =
@@ -3021,6 +3053,14 @@ export class SessionService {
       )
         this.options.autonomy?.revoke(session);
     });
+    if (parent) {
+      const active = this.active.get(parent.id);
+      if (active) {
+        this.clearStreamTimer(active);
+        Object.assign(active.session, parent);
+      }
+      this.emitSession(parent);
+    }
     this.emitSession(session);
     this.emitReviews(superseded);
     const externalBlock = externalData.length
