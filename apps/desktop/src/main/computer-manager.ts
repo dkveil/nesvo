@@ -358,6 +358,10 @@ function requiredCapability(
   if (method === 'gate-rules') return 'gate-rules';
   if (
     method === 'read-config-target' ||
+    method === 'configuration' ||
+    method === 'list-config-devices' ||
+    method === 'enroll-config-device' ||
+    method === 'revoke-config-device' ||
     method === 'propose-config-change' ||
     method === 'decide-config-proposal' ||
     method === 'list-config-changes' ||
@@ -1243,6 +1247,10 @@ export class ComputerManager {
     const { entry, response } = await this.dispatch(method, input, hostId);
     const expected = {
       health: 'health',
+      configuration: 'configuration-result',
+      'list-config-devices': 'config-devices',
+      'enroll-config-device': 'config-enrollment',
+      'revoke-config-device': 'config-devices',
       'read-config-target': 'configuration-result',
       'propose-config-change': 'configuration-result',
       'decide-config-proposal': 'configuration-result',
@@ -1402,6 +1410,10 @@ export class ComputerManager {
         return response.list;
       case 'configuration-result':
         return response.result;
+      case 'config-devices':
+        return response.devices;
+      case 'config-enrollment':
+        return response.enrollment;
       case 'inbox-rules':
         return response.catalog;
       case 'inbox-rule-validation':

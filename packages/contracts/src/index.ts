@@ -12,8 +12,12 @@ export * from './configuration';
 import {
   configurationChangeSchema,
   configurationDecisionSchema,
+  configurationDeviceSchema,
+  configurationEnrollmentSchema,
+  configurationEnrollSchema,
   configurationHistoryInputSchema,
   configurationMutationSchema,
+  configurationRequestSchema,
   configurationResultSchema,
   configurationTargetSchema,
   configurationUndoSchema,
@@ -663,6 +667,22 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
 export const hostRequestSchema = z.discriminatedUnion('method', [
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('configuration'),
+    input: configurationRequestSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-config-devices') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('enroll-config-device'),
+    input: configurationEnrollSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('revoke-config-device'),
+    input: z.strictObject({ deviceId: z.uuid() }),
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('read-config-target'),
@@ -1522,6 +1542,16 @@ export type HostConnect = z.infer<typeof hostConnectSchema>;
 export type HostConnection = z.infer<typeof hostConnectionSchema>;
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    id: z.uuid(),
+    type: z.literal('config-devices'),
+    devices: z.array(configurationDeviceSchema).max(20),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    type: z.literal('config-enrollment'),
+    enrollment: configurationEnrollmentSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     type: z.literal('configuration-result'),

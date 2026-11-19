@@ -24,6 +24,7 @@ export type StoredConfigurationChange = {
   mutation: ConfigurationMutation;
   before: ConfigurationSnapshot;
   after: ConfigurationSnapshot;
+  verb?: 'propose' | 'apply';
 };
 
 export type ConfigurationAction = {
@@ -62,6 +63,13 @@ export function installConfigurationTables(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS configuration_intents (
       change_id TEXT PRIMARY KEY,
       document TEXT NOT NULL CHECK (json_valid(document))
+    );
+    CREATE TABLE IF NOT EXISTS configuration_devices (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      grants TEXT NOT NULL CHECK (json_valid(grants))
     );
   `);
 }

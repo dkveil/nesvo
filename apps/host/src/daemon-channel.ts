@@ -34,7 +34,7 @@ export async function privateSocketPath(directory: string, create = false) {
 export function readFrames(
   socket: NodeJS.ReadableStream,
   limit: number,
-  receive: (value: unknown) => void,
+  receive: (value: unknown, frameBytes: number) => void,
   invalid: () => void,
 ) {
   let pending = Buffer.alloc(Math.min(limit, 4096));
@@ -63,6 +63,7 @@ export function readFrames(
       bytes.copy(pending, size, offset, end);
       size += end - offset;
       if (newline === -1) break;
+      const frameBytes = size;
       const line = pending.subarray(0, size);
       size = 0;
       offset = newline + 1;
@@ -76,7 +77,7 @@ export function readFrames(
         invalid();
         return;
       }
-      receive(value);
+      receive(value, frameBytes);
     }
   };
   const end = () => {

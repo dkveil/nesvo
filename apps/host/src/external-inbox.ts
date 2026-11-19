@@ -128,8 +128,19 @@ export class ExternalInbox {
   }
 }
 
-export async function listenForExternalInbox(inbox: ExternalInbox) {
-  const endpoint = externalInboxEndpoint(inbox.computerId);
+export function listenForExternalInbox(inbox: ExternalInbox) {
+  return listenForDeviceRequests(
+    externalInboxEndpoint(inbox.computerId),
+    externalInboxFrameLimit,
+    (value, signal) => inbox.execute(value, signal),
+  );
+}
+
+export async function listenForDeviceRequests(
+  endpoint: string,
+  frameLimit: number,
+  execute: (value: unknown, signal: AbortSignal) => Promise<unknown>,
+) {
   if (process.platform !== 'win32') {
     const directory = dirname(endpoint);
     await mkdir(directory, { mode: 0o700, recursive: true });
@@ -177,14 +188,14 @@ export async function listenForExternalInbox(inbox: ExternalInbox) {
     let received = false;
     readFrames(
       socket,
-      externalInboxFrameLimit,
+      frameLimit,
       value => {
         if (received) {
           socket.destroy();
           return;
         }
         received = true;
-        void inbox.execute(value, lifetime.signal).then(
+        void execute(value, lifetime.signal).then(
           reply => {
             sendFrame(socket, reply);
             socket.end();

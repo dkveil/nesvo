@@ -1,12 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
+  configurationCommandSchema,
+  configurationFrameLimit,
+  configurationListInputSchema,
+  configurationMutationSchema,
+  configurationTargetSchema,
   externalInboxMcpLookupSchema,
   externalInboxMcpPostSchema,
 } from '@nesvo/contracts';
 import { readFrames } from './daemon-channel';
 import { externalInboxFrameLimit } from './external-inbox-endpoint';
 import {
+  createConfigurationClient,
   createInboxClient,
   InboxClientError,
   inboxDecisionExitCode,
@@ -21,6 +27,29 @@ const requestSchema = z.strictObject({
   method: z.string().max(100),
   params: z.record(z.string(), z.unknown()).optional(),
 });
+
+const computer = z.union([z.literal('local'), z.uuid()]).optional();
+const configurationTools = {
+  config_capabilities: z.strictObject({ computer }),
+  config_list: configurationListInputSchema.extend({ computer }),
+  config_get: z.strictObject({ computer, target: configurationTargetSchema }),
+  config_propose: configurationMutationSchema.safeExtend({ computer }),
+  config_apply: configurationMutationSchema.safeExtend({ computer }),
+  config_status: z.strictObject({ computer, id: z.uuid() }),
+};
+type ConfigTool = keyof typeof configurationTools;
+const configurationDescriptions: Record<ConfigTool, string> = {
+  config_capabilities:
+    'Read the configuration grants on the selected computer.',
+  config_list:
+    'List versioned configuration targets in an allowed area and scope.',
+  config_get: 'Read a typed configuration target and its current version.',
+  config_propose: 'Request human review of one versioned configuration change.',
+  config_apply:
+    'Apply one versioned configuration change if its effect and device grant allow direct apply.',
+  config_status:
+    'Read the state of a configuration action or proposal from this device.',
+};
 
 const tools = [
   {
@@ -43,9 +72,37 @@ const tools = [
     inputSchema: z.toJSONSchema(externalInboxMcpLookupSchema),
     annotations: { idempotentHint: true },
   },
+  ...Object.entries(configurationTools).map(([name, input]) => ({
+    name,
+    description: configurationDescriptions[name as ConfigTool],
+    inputSchema: z.toJSONSchema(input, { io: 'input' }),
+    annotations: {
+      readOnlyHint: name !== 'config_propose' && name !== 'config_apply',
+    },
+  })),
 ];
 
+async function callConfiguration(
+  name: ConfigTool,
+  args: unknown,
+  signal: AbortSignal,
+) {
+  const { computer, ...input } = configurationTools[name].parse(args ?? {});
+  const operation = name.slice('config_'.length);
+  const payload =
+    name === 'config_list'
+      ? { input }
+      : name === 'config_propose' || name === 'config_apply'
+        ? { mutation: input }
+        : input;
+  const command = configurationCommandSchema.parse({ operation, ...payload });
+  const client = await createConfigurationClient(process.env, computer);
+  return client(command, signal);
+}
+
 async function callTool(name: string, args: unknown, signal: AbortSignal) {
+  if (Object.hasOwn(configurationTools, name))
+    return callConfiguration(name as ConfigTool, args, signal);
   if (name === 'inbox_post') {
     const { computer, wait, timeout, idempotencyKey, ...fields } =
       externalInboxMcpPostSchema.parse(args);
@@ -97,11 +154,24 @@ export function serveInboxMcp() {
   });
   readFrames(
     process.stdin,
-    externalInboxFrameLimit,
-    raw => {
+    configurationFrameLimit,
+    (raw, frameBytes) => {
       const parsed = requestSchema.safeParse(raw);
       if (!parsed.success) return void error(null, -32600, 'Invalid Request');
       const { id, method, params } = parsed.data;
+      if (
+        frameBytes > externalInboxFrameLimit &&
+        !(
+          method === 'tools/call' &&
+          typeof params?.name === 'string' &&
+          Object.hasOwn(configurationTools, params.name)
+        )
+      )
+        return void error(
+          id ?? null,
+          -32600,
+          'Request frame exceeds its size limit.',
+        );
       if (id === undefined) {
         if (method === 'notifications/initialized' && state === 'initializing')
           state = 'ready';
@@ -157,7 +227,7 @@ export function serveInboxMcp() {
           });
       };
       void callTool(name, params?.arguments, controller.signal).then(
-        value => finish(value),
+        value => finish(value, 'ok' in value && !value.ok),
         issue =>
           finish(
             {

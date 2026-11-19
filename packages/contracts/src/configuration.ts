@@ -1,7 +1,19 @@
 import { z } from 'zod';
 import { decisionRouteSchema } from './decision-route';
+import {
+  externalInboxDeviceSchema,
+  externalInboxTokenSchema,
+} from './external-inbox';
 
 export const configurationRevision = 1;
+export const configurationFrameLimit = 416 * 1024;
+export const configurationAreaSchema = z.enum([
+  'settings',
+  'defaults',
+  'appearance',
+  'inbox-rules',
+]);
+export const configurationVerbSchema = z.enum(['read', 'propose', 'apply']);
 export const configurationLimits = {
   document: 64 * 1024,
   preview: 48 * 1024,
@@ -181,9 +193,7 @@ export const configurationReceiptSchema = configurationChangeSchema.pick({
 });
 export const configurationHistoryInputSchema = z.strictObject({
   after: z.number().int().nonnegative().optional(),
-  area: z
-    .enum(['settings', 'defaults', 'appearance', 'inbox-rules'])
-    .optional(),
+  area: configurationAreaSchema.optional(),
   status: configurationStatusSchema.optional(),
 });
 export const configurationHistorySchema = z.strictObject({
@@ -195,9 +205,101 @@ export const configurationReadSchema = z.strictObject({
   version: configurationVersionSchema,
   value: configurationValueSchema.nullable(),
   withheld: z.boolean(),
+  operations: z.array(configurationMutationSchema.shape.operation).max(3),
+});
+export const configurationListInputSchema = z.strictObject({
+  area: configurationAreaSchema,
+  project: path.optional(),
+  cursor: z.string().min(1).max(100).optional(),
+});
+export const configurationGrantSchema = z
+  .strictObject({
+    area: configurationAreaSchema,
+    verbs: z.array(configurationVerbSchema).min(1).max(3),
+    global: z.boolean(),
+    projects: z.array(path).max(16),
+  })
+  .refine(
+    grant => grant.global || grant.projects.length > 0,
+    'Select a global or project scope.',
+  );
+export const configurationEnrollSchema = z
+  .strictObject({
+    name: externalInboxDeviceSchema.shape.name,
+    grants: z
+      .array(configurationGrantSchema)
+      .min(1)
+      .max(configurationAreaSchema.options.length),
+  })
+  .refine(
+    input =>
+      new Set(input.grants.map(grant => grant.area)).size ===
+      input.grants.length,
+    'Use one grant per area.',
+  );
+export const configurationDeviceSchema = externalInboxDeviceSchema.extend({
+  grants: configurationEnrollSchema.shape.grants,
+});
+export const configurationEnrollmentSchema = z.strictObject({
+  device: configurationDeviceSchema,
+  token: externalInboxTokenSchema,
+});
+export const configurationCapabilitiesSchema = z.strictObject({
+  instanceId: z.uuid(),
+  revision: z.literal(configurationRevision),
+  grants: z
+    .array(configurationGrantSchema)
+    .max(configurationAreaSchema.options.length),
+  directApply: z.array(configurationTargetSchema).max(10),
+});
+const configurationListSchema = z.strictObject({
+  targets: z
+    .array(
+      configurationReadSchema.pick({
+        target: true,
+        version: true,
+        withheld: true,
+      }),
+    )
+    .max(configurationLimits.page),
+  next: z.string().max(100).nullable(),
+});
+export const configurationCommandSchema = z.discriminatedUnion('operation', [
+  z.strictObject({ operation: z.literal('capabilities') }),
+  z.strictObject({
+    operation: z.literal('list'),
+    input: configurationListInputSchema,
+  }),
+  z.strictObject({
+    operation: z.literal('get'),
+    target: configurationTargetSchema,
+  }),
+  z.strictObject({
+    operation: z.literal('propose'),
+    mutation: configurationMutationSchema,
+  }),
+  z.strictObject({
+    operation: z.literal('apply'),
+    mutation: configurationMutationSchema,
+  }),
+  z.strictObject({ operation: z.literal('status'), id: z.uuid() }),
+]);
+export const configurationRequestSchema = z.strictObject({
+  token: externalInboxTokenSchema,
+  command: configurationCommandSchema,
 });
 export const configurationResultSchema = z.union([
   configurationErrorSchema,
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('capabilities'),
+    capabilities: configurationCapabilitiesSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('list'),
+    page: configurationListSchema,
+  }),
   z.strictObject({
     ok: z.literal(true),
     kind: z.literal('read'),
@@ -221,6 +323,17 @@ export const configurationResultSchema = z.union([
   }),
 ]);
 export type ConfigurationResult = z.infer<typeof configurationResultSchema>;
+export type ConfigurationCommand = z.infer<typeof configurationCommandSchema>;
+export type ConfigurationRequest = z.infer<typeof configurationRequestSchema>;
+export type ConfigurationGrant = z.infer<typeof configurationGrantSchema>;
+export type ConfigurationDevice = z.infer<typeof configurationDeviceSchema>;
+export type ConfigurationEnrollment = z.infer<
+  typeof configurationEnrollmentSchema
+>;
+export type ConfigurationEnroll = z.infer<typeof configurationEnrollSchema>;
+export type ConfigurationListInput = z.infer<
+  typeof configurationListInputSchema
+>;
 
 export type ConfigurationTarget = z.infer<typeof configurationTargetSchema>;
 export type ConfigurationArea = ConfigurationTarget['area'];

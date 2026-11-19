@@ -388,7 +388,7 @@ test('configuration reviews bind to live versions and recover completed files', 
   );
   const launchHost = () =>
     launch(directory, join(directory, 'pids.json'), {
-        NESVO_TEST_MODE: '1',
+      NESVO_TEST_MODE: '1',
       NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
     });
   let host = launchHost();
@@ -399,6 +399,108 @@ test('configuration reviews bind to live versions and recover completed files', 
   };
   try {
     const route = { area: 'settings', key: 'inbox-routing' };
+    const computer = (await host.request('health')).health.instanceId;
+    const device = await host.request('enroll-config-device', {
+      name: 'Fixture configuration device',
+      grants: [
+        {
+          area: 'settings',
+          verbs: ['read', 'propose', 'apply'],
+          global: true,
+          projects: [],
+        },
+        { area: 'inbox-rules', verbs: ['read'], global: true, projects: [] },
+      ],
+    });
+    assert.equal(device.type, 'config-enrollment');
+    const token = device.enrollment.token;
+    const cli = async (args, credential = token) => {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ['apps/host/dist/cli.js', 'config', ...args, '--json'],
+        {
+          env: {
+            ...process.env,
+            NESVO_CONFIG_TOKEN: credential,
+            NESVO_CONFIG_CONFIG: '',
+            NESVO_CONFIG_SSH: '',
+            NESVO_CONFIG_COMPUTER: computer,
+          },
+        },
+      ).catch(error => ({ stdout: error.stdout }));
+      return JSON.parse(stdout);
+    };
+    const mcp = spawn(process.execPath, ['apps/host/dist/cli.js', 'mcp'], {
+      env: {
+        ...process.env,
+        NESVO_CONFIG_TOKEN: token,
+        NESVO_CONFIG_CONFIG: '',
+        NESVO_CONFIG_SSH: '',
+        NESVO_CONFIG_COMPUTER: computer,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const output = createInterface({ input: mcp.stdout });
+    const lines = output[Symbol.asyncIterator]();
+    const sendMcp = (method, params, id) =>
+      mcp.stdin.write(
+        JSON.stringify({ jsonrpc: '2.0', method, params, id }) + '\n',
+      );
+    try {
+      sendMcp('initialize', { protocolVersion: '2025-11-25' }, 1);
+      assert.ok(
+        JSON.parse(
+          (await bounded(lines.next(), 'Configuration MCP initialize')).value,
+        ).result,
+      );
+      sendMcp('notifications/initialized');
+      sendMcp(
+        'tools/call',
+        { name: 'config_get', arguments: { target: route } },
+        2,
+      );
+      const tool = JSON.parse(
+        (await bounded(lines.next(), 'Configuration MCP get')).value,
+      ).result;
+      assert.deepEqual(
+        tool.structuredContent,
+        await cli(['get', 'settings', 'inbox-routing']),
+      );
+      assert.equal(tool.isError, false);
+    } finally {
+      output.close();
+      mcp.stdin.end();
+    }
+    assert.equal(
+      (await cli(['capabilities'])).capabilities.instanceId,
+      computer,
+    );
+    assert.equal(
+      (await cli(['list', 'settings'])).page.targets[0].target.key,
+      'inbox-routing',
+    );
+    assert.equal(
+      (await cli(['capabilities', '--computer', randomUUID()])).code,
+      'unauthorized',
+    );
+    const legacy = (
+      await host.request('enroll-external-inbox-device', {
+        name: 'Inbox-only device',
+      })
+    ).enrollment.token;
+    assert.equal((await cli(['capabilities'], legacy)).code, 'unauthorized');
+    const externalCommand = command =>
+      request('configuration', { token, command });
+    assert.equal(
+      (
+        await externalCommand({
+          operation: 'list',
+          input: { area: 'inbox-rules', project: directory },
+        })
+      ).code,
+      'unauthorized',
+    );
     const base = (await request('read-config-target', route)).target.version;
     const routeChange = {
       target: route,
@@ -408,6 +510,16 @@ test('configuration reviews bind to live versions and recover completed files', 
       draft: { kind: 'route', value: 'parent' },
     };
     const propose = input => request('propose-config-change', input);
+    const refused = await externalCommand({
+      operation: 'apply',
+      mutation: routeChange,
+    });
+    assert.equal(refused.code, 'review-required');
+    const external = await externalCommand({
+      operation: 'propose',
+      mutation: routeChange,
+    });
+    assert.equal(external.receipt.status, 'pending');
     const first = await propose(routeChange);
     assert.equal(first.receipt.status, 'pending');
     assert.deepEqual((await propose(routeChange)).receipt, first.receipt);
@@ -428,6 +540,15 @@ test('configuration reviews bind to live versions and recover completed files', 
       decision: 'accept',
     });
     const decide = input => request('decide-config-proposal', input);
+    await host.request('revoke-config-device', {
+      deviceId: device.enrollment.device.id,
+    });
+    assert.equal((await cli(['capabilities'])).code, 'unauthorized');
+    assert.equal(
+      (await decide({ ...accept(external.receipt), decision: 'dismiss' }))
+        .receipt.status,
+      'dismissed',
+    );
     assert.equal(
       (await decide(accept(first.receipt))).receipt.status,
       'conflicted',
@@ -2577,6 +2698,7 @@ test(
         'mcp-auth',
         'group-cost-budgets',
         'manager-import',
+        'configuration',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -8208,6 +8330,7 @@ test(
       'mcp-auth',
       'group-cost-budgets',
       'manager-import',
+      'configuration',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -30179,7 +30302,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-7), [
+  assert.deepEqual(capabilities.slice(-8), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -30187,6 +30310,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'mcp-auth',
     'group-cost-budgets',
     'manager-import',
+    'configuration',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

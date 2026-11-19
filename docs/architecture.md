@@ -528,6 +528,8 @@ The host compares the selected proposal revision, the target, its current versio
 
 Undo runs through the same writer against the resulting version. A subsequent manual change causes a conflict. Configuration history keeps the source and decision revision, and a routing change affects future evaluations.
 
+The CLI `config` commands and the `config_*` MCP tools use the same typed client and device scope checks. D85 devices have independent Read, Propose and Apply grants and explicit global or canonical project scope. The host keeps only a hash of the device token. The local client uses a separately bounded configuration endpoint on the same named-pipe or Unix-socket transport. A remote client verifies the SSH host and the Nesvo instance before sending its token. Revocation takes effect on the host and leaves pending proposals visible for owner re-review. Legacy external Inbox tokens retain their Inbox grants.
+
 ## Decision routing
 
 Every human decision item has a route: `inbox` (default), `parent` (the parent or coordinator session's conversation) or `both`. The route resolves from the rule's `route`, then the session's `decisionRoute` (set for children of a workflow whose file declares `decisions:`), then the session group's default (`defaults.decisionRoute`), then the computer's default in Settings › Inbox rules (capability `decision-routing`). A session without a parent always routes to the Inbox.

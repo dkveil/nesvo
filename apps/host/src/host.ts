@@ -82,6 +82,10 @@ import {
 } from './workflows/configuration-changes';
 import type { ConfigurationResult } from '@nesvo/contracts';
 import {
+  ConfigurationDevices,
+  configurationFailure,
+} from './configuration-devices';
+import {
   WorkflowAssistant,
   WorkflowAssistantError,
 } from './workflows/assistant';
@@ -921,14 +925,55 @@ export const serveHost = ({
           )
           .map(run => run.id);
       const assistantChangeStore = new AssistantChangeStore(database);
-      const configuration = new ConfigurationChanges(
+      const configuration: ConfigurationChanges = new ConfigurationChanges(
         new ConfigurationChangeStore(database),
         change => emit({ type: 'configuration-changed', change }),
-        () => false,
+        (source, target) =>
+          configurationDevices.canPropose(source.deviceId, target),
       );
       configuration.register('settings', inboxRules.configurationSettings());
       configuration.register('inbox-rules', inboxRules.configurationRules());
+      const configurationDevices: ConfigurationDevices =
+        new ConfigurationDevices(
+          database,
+          configuration,
+          computerId,
+          ['settings', 'inbox-rules'],
+          [],
+          async (area, directory, signal) => {
+            if (area === 'settings') return [{ area, key: 'inbox-routing' }];
+            if (area !== 'inbox-rules') return [];
+            const catalog = await inboxRules.catalog(directory, signal);
+            if (
+              directory &&
+              catalog.projectTrust !== 'trusted' &&
+              catalog.rules.some(rule => rule.scope === 'project')
+            )
+              throw new ConfigurationRefusal(
+                'unauthorized',
+                'Trust this project before reading Inbox rules.',
+              );
+            return catalog.rules
+              .filter(rule => rule.scope === (directory ? 'project' : 'global'))
+              .filter(rule => /^[a-z0-9][a-z0-9-]{0,79}$/.test(rule.name))
+              .map(rule => ({
+                area,
+                name: rule.name,
+                scope: directory
+                  ? { kind: 'project', root: directory }
+                  : { kind: 'global' },
+              }));
+          },
+          findProjectRoot,
+        );
       yield* Effect.promise(() => configuration.recover());
+      yield* Effect.acquireRelease(
+        Effect.promise(() => configurationDevices.listen().catch(() => null)),
+        close =>
+          Effect.promise(async () => {
+            await close?.();
+          }),
+      );
       const configurationOwner: ConfigurationPrincipal = {
         source: { kind: 'owner' },
         authorize: () => undefined,
@@ -1343,6 +1388,60 @@ export const serveHost = ({
             .finally(() => {
               probes.pending.delete(pending);
             });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'configuration' ||
+          request.method === 'list-config-devices' ||
+          request.method === 'enroll-config-device' ||
+          request.method === 'revoke-config-device'
+        ) {
+          const { id } = request;
+          const signal = probes.controller.signal;
+          const operation = async (): Promise<HostReply> => {
+            switch (request.method) {
+              case 'configuration':
+                return {
+                  type: 'configuration-result',
+                  id,
+                  result: await configurationDevices.execute(
+                    request.input,
+                    signal,
+                  ),
+                };
+              case 'list-config-devices':
+                return {
+                  type: 'config-devices',
+                  id,
+                  devices: configurationDevices.list(),
+                };
+              case 'enroll-config-device':
+                return {
+                  type: 'config-enrollment',
+                  id,
+                  enrollment: await configurationDevices.enroll(
+                    request.input,
+                    signal,
+                  ),
+                };
+              case 'revoke-config-device':
+                return {
+                  type: 'config-devices',
+                  id,
+                  devices: configurationDevices.revoke(request.input.deviceId),
+                };
+            }
+          };
+          const pending = operation()
+            .catch((error: unknown): HostReply => ({
+              type: 'configuration-result',
+              id,
+              result: configurationFailure(error),
+            }))
+            .then(send)
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
           probes.pending.add(pending);
           continue;
         }

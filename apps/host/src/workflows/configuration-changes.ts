@@ -241,7 +241,7 @@ export class ConfigurationChanges {
         'unavailable',
         'The configuration action is unavailable.',
       );
-    principal.authorize('propose', record.change.target);
+    principal.authorize(record.verb ?? 'propose', record.change.target);
     const { revision, status, resultingVersion } = record.change;
     return { id: record.change.id, revision, status, resultingVersion };
   }
@@ -255,7 +255,20 @@ export class ConfigurationChanges {
       const text = recordText(value);
       const normalized = text.replace(/\r\n?/g, '\n');
       const withheld = configurationText(text) !== normalized;
-      return { target, version, value: withheld ? null : value, withheld };
+      const operations: ConfigurationMutation['operation'][] = withheld
+        ? []
+        : writer.kind === 'database'
+          ? ['update']
+          : value === null
+            ? ['create']
+            : ['update', 'delete'];
+      return {
+        target,
+        version,
+        value: withheld ? null : value,
+        withheld,
+        operations,
+      };
     };
     return writer.kind === 'database'
       ? read(writer.open(target))
@@ -530,6 +543,7 @@ export class ConfigurationChanges {
       mutation,
       before,
       after,
+      verb,
       change: {
         id: randomUUID(),
         revision: 1,
