@@ -149,7 +149,7 @@ const launchApplication = (overrides = {}) =>
     timeout: 30000,
   });
 let smokeFailure;
-async function setupShot(app, page, name) {
+async function setupShot(app, page, name, ready) {
   if (!setupScreenshots) return;
   await mkdir(setupScreenshots, { recursive: true });
   for (const size of [
@@ -165,6 +165,7 @@ async function setupShot(app, page, name) {
       ([width, height]) => innerWidth === width && innerHeight === height,
       size,
     );
+    await ready?.scrollIntoViewIfNeeded();
     const capture = () =>
       app.evaluate(async ({ BrowserWindow }) =>
         (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
@@ -254,11 +255,9 @@ async function smokeSetupProfile() {
     await recipe
       .getByRole('button', { name: 'Review diff for Verify checkout' })
       .click();
-    await recipe
-      .getByRole('button', { name: 'Accept', exact: true })
-      .scrollIntoViewIfNeeded();
-    await setupShot(application, page, 'stage-d-assistant-proposal');
-    await recipe.getByRole('button', { name: 'Accept', exact: true }).click();
+    const accept = recipe.getByRole('button', { name: 'Accept', exact: true });
+    await setupShot(application, page, 'stage-d-assistant-proposal', accept);
+    await accept.click();
     const confirm = page.getByRole('alertdialog', {
       name: 'Save profile recipe',
       exact: true,
@@ -432,7 +431,13 @@ async function smokeSetupDetection() {
       mcpServers: { 'demo-review': { command: 'fixture-never-run' } },
     }),
   );
-  await page.getByRole('button', { name: 'Detect again', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click();
+  await page.getByText(/Setup changed on .*1 finding changed/).waitFor();
+  await page
+    .getByRole('button', { name: 'Review setup changes', exact: true })
+    .click();
   await page
     .getByRole('button', { name: 'Review changes', exact: true })
     .click();

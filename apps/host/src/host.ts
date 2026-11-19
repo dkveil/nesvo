@@ -2196,7 +2196,7 @@ export const serveHost = ({
             scan:
               input.action === 'scan'
                 ? await setupDetection.scan(input)
-                : setupDetection.acknowledge(input),
+                : await setupDetection.acknowledge(input),
           });
           const pending = operation()
             .catch(configurationFailure)

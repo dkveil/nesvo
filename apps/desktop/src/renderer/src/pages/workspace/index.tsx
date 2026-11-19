@@ -296,6 +296,7 @@ import {
 import { PanelBody } from '@/shared/ui/panel';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
 import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
+import { useSetupDrift } from '@/widgets/settings/use-setup-drift';
 import {
   NewSessionSetupFinding,
   SetupFindings,
@@ -4026,7 +4027,15 @@ ${text}`
   const breadcrumbHostId = showingNewThread
     ? threadSetup.hostId
     : selectedHostId;
-  const setupChangedHere = changedSetupHosts.includes(breadcrumbHostId);
+  const setupComputer = store.computers.find(
+    computer => computer.id === breadcrumbHostId,
+  );
+  const setupDrift = useSetupDrift(
+    setupComputer,
+    settingsPage !== 'your-setup',
+  );
+  const setupChangedHere =
+    changedSetupHosts.includes(breadcrumbHostId) || setupDrift.count > 0;
   const branchReadable =
     !!window.nesvo &&
     store.hostReady(breadcrumbHostId) &&
@@ -4822,16 +4831,15 @@ ${text}`
         {setupChangedHere && (
           <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-5 py-2">
             <StatusMessage>
-              Setup changed on{' '}
-              {store.computers.find(
-                computer => computer.id === breadcrumbHostId,
-              )?.name ?? 'this computer'}
-              .
+              Setup changed on {setupComputer?.name ?? 'this computer'}.
+              {setupDrift.count > 0 &&
+                ` ${setupDrift.count} ${setupDrift.count === 1 ? 'finding' : 'findings'} changed.`}
             </StatusMessage>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
+                setupDrift.markViewed();
                 setChangedSetupHosts(previous =>
                   previous.filter(hostId => hostId !== breadcrumbHostId),
                 );

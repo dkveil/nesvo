@@ -2721,12 +2721,16 @@ test('setup detection reports bounded passive evidence and keeps changed hooks w
       /bun\.lock.*verify/,
     );
     assert.doesNotMatch(JSON.stringify(focused), /never-run-this-metadata/);
-    await writeFile(
-      settings,
-      JSON.stringify({
-        mcpServers: { review: { command: 'never-run-this-metadata' } },
-        hooks: { SessionStart: [] },
-      }),
+    const original = await readFile(settings, 'utf8');
+    const timestamps = await stat(settings);
+    await writeFile(settings, original.replace('never-run', 'never-use'));
+    await utimes(settings, timestamps.atime, timestamps.mtime);
+    const monitor = (await scan('startup')).result.scan;
+    assert.equal(monitor.revision, report.revision);
+    assert.deepEqual(monitor.changes, ['configuration/claude/1']);
+    assert.equal(
+      (await host.request('setup-detection', ack)).result.code,
+      'conflict',
     );
     const next = (await scan()).result.scan;
     assert.deepEqual(next.changes, ['configuration/claude/1']);
@@ -2735,9 +2739,12 @@ test('setup detection reports bounded passive evidence and keeps changed hooks w
         .readiness,
       'withheld',
     );
-    assert.equal(
-      (await host.request('setup-detection', ack)).result.code,
-      'conflict',
+    await rm(settings);
+    const removed = (await scan('startup')).result.scan;
+    assert.match(
+      removed.findings.find(item => item.id === 'configuration/claude/1')
+        .description,
+      /no longer available/,
     );
     assert.equal((await host.request('list-sessions')).sessions.length, 0);
     assert.equal(await readFile(commandLog, 'utf8').catch(() => ''), '');

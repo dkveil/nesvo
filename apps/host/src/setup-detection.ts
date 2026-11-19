@@ -78,12 +78,9 @@ async function metadata(file: string, signal: AbortSignal) {
   try {
     const document = await readSmallInboxFile(file, 128 * 1024);
     signal.throwIfAborted();
-    return {
-      value: object(
-        file.endsWith('.toml') ? parseToml(document) : JSON.parse(document),
-      ),
-      identity: digest(status),
-    };
+    return object(
+      file.endsWith('.toml') ? parseToml(document) : JSON.parse(document),
+    );
   } catch {
     return;
   }
@@ -142,13 +139,19 @@ async function providers(
       (['claude', 'codex'] as const).map(async provider => {
         const label = provider === 'claude' ? 'Claude Code' : 'Codex';
         const root = staticConfigRoot(provider, directory);
+        const userRoot =
+          process.env.CLAUDE_CONFIG_DIR ||
+          process.env.NESVO_TEST_MODE === '1' ||
+          process.env.NESVO_ISOLATED_PROFILE === '1'
+            ? root
+            : homedir();
         const paths =
           provider === 'claude'
-            ? [join(root, '.claude.json'), join(root, 'settings.json')]
+            ? [join(userRoot, '.claude.json'), join(root, 'settings.json')]
             : [join(root, 'config.toml')];
-        const [executable, ...configs] = await Promise.all([
+        const [executable, configs] = await Promise.all([
           binary(provider, signal),
-          ...paths.map(path => metadata(path, signal)),
+          Promise.all(paths.map(path => metadata(path, signal))),
         ]);
         const findings: Observation[] = [
           {
@@ -166,11 +169,12 @@ async function providers(
           },
         ];
         for (const [index, config] of configs.entries()) {
-          if (!config || !('value' in config)) continue;
-          const servers = names(
-            config.value[provider === 'claude' ? 'mcpServers' : 'mcp_servers'],
-          );
-          const hooks = names(config.value.hooks);
+          if (!config) continue;
+          const serverConfig =
+            config[provider === 'claude' ? 'mcpServers' : 'mcp_servers'];
+          const hookConfig = config.hooks;
+          const servers = names(serverConfig);
+          const hooks = names(hookConfig);
           if (!servers.length && !hooks.length) continue;
           findings.push({
             id: `configuration/${provider}/${index}`,
@@ -188,7 +192,7 @@ async function providers(
             evidence: 'filesystem',
             readiness: 'withheld',
             classification: 'execution',
-            identity: config.identity,
+            identity: digest([serverConfig, hookConfig]),
             action: 'review',
           });
         }
@@ -240,7 +244,10 @@ export class SetupDetection {
   ) {}
 
   scan(input: SetupScanRequest): Promise<SetupScan> {
-    const scope = input.directory ? resolve(input.directory) : '';
+    const scope =
+      input.trigger !== 'startup' && input.directory
+        ? resolve(input.directory)
+        : '';
     const key = input.trigger + ':' + scope;
     const current = this.inFlight.get(key);
     if (current) return current;
@@ -256,14 +263,16 @@ export class SetupDetection {
         'busy',
         'Wait for the current setup scan to finish.',
       );
-    const task = this.collect(input, scope).finally(() =>
+    const task = this.collect(input.trigger, scope).finally(() =>
       this.inFlight.delete(key),
     );
     this.inFlight.set(key, task);
     return task;
   }
 
-  acknowledge(input: Extract<SetupDetectionInput, { action: 'acknowledge' }>) {
+  async acknowledge(
+    input: Extract<SetupDetectionInput, { action: 'acknowledge' }>,
+  ) {
     const report = this.cache.get('');
     if (
       !report ||
@@ -273,6 +282,19 @@ export class SetupDetection {
       throw new ConfigurationRefusal(
         'conflict',
         'The setup scan changed. Review the current computer again.',
+      );
+    const latest = await this.collect('manual', '', report.revision);
+    const revisions = new Map(
+      latest.findings.map(item => [item.id, item.revision]),
+    );
+    if (
+      this.cache.get('') !== report ||
+      revisions.size !== report.findings.length ||
+      report.findings.some(item => revisions.get(item.id) !== item.revision)
+    )
+      throw new ConfigurationRefusal(
+        'conflict',
+        'A setup finding changed. Refresh the scan before marking it reviewed.',
       );
     const baseline: Baseline = {
       completed: report.completed || input.completed,
@@ -306,9 +328,32 @@ export class SetupDetection {
     );
   }
 
-  private async collect(input: SetupScanRequest, scope: string) {
+  private baseline(): Baseline | undefined {
+    const row = this.database
+      .prepare("SELECT value FROM metadata WHERE key = 'setup_review'")
+      .get();
+    return row?.value ? JSON.parse(String(row.value)) : undefined;
+  }
+
+  private async collect(
+    trigger: SetupScanRequest['trigger'],
+    scope: string,
+    verifyRevision?: number,
+  ) {
     const signal = AbortSignal.any([this.lifetime, AbortSignal.timeout(2800)]);
     const time = new Date().toISOString();
+    const monitor = trigger === 'startup';
+    if (monitor && !this.baseline())
+      return setupScanSchema.parse({
+        instanceId: this.instanceId,
+        revision: 1,
+        scannedAt: time,
+        directory: null,
+        completed: false,
+        reviewedRevision: null,
+        findings: [],
+        changes: [],
+      });
     const observations: Observation[] = [];
     const { repositories, usage } = this.counts();
     const candidate = this.profile.inspect();
@@ -330,10 +375,8 @@ export class SetupDetection {
         source: 'Detected',
         classification: 'observation',
       });
-    const scopeRoot = await repoMetadata(input.directory, signal).catch(
-      () => null,
-    );
-    if (input.trigger !== 'startup' && input.trigger !== 'first-open') {
+    const scopeRoot = await repoMetadata(scope, signal).catch(() => null);
+    if (trigger !== 'first-open') {
       const scanned = await providers(this.directory, signal).catch(() => []);
       observations.push(...scanned);
       if (!scanned.length)
@@ -377,7 +420,7 @@ export class SetupDetection {
         join(scopeRoot, 'package.json'),
         signal,
       ).catch(() => undefined);
-      const scripts = names(manifest?.value.scripts);
+      const scripts = names(manifest?.scripts);
       const hint = [
         ...lockfiles.flatMap(item => (item ? [basename(item.path)] : [])),
         ...(scripts.length ? [`Scripts: ${scripts.join(', ')}`] : []),
@@ -469,20 +512,45 @@ export class SetupDetection {
         'unavailable',
         'The computer is shutting down.',
       );
+    const baseline = this.baseline();
+    if (
+      baseline &&
+      trigger !== 'first-open' &&
+      !observations.some(item => item.id === 'provider/partial')
+    ) {
+      const observedIds = new Set(observations.map(item => item.id));
+      for (const id of Object.keys(baseline.findings)) {
+        if (
+          !/^configuration\/(claude|codex)\/\d$/u.test(id) ||
+          observedIds.has(id)
+        )
+          continue;
+        const label = id.startsWith('configuration/claude/')
+          ? 'Claude Code'
+          : 'Codex';
+        observations.push({
+          id,
+          group: 'Agent configuration',
+          label: label + ' user configuration',
+          description:
+            'Previously observed hook or MCP metadata is no longer available.',
+          source: 'Detected',
+          evidence: 'unavailable',
+          readiness: 'withheld',
+          classification: 'execution',
+        });
+      }
+    }
     const findings = observations.map(({ identity, ...item }) => ({
       ...item,
       revision: digest([item, identity]),
       verifiedAt: time,
     }));
-    const row = this.database
-      .prepare("SELECT value FROM metadata WHERE key = 'setup_review'")
-      .get();
-    const baseline: Baseline | undefined = row?.value
-      ? JSON.parse(String(row.value))
-      : undefined;
     const report = setupScanSchema.parse({
       instanceId: this.instanceId,
-      revision: this.nextRevision(),
+      revision:
+        verifyRevision ??
+        (monitor ? (baseline?.revision ?? 1) : this.nextRevision()),
       scannedAt: time,
       directory: scopeRoot,
       completed: baseline?.completed ?? false,
@@ -494,6 +562,7 @@ export class SetupDetection {
         )
         .map(item => item.id),
     });
+    if (monitor || verifyRevision !== undefined) return report;
     this.cache.set(scope, report);
     if (this.cache.size > 12) {
       const extra = [...this.cache.keys()].find(key => key !== '');
