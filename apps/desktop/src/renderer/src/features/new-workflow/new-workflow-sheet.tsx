@@ -21,7 +21,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/shared/ui/sheet';
-import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { SavedInField } from '@/shared/ui/saved-in-field';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Textarea } from '@/shared/ui/textarea';
 
@@ -43,20 +43,6 @@ type Props = {
   onCreate: (draft: NewWorkflowDraft) => Promise<void>;
   onClose: () => void;
 };
-
-const scopeOptions: { value: DefinitionScope; label: string; hint: string }[] =
-  [
-    {
-      value: 'project',
-      label: 'Project',
-      hint: 'Saved in .agents/workflows of the chosen folder.',
-    },
-    {
-      value: 'global',
-      label: 'Global',
-      hint: 'Saved in the home folder and shared by every project.',
-    },
-  ];
 
 const nameMessage = (name: string) => {
   if (!name.trim()) return 'Give the workflow a name.';
@@ -238,31 +224,14 @@ export function NewWorkflowSheet({
                   />
                 </div>
               </Field>
-              <Field
+              <SavedInField
                 id={`${id}-scope`}
-                label="Scope"
-                as="span"
-                hint={
-                  scopeOptions.find(option => option.value === effectiveScope)
-                    ?.hint
-                }
-              >
-                <SegmentedControl
-                  label="Scope"
-                  value={effectiveScope}
-                  disabled={pending}
-                  options={scopeOptions.map(option => ({
-                    value: option.value,
-                    label: option.label,
-                    disabled: option.value === 'project' && !trimmedDirectory,
-                    title:
-                      option.value === 'project' && !trimmedDirectory
-                        ? 'Choose a folder to save in the project.'
-                        : option.hint,
-                  }))}
-                  onChange={setScope}
-                />
-              </Field>
+                scope={effectiveScope}
+                size="md"
+                disabled={pending}
+                projectDisabled={!trimmedDirectory}
+                onChange={setScope}
+              />
               <Field id={`${id}-notes`} label="Notes">
                 <Textarea
                   size="md"

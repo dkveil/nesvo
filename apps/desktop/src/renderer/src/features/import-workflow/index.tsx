@@ -10,6 +10,7 @@ import {
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { formatExpiry } from '@/shared/lib/format-expiry';
+import { savedInHint, savedInLabels } from '@/shared/lib/saved-in';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
@@ -315,12 +316,23 @@ function ImportReview({
         />
       </section>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field id="import-workflow-location" label="Save to">
+        <Field
+          id="import-workflow-location"
+          label="Saved in"
+          hint={savedInHint(
+            location === GLOBAL_LOCATION ? 'global' : 'project',
+          )}
+        >
           <Select
             value={location}
             onValueChange={value => void chooseLocation(value)}
           >
-            <SelectTrigger id="import-workflow-location" size="md">
+            <SelectTrigger
+              id="import-workflow-location"
+              size="md"
+              className="w-full"
+              aria-describedby="import-workflow-location-hint"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -330,10 +342,12 @@ function ImportReview({
                   value={`project:${folder}`}
                   title={folder}
                 >
-                  {folderName(folder)}
+                  {savedInLabels.project} · {folderName(folder)}
                 </SelectItem>
               ))}
-              <SelectItem value={GLOBAL_LOCATION}>Global workflows</SelectItem>
+              <SelectItem value={GLOBAL_LOCATION}>
+                {savedInLabels.global}
+              </SelectItem>
               <SelectSeparator />
               <SelectItem value={PICK_LOCATION}>
                 <FolderOpen />

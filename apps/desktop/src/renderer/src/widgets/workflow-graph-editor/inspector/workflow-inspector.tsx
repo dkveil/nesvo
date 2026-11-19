@@ -4,7 +4,7 @@ import {
   workflowDefinitionSchema,
 } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
-import { Badge } from '@/shared/ui/badge';
+import { SavedInField } from '@/shared/ui/saved-in-field';
 import { Input } from '@/shared/ui/input';
 import { Textarea } from '@/shared/ui/textarea';
 import {
@@ -24,8 +24,6 @@ const workflowFieldsSchema = workflowDefinitionSchema.pick({
   description: true,
   body: true,
 });
-
-const scopeLabels = { global: 'Global', project: 'Project' } as const;
 
 const counter = (length: number, limit: number) => (
   <span
@@ -63,10 +61,7 @@ export function WorkflowInspectorForm({
       aria-label={`Workflow ${name || 'draft'}`}
       className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3"
     >
-      <div className="flex items-center gap-1.5">
-        <Badge appearance="outline">{scopeLabels[scope]}</Badge>
-        {mode === 'create' && <Badge>New workflow</Badge>}
-      </div>
+      <SavedInField id={fieldId('scope')} scope={scope} layout="inline" />
       <Field
         id={fieldId('name')}
         label="Name"

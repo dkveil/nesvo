@@ -13,6 +13,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { Field } from '@/shared/ui/field';
+import { SavedInField } from '@/shared/ui/saved-in-field';
 import { Input } from '@/shared/ui/input';
 import { DecisionRow } from '@/entities/review/decision-row';
 import {
@@ -324,23 +325,13 @@ function GateRuleEditor({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="Scope" id={`${id}-scope`}>
-          <Select
-            value={edit.scope}
-            onValueChange={scope => {
-              if (scope === 'global' || scope === 'project')
-                setEdit({ ...edit, scope });
-            }}
-          >
-            <SelectTrigger id={`${id}-scope`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="global">Global</SelectItem>
-              <SelectItem value="project">Project</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
+        <SavedInField
+          id={`${id}-scope`}
+          scope={edit.scope}
+          className="min-w-0 flex-1"
+          disabled={busy}
+          onChange={scope => setEdit({ ...edit, scope })}
+        />
       </div>
       {!parsed.success && (
         <StatusMessage tone="error" className="sm:col-span-2">

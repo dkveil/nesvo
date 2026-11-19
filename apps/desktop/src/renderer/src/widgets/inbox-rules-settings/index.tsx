@@ -19,7 +19,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import { Field } from '@/shared/ui/field';
+import { SavedInField } from '@/shared/ui/saved-in-field';
 import type { ProviderStates } from '@/entities/session';
 import { ModelPicker } from '@/features/new-thread/model-picker';
 import {
@@ -492,25 +492,15 @@ export function InboxRulesSettings({
       {draft && (
         <SettingsSection title={draft.proposed ? 'Proposed rule' : 'Rule file'}>
           <div className="space-y-2 p-3">
-            <Field id="inbox-rule-scope" label="Save to">
-              <Select
-                value={draft.scope}
-                disabled={!!draft.expectedHash}
-                onValueChange={value =>
-                  setDraft({ ...draft, scope: value as InboxRuleScope })
-                }
-              >
-                <SelectTrigger id="inbox-rule-scope" className="w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="global">Global rules</SelectItem>
-                  <SelectItem value="project" disabled={!directory}>
-                    Project rules
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
+            <SavedInField
+              id="inbox-rule-scope"
+              scope={draft.scope}
+              triggerClassName="w-48"
+              projectPath=".agents/inbox-rules"
+              projectDisabled={!directory}
+              disabled={busy || !!draft.expectedHash}
+              onChange={scope => setDraft({ ...draft, scope })}
+            />
             <Textarea
               resize="none"
               ref={ruleEditor}

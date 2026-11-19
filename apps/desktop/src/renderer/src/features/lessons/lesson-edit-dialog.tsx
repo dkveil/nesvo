@@ -6,6 +6,7 @@ import {
   ruleEntryLimits,
   ruleEntryProviderSchema,
   ruleEntryRoleSchema,
+  type DefinitionScope,
   type Lesson,
   type LessonChanges,
   type RuleEntryProvider,
@@ -23,6 +24,7 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { Field } from '@/shared/ui/field';
+import { SavedInField } from '@/shared/ui/saved-in-field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
@@ -81,6 +83,9 @@ export function LessonEditDialog({
   const [enforcedBy, setEnforcedBy] = useState(lesson.enforcedBy);
   const [review, setReview] = useState(lesson.review ?? '');
   const [project, setProject] = useState(lesson.project ?? '');
+  const [saveScope, setSaveScope] = useState<DefinitionScope>(
+    lesson.project ? 'project' : 'global',
+  );
   const [today] = useState(() => localDate(new Date()));
   const proposal = lesson.state === 'proposed';
   const changes = lessonChangesSchema.safeParse({
@@ -96,7 +101,9 @@ export function LessonEditDialog({
     },
     enforcedBy: enforcedBy.trim() || 'none',
     ...(review && review !== lesson.review ? { review } : {}),
-    ...(proposal ? { project: project.trim() || null } : {}),
+    ...(proposal
+      ? { project: saveScope === 'project' ? project.trim() : null }
+      : {}),
   });
   const reviewValid = !review || review > today || review === lesson.review;
   const issue = changes.success ? '' : (changes.error.issues[0]?.message ?? '');
@@ -248,20 +255,27 @@ export function LessonEditDialog({
             </Field>
           </div>
           {proposal && (
-            <Field
-              id="lesson-project"
-              label="Project folder"
-              hint="Leave empty to save the lesson in the global workflows folder."
-            >
-              <Input
-                id="lesson-project"
+            <>
+              <SavedInField
+                id="lesson-save-scope"
+                scope={saveScope}
                 size="md"
-                value={project}
-                spellCheck={false}
                 disabled={pending}
-                onChange={event => setProject(event.target.value)}
+                onChange={setSaveScope}
               />
-            </Field>
+              {saveScope === 'project' && (
+                <Field id="lesson-project" label="Project folder">
+                  <Input
+                    id="lesson-project"
+                    size="md"
+                    value={project}
+                    spellCheck={false}
+                    disabled={pending}
+                    onChange={event => setProject(event.target.value)}
+                  />
+                </Field>
+              )}
+            </>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
             <Field

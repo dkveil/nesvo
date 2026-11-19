@@ -29,6 +29,7 @@ import {
 } from './field-notes';
 import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { Field, FieldMessages } from '@/shared/ui/field';
+import { SavedInField } from '@/shared/ui/saved-in-field';
 import { PanelBody, ToolbarSpacer } from '@/shared/ui/panel';
 import { SidePanelFooter } from '@/shared/ui/side-panel';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
@@ -54,9 +55,6 @@ import {
   withType,
   type DurationUnit,
 } from './step-form';
-
-const scopeHint =
-  'Global steps are available in every project; a project step with the same name replaces it there.';
 
 const usageText = (count: number) =>
   `Used by ${count} other ${count === 1 ? 'workflow' : 'workflows'}; the step file changes for all of them`;
@@ -209,44 +207,18 @@ export function StepInspectorForm({
     >
       <PanelBody className="space-y-3 overscroll-contain p-3">
         {beforeFields && <div className="-mx-3 -mt-3">{beforeFields}</div>}
-        <div className="space-y-1">
-          <Field
-            id={fieldId('scope')}
-            label="Saved in"
-            layout="inline"
-            className={inlineFieldClass}
-          >
-            <Select
-              value={step.scope}
-              disabled={!creating}
-              onValueChange={scope =>
-                update({ scope: scope === 'project' ? 'project' : 'global' })
-              }
-            >
-              <SelectTrigger
-                id={fieldId('scope')}
-                className="w-full"
-                aria-describedby={fieldId('scope-hint')}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent position="popper">
-                <SelectItem value="global">Global</SelectItem>
-                <SelectItem value="project">This project</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <p
-            id={fieldId('scope-hint')}
-            className="text-2xs leading-4 text-muted-foreground"
-          >
-            {creating
-              ? scopeHint
-              : shared
-                ? usageText(usedBy.length) + '.'
-                : null}
+        <SavedInField
+          id={fieldId('scope')}
+          scope={step.scope}
+          layout="inline"
+          className={inlineFieldClass}
+          onChange={creating ? scope => update({ scope }) : undefined}
+        />
+        {shared && (
+          <p className="text-2xs leading-4 text-muted-foreground">
+            {usageText(usedBy.length)}.
           </p>
-        </div>
+        )}
         <Field
           id={fieldId('name')}
           label="Name"
