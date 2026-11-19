@@ -1,4 +1,3 @@
-import { PathInput } from '@/shared/ui/path-input';
 import { useState } from 'react';
 import type { DesktopApi, ProviderProfile } from '@nesvo/contracts';
 import { DefaultFolderField } from '@/features/default-session-folder';
@@ -25,7 +24,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import { Switch } from '@/shared/ui/switch';
+import { WorktreeDefaultRow } from '@/features/new-thread/worktree-default-row';
 
 type Props = {
   providerStates: ProviderStates;
@@ -209,53 +208,33 @@ export function DefaultsSettings({
             }
           />
         </SettingsRow>
-        {defaultFolderSupported ? (
-          <DefaultFolderField
-            key={`${hostId}:${defaultFolder ?? ''}`}
-            id="defaults-directory"
-            label="Folder"
-            computerName={computerName}
-            value={defaultFolder}
-            supported
-            onSave={onSaveDefaultFolder}
-          />
-        ) : (
-          <SettingsRow
-            title={<label htmlFor="defaults-directory">Folder</label>}
-            description="Leave blank to keep the last folder."
-          >
-            <PathInput
-              id="defaults-directory"
-              size="md"
-              className="w-52 font-mono"
-              placeholder="Absolute path"
-              spellCheck={false}
-              maxLength={4096}
-              value={defaults.directory}
-              onChange={event => update({ directory: event.target.value })}
-            />
-          </SettingsRow>
-        )}
-        <SettingsRow
-          title={
-            <label htmlFor="defaults-worktree">
-              Start sessions in a worktree
-            </label>
+        <DefaultFolderField
+          key={hostId + ':' + (defaultFolder ?? defaults.directory)}
+          id="defaults-directory"
+          label="Folder"
+          computerName={computerName}
+          value={
+            defaultFolderSupported ? defaultFolder : defaults.directory || null
           }
-          description="Applies when the folder is a Git repository."
-        >
-          <Switch
-            id="defaults-worktree"
-            checked={defaults.worktree}
-            onCheckedChange={worktree => update({ worktree })}
-          />
-        </SettingsRow>
+          supported={defaultFolderSupported || connected}
+          chooseDirectory={hostId === 'local' ? api.chooseDirectory : undefined}
+          onSave={
+            defaultFolderSupported
+              ? onSaveDefaultFolder
+              : async directory => {
+                  update({ directory: directory ?? '' });
+                  return directory;
+                }
+          }
+        />
+        <WorktreeDefaultRow
+          id="defaults-worktree"
+          checked={defaults.worktree}
+          onChange={worktree => update({ worktree })}
+        />
       </SettingsSection>
       <p className="px-3 text-xs text-muted-foreground">
-        Defaults only pre-fill the new session form. The folder is saved on the
-        computer; the other defaults stay on this desktop. They never change
-        existing sessions, and group defaults take precedence when you start a
-        session in a group.
+        Defaults prefill new sessions unless a session group overrides them.
       </p>
     </div>
   );

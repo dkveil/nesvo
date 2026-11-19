@@ -1,5 +1,7 @@
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { PathInput } from '@/shared/ui/path-input';
+import { FolderPicker } from '@/shared/ui/folder-picker';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { useEffect, useRef, useState } from 'react';
 import {
   inboxRulePresets,
@@ -32,10 +34,11 @@ import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
 import { Textarea } from '@/shared/ui/textarea';
-import { ruleSummary, routeLabels, statusTone } from './rule-text';
+import { ruleSummary, routeLabels } from './rule-text';
 
 type InboxRulesApi = Pick<
   DesktopApi,
+  | 'chooseDirectory'
   | 'listInboxRules'
   | 'validateInboxRule'
   | 'saveInboxRule'
@@ -162,6 +165,7 @@ export function InboxRulesSettings({
     editor.setSelectionRange(start, start + (lines[line - 1]?.length ?? 0));
   };
   const [folder, setFolder] = useState(defaultFolder ?? '');
+  const [remoteFolder, setRemoteFolder] = useState(folder);
   const [catalog, setCatalog] = useState<InboxRuleCatalog | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -176,22 +180,17 @@ export function InboxRulesSettings({
   const validation = useRef(0);
   const directory = folder.trim() || undefined;
 
-  const load = async () => {
-    if (unavailable) return;
-    setError('');
-    try {
-      setCatalog(await api.listInboxRules({ directory }, hostId));
-    } catch (failure) {
-      setError(`Inbox rules could not be read. ${errorDetail(failure)}`);
-    }
-  };
   useEffect(() => {
     if (unavailable) return;
     let current = true;
     api
       .listInboxRules(defaultFolder ? { directory: defaultFolder } : {}, hostId)
       .then(next => {
-        if (current) setCatalog(next);
+        if (current) {
+          setCatalog(next);
+          setFolder(defaultFolder ?? '');
+          setRemoteFolder(defaultFolder ?? '');
+        }
       })
       .catch(failure => {
         if (current)
@@ -240,6 +239,14 @@ export function InboxRulesSettings({
     } finally {
       setBusy(false);
     }
+  };
+  const loadFolder = async (next: string | null) => {
+    const loaded = await run(() =>
+      api.listInboxRules(next ? { directory: next } : {}, hostId),
+    );
+    if (!loaded) return;
+    setFolder(next ?? '');
+    if (draft?.scope === 'project') setDraft(null);
   };
   const save = async () => {
     if (!draft) return;
@@ -345,23 +352,39 @@ export function InboxRulesSettings({
           </Button>
         }
       >
-        <div className="flex items-end gap-2 px-3 py-2.5">
-          <Field
-            id="inbox-rules-folder"
-            label="Project folder"
-            className="flex-1"
+        {hostId === 'local' ? (
+          <SettingsRow
+            title={<label htmlFor="inbox-rules-folder">Project folder</label>}
+          >
+            <FolderPicker
+              id="inbox-rules-folder"
+              value={folder || null}
+              className="w-[min(24rem,36vw)]"
+              chooseDirectory={api.chooseDirectory}
+              onChange={loadFolder}
+              disabled={busy || !catalog}
+            />
+          </SettingsRow>
+        ) : (
+          <SettingsRow
+            title={<label htmlFor="inbox-rules-folder">Project folder</label>}
           >
             <PathInput
               id="inbox-rules-folder"
-              value={folder}
-              placeholder="Folder whose project rules to show"
-              onChange={event => setFolder(event.target.value)}
+              value={remoteFolder}
+              className="w-52"
+              placeholder="Absolute path on this computer"
+              onChange={event => setRemoteFolder(event.target.value)}
             />
-          </Field>
-          <Button variant="secondary" onClick={() => void load()}>
-            Show rules
-          </Button>
-        </div>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void loadFolder(remoteFolder.trim() || null)}
+            >
+              Show rules
+            </Button>
+          </SettingsRow>
+        )}
         {catalog?.projectTrust === 'untrusted' && (
           <div className="px-3 py-2">
             <InlineNotice tone="warning">
@@ -399,16 +422,19 @@ export function InboxRulesSettings({
                   {entry.enforcement
                     .filter(item => item.status === 'unsupported')
                     .map(item => (
-                      <NativeDisclosure
-                        key={`${item.provider}-${item.modes.join()}`}
-                        title={item.provider + ' · limited enforcement'}
-                        triggerTone="muted"
-                        className="-mx-2"
-                      >
-                        <p className={statusTone.unsupported}>
-                          {item.modes.join(', ')}. {item.detail}
-                        </p>
-                      </NativeDisclosure>
+                      <Tooltip key={item.provider + '-' + item.modes.join()}>
+                        <TooltipTrigger asChild>
+                          <span
+                            tabIndex={0}
+                            className="inline-block max-w-full truncate text-muted-foreground"
+                          >
+                            {item.provider} · limited enforcement
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent variant="panel">
+                          {item.detail}
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                   <IssueList issues={entry.issues} />
                 </div>
@@ -466,7 +492,7 @@ export function InboxRulesSettings({
       {draft && (
         <SettingsSection title={draft.proposed ? 'Proposed rule' : 'Rule file'}>
           <div className="space-y-2 p-3">
-            <Field id="inbox-rule-scope" label="Save to" layout="inline">
+            <Field id="inbox-rule-scope" label="Save to">
               <Select
                 value={draft.scope}
                 disabled={!!draft.expectedHash}

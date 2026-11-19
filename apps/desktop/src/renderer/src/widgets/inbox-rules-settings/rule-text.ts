@@ -13,10 +13,6 @@ const actionLabels = {
   route: 'routes the item',
 } as const;
 
-export const statusTone = {
-  unsupported: 'block text-warning-foreground',
-} as const;
-
 export const ruleSummary = (entry: InboxRuleEntry) => {
   const rule = entry.rule;
   if (!rule) return 'This rule has errors and does not apply.';

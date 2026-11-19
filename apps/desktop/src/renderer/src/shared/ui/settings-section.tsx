@@ -6,6 +6,7 @@ type SectionProps = {
   title: string;
   children: ReactNode;
   action?: ReactNode;
+  description?: ReactNode;
   className?: string;
 };
 
@@ -13,6 +14,7 @@ export function SettingsSection({
   title,
   children,
   action,
+  description,
   className,
 }: SectionProps) {
   return (
@@ -20,6 +22,9 @@ export function SettingsSection({
       <SectionLabel as="h2" emphasis action={action} className="px-3">
         {title}
       </SectionLabel>
+      {description && (
+        <p className="px-3 text-xs text-muted-foreground">{description}</p>
+      )}
       <SettingsRows className={className}>{children}</SettingsRows>
     </section>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Computer, WorktreeRecipe } from '@nesvo/contracts';
+import type { Computer, DesktopApi, WorktreeRecipe } from '@nesvo/contracts';
 import { FlaskConical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import {
@@ -20,7 +20,7 @@ import { RecipeTrialDialog } from './recipe-trial-dialog';
 
 type WorktreeRecipesSettingsProps = {
   computer: Computer | undefined;
-  api: WorktreeRecipeApi;
+  api: WorktreeRecipeApi & Pick<DesktopApi, 'chooseDirectory'>;
 };
 
 type Editing = { recipe: WorktreeRecipe | null } | null;
@@ -66,27 +66,22 @@ export function WorktreeRecipesSettings({
   const computerName = computer?.name ?? 'This computer';
   return (
     <div className="space-y-6">
-      <p className="max-w-prose px-3 text-xs leading-5 text-muted-foreground">
-        Recipes prepare worktrees on {computerName}. Choose which files and
-        setup steps a new worktree needs.
-      </p>
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       <SettingsSection
         title="Worktree recipes"
+        description={`Recipes prepare files and run setup steps in new worktrees on ${computerName}.`}
         action={
-          recipes?.length ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              disabled={pending || !recipes}
-              aria-haspopup="dialog"
-              onClick={() => setEditing({ recipe: null })}
-            >
-              <Plus />
-              New recipe
-            </Button>
-          ) : undefined
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={pending || !recipes}
+            aria-haspopup="dialog"
+            onClick={() => setEditing({ recipe: null })}
+          >
+            <Plus />
+            New recipe
+          </Button>
         }
       >
         {!recipes && !error ? (
@@ -98,25 +93,7 @@ export function WorktreeRecipesSettings({
         ) : !recipes?.length ? (
           <SettingsRow
             title="No worktree recipes"
-            description={
-              <span className="block space-y-2">
-                <span className="block">
-                  Add a recipe for a repository so its session worktrees start
-                  ready for tests.
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  disabled={pending || !recipes}
-                  aria-haspopup="dialog"
-                  onClick={() => setEditing({ recipe: null })}
-                >
-                  <Plus />
-                  New recipe
-                </Button>
-              </span>
-            }
+            description="Add a recipe for a repository to prepare its new worktrees."
           />
         ) : (
           recipes.map(recipe => (
@@ -167,6 +144,9 @@ export function WorktreeRecipesSettings({
         <RecipeEditorDialog
           api={api}
           computerName={computerName}
+          chooseDirectory={
+            computer?.id === 'local' ? api.chooseDirectory : undefined
+          }
           recipe={editing.recipe}
           onOpenChange={open => {
             if (!open) setEditing(null);

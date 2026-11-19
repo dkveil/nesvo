@@ -17,6 +17,11 @@ import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { Field } from '@/shared/ui/field';
+import { WorktreeDefaultRow } from '@/features/new-thread/worktree-default-row';
+import {
+  readNewSessionDefaults,
+  saveNewSessionDefaults,
+} from '@/features/new-thread/new-session-defaults';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
 import { KeyValueList, type KeyValueEntry } from '@/shared/ui/key-value-list';
@@ -29,6 +34,7 @@ type Props = {
   api: Pick<
     DesktopApi,
     | 'workLaptopPolicy'
+    | 'chooseDirectory'
     | 'addComputer'
     | 'connectComputer'
     | 'disconnectComputer'
@@ -36,7 +42,7 @@ type Props = {
   >;
   onEditingChange?: (editing: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
-  chooseLocalDirectory?: () => Promise<string | null>;
+  onboarding?: boolean;
 };
 
 const syncFormat = new Intl.DateTimeFormat('en', {
@@ -97,10 +103,13 @@ export function ManageComputers({
   api,
   onBusyChange,
   onEditingChange,
-  chooseLocalDirectory,
+  onboarding = false,
 }: Props) {
   const [error, setError] = useState('');
   const { workLaptopPolicy } = api;
+  const [worktree, setWorktree] = useState(
+    () => readNewSessionDefaults().worktree,
+  );
   const [restricted, setRestricted] = useState<boolean>();
   useEffect(() => {
     void workLaptopPolicy()
@@ -219,20 +228,20 @@ export function ManageComputers({
   };
   return (
     <div className="space-y-8">
-      <div className="space-y-2" hidden={!!chooseLocalDirectory && adding}>
+      <div className="space-y-2" hidden={onboarding && adding}>
         <SettingsSection
-          title={chooseLocalDirectory ? 'Available computers' : 'Computers'}
+          title={onboarding ? 'Available computers' : 'Computers'}
           action={
             restricted === false &&
             !adding && (
               <Button
-                variant={chooseLocalDirectory ? 'outline' : 'ghost'}
-                size={chooseLocalDirectory ? 'sm' : 'xs'}
+                variant={onboarding ? 'outline' : 'ghost'}
+                size={onboarding ? 'sm' : 'xs'}
                 disabled={!!pending}
                 onClick={() => setAdding(true)}
               >
-                <Plus className={chooseLocalDirectory ? 'size-4' : undefined} />
-                {chooseLocalDirectory ? 'Add a computer' : 'Add computer'}
+                <Plus className={onboarding ? 'size-4' : undefined} />
+                {onboarding ? 'Add a computer' : 'Add computer'}
               </Button>
             )
           }
@@ -327,11 +336,27 @@ export function ManageComputers({
                     defaultFolders.save(computer.id, directory)
                   }
                   chooseDirectory={
-                    computer.kind === 'local' ? chooseLocalDirectory : undefined
+                    computer.kind === 'local' ? api.chooseDirectory : undefined
                   }
                   className="ml-6"
                 />
               )}
+              {onboarding &&
+                computer.kind === 'local' &&
+                computer.status === 'connected' && (
+                  <WorktreeDefaultRow
+                    id="onboarding-default-worktree"
+                    className="ml-6"
+                    checked={worktree}
+                    onChange={checked => {
+                      saveNewSessionDefaults({
+                        ...readNewSessionDefaults(),
+                        worktree: checked,
+                      });
+                      setWorktree(checked);
+                    }}
+                  />
+                )}
               {(computer.error || computer.lastSyncedAt || computer.ssh) && (
                 <Disclosure
                   title="Connection details"
@@ -408,7 +433,7 @@ export function ManageComputers({
             )}
             <Disclosure
               title="Advanced SSH options"
-              triggerTone={chooseLocalDirectory ? 'muted' : 'default'}
+              triggerTone={onboarding ? 'muted' : 'default'}
               className="-mx-2"
               contentClassName="grid gap-3 px-2 pt-2 text-foreground sm:grid-cols-3"
             >

@@ -33,7 +33,7 @@ export function ComputersStep({
         onEditingChange={onEditingChange}
         computers={computers}
         defaultFolders={defaultFolders}
-        chooseLocalDirectory={api.chooseDirectory}
+        onboarding
       />
     </div>
   );

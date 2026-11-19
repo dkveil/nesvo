@@ -1,11 +1,9 @@
 import { PathInput } from '@/shared/ui/path-input';
 import { useState } from 'react';
-import { FolderOpen } from 'lucide-react';
-import { StatusMessage } from '@/shared/ui/status-message';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { FieldLabel, FieldMessages } from '@/shared/ui/field';
-import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
+import { FieldMessages } from '@/shared/ui/field';
+import { FolderPicker } from '@/shared/ui/folder-picker';
 import { SettingsRow } from '@/shared/ui/settings-section';
 
 type Props = {
@@ -34,15 +32,10 @@ export function DefaultFolderField({
   const [error, setError] = useState('');
   const current = draft ?? value ?? '';
   const changed = current.trim() !== (value ?? '');
-  const save = async (
-    selection: () => Promise<string | null>,
-    picking = false,
-  ) => {
+  const save = async (directory: string | null) => {
     setPending(true);
     setError('');
     try {
-      const directory = await selection();
-      if (picking && directory === null) return;
       await onSave(directory);
       setDraft(null);
     } catch (failure) {
@@ -52,59 +45,29 @@ export function DefaultFolderField({
     }
   };
   const blocker = pending
-    ? 'Finish choosing or saving the folder to use these controls.'
+    ? 'Saving the folder…'
     : !supported
       ? 'Update the host to set a default session folder.'
       : '';
   if (chooseDirectory)
     return (
-      <div className={className}>
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 space-y-0.5">
-            <FieldLabel id={id} as="span">
-              {label}
-            </FieldLabel>
-            {value ? (
-              <MiddleTruncatedText
-                path
-                value={value}
-                className="text-xs leading-5 text-muted-foreground"
-              />
-            ) : (
-              <p className="text-xs leading-5 text-muted-foreground">
-                Use an isolated folder by default
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 gap-1.5">
-            <Button
-              variant="outline"
-              disabled={!!blocker}
-              aria-describedby={blocker ? `${id}-hint` : undefined}
-              onClick={() => void save(chooseDirectory, true)}
-            >
-              <FolderOpen className="size-4" />
-              {pending ? 'Checking…' : 'Choose folder'}
-            </Button>
-            {value && (
-              <Button
-                variant="ghost"
-                disabled={!!blocker}
-                aria-describedby={blocker ? `${id}-hint` : undefined}
-                onClick={() => void save(async () => null)}
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
-        {blocker && (
-          <p id={`${id}-hint`} className="text-2xs text-muted-foreground">
-            {blocker}
-          </p>
-        )}
-        {error && <StatusMessage tone="error">{error}</StatusMessage>}
-      </div>
+      <SettingsRow
+        title={<label htmlFor={id}>{label}</label>}
+        className={className}
+        description={
+          blocker ? <span id={id + '-hint'}>{blocker}</span> : undefined
+        }
+      >
+        <FolderPicker
+          id={id}
+          className="w-[min(24rem,36vw)]"
+          value={value}
+          chooseDirectory={chooseDirectory}
+          onChange={onSave}
+          disabled={!supported}
+          describedBy={blocker ? id + '-hint' : undefined}
+        />
+      </SettingsRow>
     );
   return (
     <SettingsRow
@@ -126,7 +89,7 @@ export function DefaultFolderField({
         className="flex items-center gap-2"
         onSubmit={event => {
           event.preventDefault();
-          if (changed) void save(async () => current.trim() || null);
+          if (changed) void save(current.trim() || null);
         }}
       >
         <PathInput
@@ -162,7 +125,7 @@ export function DefaultFolderField({
             variant="ghost"
             disabled={!!blocker}
             aria-describedby={blocker ? `${id}-hint` : undefined}
-            onClick={() => void save(async () => null)}
+            onClick={() => void save(null)}
           >
             Clear
           </Button>

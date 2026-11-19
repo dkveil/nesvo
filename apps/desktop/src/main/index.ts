@@ -779,7 +779,7 @@ void app.whenReady().then(async () => {
     authorize(event);
     if (!window || window.isDestroyed()) return null;
     const result = await dialog.showOpenDialog(window, {
-      title: 'Choose a default session folder',
+      title: 'Choose folder',
       properties: ['openDirectory', 'createDirectory'],
     });
     return chooseDirectoryResultSchema.parse(

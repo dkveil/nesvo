@@ -1,3 +1,5 @@
+import { FolderPicker } from '@/shared/ui/folder-picker';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { PathInput } from '@/shared/ui/path-input';
 import { useState } from 'react';
 import type {
@@ -122,7 +124,7 @@ export function ProviderProfileSettings({
         )}
         {editable && (
           <form
-            className="grid gap-3 p-3"
+            className="grid grid-cols-1 gap-3 p-3"
             onSubmit={async event => {
               event.preventDefault();
               if (busy || !label.trim() || (!selected && !directory.trim()))
@@ -218,17 +220,33 @@ export function ProviderProfileSettings({
             <Field
               id="provider-account-directory"
               label="Configuration directory"
+              as={selected ? 'span' : 'label'}
             >
-              <PathInput
-                id="provider-account-directory"
-                value={selected?.configDirectory ?? directory}
-                readOnly={!!selected}
-                disabled={busy}
-                placeholder="Absolute path on this computer"
-                maxLength={4096}
-                spellCheck={false}
-                onChange={event => setDirectory(event.target.value)}
-              />
+              {selected ? (
+                <MiddleTruncatedText
+                  path
+                  value={selected.configDirectory}
+                  className="text-xs text-muted-foreground"
+                />
+              ) : hostId === 'local' ? (
+                <FolderPicker
+                  id="provider-account-directory"
+                  value={directory || null}
+                  chooseDirectory={api.chooseDirectory}
+                  onChange={value => setDirectory(value ?? '')}
+                  disabled={busy}
+                />
+              ) : (
+                <PathInput
+                  id="provider-account-directory"
+                  value={directory}
+                  disabled={busy}
+                  placeholder="Absolute path on this computer"
+                  maxLength={4096}
+                  spellCheck={false}
+                  onChange={event => setDirectory(event.target.value)}
+                />
+              )}
             </Field>
             {error && !removing && (
               <StatusMessage tone="error">{error}</StatusMessage>

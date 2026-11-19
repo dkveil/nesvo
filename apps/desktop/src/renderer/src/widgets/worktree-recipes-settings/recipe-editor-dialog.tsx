@@ -1,3 +1,4 @@
+import { FolderPicker } from '@/shared/ui/folder-picker';
 import { PathInput } from '@/shared/ui/path-input';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { WorktreeRecipe, WorktreeRecipeMatch } from '@nesvo/contracts';
@@ -35,6 +36,7 @@ type RecipeEditorDialogProps = {
   computerName: string;
   recipe: WorktreeRecipe | null;
   initialDirectory?: string;
+  chooseDirectory?: () => Promise<string | null>;
   onOpenChange: (open: boolean) => void;
   onSaved: (recipes: WorktreeRecipe[]) => void;
 };
@@ -94,6 +96,7 @@ export function RecipeEditorDialog({
   computerName,
   recipe,
   initialDirectory = '',
+  chooseDirectory,
   onOpenChange,
   onSaved,
 }: RecipeEditorDialogProps) {
@@ -213,7 +216,11 @@ export function RecipeEditorDialog({
         showCloseButton={!pending}
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
       >
-        <form onSubmit={submit} className="grid gap-5" noValidate>
+        <form
+          onSubmit={submit}
+          className="grid min-w-0 grid-cols-1 gap-5"
+          noValidate
+        >
           <DialogHeader>
             <DialogTitle size="sm">
               {recipe ? 'Edit worktree recipe' : 'New worktree recipe'}
@@ -238,17 +245,32 @@ export function RecipeEditorDialog({
                     : []
               }
             >
-              <PathInput
-                id="recipe-directory"
-                size="md"
-                value={values.directory}
-                placeholder="Absolute path on this computer"
-                spellCheck={false}
-                disabled={pending}
-                aria-invalid={!!errors.directory || !!preview?.error}
-                aria-describedby="recipe-directory-hint"
-                onChange={event => change({ directory: event.target.value })}
-              />
+              {chooseDirectory ? (
+                <FolderPicker
+                  id="recipe-directory"
+                  value={values.directory || null}
+                  chooseDirectory={chooseDirectory}
+                  onChange={directory => change({ directory: directory ?? '' })}
+                  disabled={pending}
+                  describedBy={
+                    errors.directory || preview?.error
+                      ? 'recipe-directory-messages'
+                      : 'recipe-directory-hint'
+                  }
+                />
+              ) : (
+                <PathInput
+                  id="recipe-directory"
+                  size="md"
+                  value={values.directory}
+                  placeholder="Absolute path on this computer"
+                  spellCheck={false}
+                  disabled={pending}
+                  aria-invalid={!!errors.directory || !!preview?.error}
+                  aria-describedby="recipe-directory-hint"
+                  onChange={event => change({ directory: event.target.value })}
+                />
+              )}
             </Field>
           </div>
           <section aria-label="Files" className="grid gap-3">
