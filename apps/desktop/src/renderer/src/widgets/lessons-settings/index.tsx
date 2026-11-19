@@ -2,7 +2,6 @@ import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { RuleUsage } from '@/features/gate-rules/rule-usage';
 import { useState } from 'react';
 import {
-  lessonIsDue,
   localDate,
   type Computer,
   type Lesson,
@@ -15,8 +14,6 @@ import {
   LessonEditDialog,
   incidentKindLabels,
   lessonDate,
-  lessonScopeText,
-  lessonStatusText,
   matchesScopeFilter,
   scopeFilterLabels,
   scopeFilters,
@@ -24,7 +21,7 @@ import {
   type LessonApi,
   type ScopeFilter,
 } from '@/features/lessons';
-import { Badge } from '@/shared/ui/badge';
+import { LessonRow } from '@/features/lessons/lesson-row';
 import { Button } from '@/shared/ui/button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
@@ -47,6 +44,7 @@ type LessonsSettingsProps = {
   statuses: ProviderStates;
   onRefreshProvider: (provider: Provider) => void;
   api: LessonApi;
+  onSession: (sessionKey: string) => void;
 };
 
 const unavailableReason = (computer: Computer | undefined) => {
@@ -74,6 +72,7 @@ export function LessonsSettings({
   statuses,
   onRefreshProvider,
   api,
+  onSession,
 }: LessonsSettingsProps) {
   const unavailable = unavailableReason(computer);
   const hostId = computer?.id ?? 'local';
@@ -248,59 +247,22 @@ export function LessonsSettings({
           />
         )}
         {visible.map(lesson => {
-          const due = lessonIsDue(lesson, today);
           return (
-            <SettingsRow
+            <LessonRow
               key={lesson.key}
-              title={
-                <span className="flex flex-wrap items-center gap-2">
-                  {lesson.id && (
-                    <span className="font-mono text-2xs text-muted-foreground">
-                      {lesson.id}
-                    </span>
-                  )}
-                  <span className="min-w-0">{lesson.description}</span>
-                  {(due || lesson.state !== 'active') && (
-                    <Badge
-                      size="xs"
-                      tone={
-                        due || lesson.state === 'proposed'
-                          ? 'warning'
-                          : 'neutral'
-                      }
-                    >
-                      {lessonStatusText(lesson, today)}
-                    </Badge>
-                  )}
-                  {lesson.kind === 'check' && (
-                    <Badge size="xs" tone="info">
-                      Check
-                    </Badge>
-                  )}
-                </span>
-              }
-              description={
-                <>
-                  <span className="block text-foreground/90">
-                    {lesson.body.rule}
-                  </span>
-                  <span className="block">
-                    {lessonScopeText(lesson)}
-                    {lesson.review && ` · Review ${lessonDate(lesson.review)}`}
-                    {lesson.enforcedBy !== 'none' &&
-                      ` · Enforced by ${lesson.enforcedBy}`}
-                    {lesson.evidence.length > 0 &&
-                      ` · ${lesson.evidence.map(item => incidentKindLabels[item.kind]).join(', ')}`}
-                  </span>
-                  {lesson.id && (
-                    <RuleUsage
-                      metrics={lesson.metrics}
-                      kind={lesson.kind}
-                      since={lesson.createdAt}
-                      now={now.getTime()}
-                    />
-                  )}
-                </>
+              lesson={lesson}
+              today={today}
+              hostId={hostId}
+              onSession={onSession}
+              metrics={
+                lesson.id && (
+                  <RuleUsage
+                    metrics={lesson.metrics}
+                    kind={lesson.kind}
+                    since={lesson.createdAt}
+                    now={now.getTime()}
+                  />
+                )
               }
             >
               {lesson.state === 'proposed' && (
@@ -352,7 +314,7 @@ export function LessonsSettings({
                   Undo
                 </Button>
               )}
-            </SettingsRow>
+            </LessonRow>
           );
         })}
       </SettingsSection>

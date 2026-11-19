@@ -7,17 +7,12 @@ import {
   type Lesson,
   type LessonChanges,
 } from '@nesvo/contracts';
-import { ArrowUpRight } from 'lucide-react';
 import {
   LessonEditDialog,
-  incidentKindLabels,
-  lessonDate,
-  lessonScopeText,
   useLessonOverview,
   type LessonApi,
 } from '@/features/lessons';
-import { hostKey } from '@/shared/lib/host-key';
-import { Badge } from '@/shared/ui/badge';
+import { LessonRow } from '@/features/lessons/lesson-row';
 import { Button } from '@/shared/ui/button';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -34,9 +29,6 @@ type LessonTableProps = {
   showLocation: boolean;
   onSession: (sessionKey: string) => void;
 };
-
-const EVIDENCE_LINKS = 3;
-const heading = 'h-7 px-2 text-left text-2xs font-medium whitespace-nowrap';
 
 function LessonTable({
   computer,
@@ -86,131 +78,45 @@ function LessonTable({
           {lessons.error}
         </StatusMessage>
       )}
-      {rows.length > 0 && (
-        <div className="overflow-x-auto rounded-surface border bg-card">
-          <table className="w-full text-left text-xs">
-            <thead className="border-b text-muted-foreground">
-              <tr>
-                <th className={heading} scope="col">
-                  Lesson
-                </th>
-                <th className={heading} scope="col">
-                  Scope
-                </th>
-                <th className={heading} scope="col">
-                  Evidence
-                </th>
-                <th className={heading} scope="col">
-                  Review
-                </th>
-                <th className={heading} scope="col">
-                  <span className="sr-only">Decisions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border align-top">
-              {rows.map(lesson => {
-                const due = lessonIsDue(lesson, today);
-                return (
-                  <tr key={lesson.key} data-lesson-key={lesson.key}>
-                    <td className="max-w-0 min-w-64 px-2 py-2">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {lesson.id && (
-                          <span className="font-mono text-2xs text-muted-foreground">
-                            {lesson.id}
-                          </span>
-                        )}
-                        <span className="text-ui font-medium [overflow-wrap:anywhere]">
-                          {lesson.description}
-                        </span>
-                        {due && (
-                          <Badge size="xs" tone="warning">
-                            Review due
-                          </Badge>
-                        )}
-                        {lesson.kind === 'check' && (
-                          <Badge size="xs" tone="info">
-                            Check
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="mt-0.5 line-clamp-3 text-muted-foreground [overflow-wrap:anywhere]">
-                        {lesson.body.rule}
-                      </p>
-                    </td>
-                    <td className="px-2 py-2">{lessonScopeText(lesson)}</td>
-                    <td className="px-2 py-2">
-                      <div className="flex flex-col items-start gap-0.5">
-                        {lesson.evidence.slice(0, EVIDENCE_LINKS).map(item =>
-                          item.sessionId ? (
-                            <Button
-                              key={item.incidentId}
-                              variant="link"
-                              size="inline"
-                              className="text-2xs"
-                              aria-label={`Open session: ${item.summary}`}
-                              onClick={() =>
-                                onSession(hostKey(item.sessionId!, computer.id))
-                              }
-                            >
-                              {incidentKindLabels[item.kind]}
-                              <ArrowUpRight className="size-3 text-muted-foreground" />
-                            </Button>
-                          ) : (
-                            <span
-                              key={item.incidentId}
-                              className="text-2xs text-muted-foreground"
-                            >
-                              {incidentKindLabels[item.kind]}
-                            </span>
-                          ),
-                        )}
-                        {lesson.evidence.length > EVIDENCE_LINKS && (
-                          <span className="text-2xs text-muted-foreground">
-                            +{lesson.evidence.length - EVIDENCE_LINKS} more
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-2 py-2 whitespace-nowrap tabular-nums">
-                      {lesson.review ? lessonDate(lesson.review) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => decide(lesson, 'approve')}
-                        >
-                          {due ? 'Keep' : 'Approve'}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => setEditing(lesson)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            decide(lesson, due ? 'retire' : 'reject')
-                          }
-                        >
-                          {due ? 'Retire' : 'Reject'}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="divide-y">
+        {rows.map(lesson => {
+          const due = lessonIsDue(lesson, today);
+          return (
+            <LessonRow
+              key={lesson.key}
+              lesson={lesson}
+              today={today}
+              hostId={computer.id}
+              computerName={showLocation ? computer.name : undefined}
+              onSession={onSession}
+            >
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => decide(lesson, 'approve')}
+              >
+                {due ? 'Keep' : 'Approve'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => setEditing(lesson)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => decide(lesson, due ? 'retire' : 'reject')}
+              >
+                {due ? 'Retire' : 'Reject'}
+              </Button>
+            </LessonRow>
+          );
+        })}
+      </div>
       {editing && (
         <LessonEditDialog
           lesson={editing}

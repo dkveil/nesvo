@@ -5744,6 +5744,10 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <LessonsSettings
+                  onSession={session => {
+                    setSettingsPage(null);
+                    select(session);
+                  }}
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   statuses={store.providerStates(settingsHostId)}
