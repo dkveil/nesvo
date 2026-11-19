@@ -1773,6 +1773,7 @@ try {
       .waitFor();
     await page.keyboard.press('Escape');
     await mcpPopover.waitFor({ state: 'hidden' });
+    await waitForFocus(mcpChip);
     await messageEditor.press('Shift+Tab');
     await modeSwitch.getByLabel('Applies next turn').waitFor();
     for (let step = 1; step < claudeModes.length; step += 1)
