@@ -1,5 +1,5 @@
 import { hostDiagnostic } from '../log-redaction';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
   ScheduleError,
@@ -20,6 +20,7 @@ import {
 } from '@nesvo/contracts';
 import { SessionError, type SessionService } from '../sessions/service';
 import { checkForChange } from './check';
+import { runProfileAutomationCommand, type ProfileAutomations } from './profile';
 import type { RedCiHead, RedCiPoll } from './red-ci';
 import { automationReport } from './reports';
 import { publicRun, type ScheduledJobStore, type StoredRun } from './store';
@@ -47,6 +48,7 @@ export type ScheduledJobLaunch = {
   operatorStarted?: boolean;
   previousReport?: string;
   ciHead?: RedCiHead;
+  workflowIdentity?: string;
 };
 
 export type ScheduledJobRunLink = Pick<ScheduledJobRun, 'sessionId' | 'runId'> &
@@ -120,6 +122,7 @@ export class ScheduledJobService {
   private closed = false;
   private readonly launches = new Set<Promise<void>>();
   private readonly checks = new Map<string, AbortController>();
+  private readonly controller = new AbortController();
 
   constructor(
     private readonly store: ScheduledJobStore,
@@ -128,26 +131,39 @@ export class ScheduledJobService {
     private readonly emit: (event: DesktopEvent) => void,
     private readonly clock: SchedulerClock = systemClock,
     private readonly redCi: Pick<RedCiPoll, 'next'> | null = null,
+    readonly profile?: ProfileAutomations,
   ) {}
 
   start(): void {
+    this.profile?.reconcile();
+    const now = this.clock.now();
+    for (const job of this.store.list()) {
+      if (!this.profile?.binding(job.id) || !job.active) continue;
+      const updated = this.reviseJob(job, now.toISOString(), {
+        nextRunAt: this.firstRun(job, now),
+      });
+      delete updated.pendingStart;
+      this.store.replace(updated, job.revision);
+    }
     this.fire();
   }
 
   async close(): Promise<void> {
     this.closed = true;
     this.disarm();
+    this.controller.abort();
     for (const check of this.checks.values()) check.abort();
     this.launcher.close?.();
     await Promise.all(this.launches);
   }
 
   list(): ScheduledJob[] {
-    return this.store.list();
+    return this.store.list().map(job => this.visible(job));
   }
 
-  save(input: SaveScheduledJobRequest): ScheduledJob {
+  save(input: SaveScheduledJobRequest, source?: 'profile'): ScheduledJob {
     const { id, expectedRevision, ...definition } = input;
+    if (source !== 'profile') this.assertManual(id);
     const current = this.store.get(id);
     if (expectedRevision === null) {
       if (current)
@@ -192,7 +208,7 @@ export class ScheduledJobService {
     if (!job.changeTrigger) delete job.changeTrigger;
     if (!job.pullRequestReview) delete job.pullRequestReview;
     this.write(job, expectedRevision, resetCheck);
-    return job;
+    return this.visible(job);
   }
 
   setActive(input: SetScheduledJobActiveInput): ScheduledJob {
@@ -200,8 +216,9 @@ export class ScheduledJobService {
       this.store.get(input.id),
       input.expectedRevision,
     );
+    if (input.active) this.assertProfileReady(current.id);
     if (current.active === input.active && (!input.active || current.nextRunAt))
-      return current;
+      return this.visible(current);
     const now = this.clock.now();
     const job: ScheduledJob = {
       ...current,
@@ -218,10 +235,11 @@ export class ScheduledJobService {
         parsed.error.issues[0]!.message,
       );
     this.write(job, input.expectedRevision);
-    return job;
+    return this.visible(job);
   }
 
   delete(input: DeleteScheduledJobInput): void {
+    this.assertManual(input.id);
     const current = this.current(
       this.store.get(input.id),
       input.expectedRevision,
@@ -272,6 +290,7 @@ export class ScheduledJobService {
     }
     const job = this.store.get(input.id);
     if (!job) throw new ScheduledJobError('not-found', 'Automation not found.');
+    this.assertProfileReady(job.id);
     if (job.redCi)
       throw new ScheduledJobError(
         'invalid-request',
@@ -320,6 +339,7 @@ export class ScheduledJobService {
     const at = this.clock.now().toISOString();
     const start = input.decision === 'start';
     if (start) {
+      this.assertProfileReady(job.id);
       if (this.store.hasActiveRun(job.id))
         throw new ScheduledJobError(
           'busy',
@@ -351,7 +371,7 @@ export class ScheduledJobService {
     this.emitJob(updated);
     this.emitRun(run);
     if (start) this.launch(updated, run, true);
-    return updated;
+    return this.visible(updated);
   }
 
   tick(now = this.clock.now()): void {
@@ -395,6 +415,11 @@ export class ScheduledJobService {
       at,
       this.outcome(job, now, missed.scheduledFor, missed.skipped),
     );
+    if (run.status === 'starting' && this.profile?.askFirst(job.id)) {
+      advanced.pendingStart ??= { id: randomUUID(), at, scheduledFor, missedCount: missed.skipped };
+      if (this.store.replace(advanced, job.revision)) this.emitJob(advanced);
+      return;
+    }
     const claimed = this.store.transact(() => {
       if (!this.store.replace(advanced, job.revision)) return undefined;
       return this.recordRun(job, run);
@@ -413,7 +438,7 @@ export class ScheduledJobService {
   ): void {
     const controller = new AbortController();
     this.checks.set(job.id, controller);
-    const checking = checkForChange(job, controller.signal)
+    const checking = this.checkCommand(job, controller.signal)
       .then(result => {
         if (controller.signal.aborted) return;
         const current = this.store.get(job.id);
@@ -427,6 +452,21 @@ export class ScheduledJobService {
         this.arm();
       });
     this.launches.add(checking);
+  }
+
+  private async checkCommand(job: ScheduledJob, signal: AbortSignal) {
+    if (!this.profile?.binding(job.id)) return checkForChange(job, signal);
+    try {
+      const reviewed = await this.profile.verify(job, signal);
+      if (!reviewed?.check) return { failure: 'The check needs a current profile approval.' };
+      const result = await runProfileAutomationCommand(reviewed.check, signal);
+      if (result.code !== 0 || result.timedOut || result.outputTruncated)
+        return { failure: 'The reviewed check could not complete within its limits.' };
+      const normalized = result.stdout.replace(/\r\n?/g, '\n').trimEnd();
+      return { hash: createHash('sha256').update(normalized).digest('hex') };
+    } catch {
+      return { failure: 'Review the current profile check and its verified inputs.' };
+    }
   }
 
   private pollCi(
@@ -580,7 +620,7 @@ export class ScheduledJobService {
   }
 
   private capReached(job: ScheduledJob, at: string): boolean {
-    const cap = job.redCi?.dailyRunCap ?? job.changeTrigger?.dailyRunCap;
+    const cap = this.profile?.dailyCap(job.id) ?? job.redCi?.dailyRunCap ?? job.changeTrigger?.dailyRunCap;
     return (
       cap !== undefined &&
       this.store.startsOn(job.id, this.localDay(job, at)) >= cap
@@ -673,21 +713,38 @@ export class ScheduledJobService {
     ciHead?: RedCiHead,
   ): void {
     const launching = Promise.resolve()
-      .then(() =>
-        this.launcher.launch(
+      .then(async () => {
+        const reviewed = await this.profile?.verify(scheduledJob, this.controller.signal).catch(error => {
+          throw new ScheduledJobLaunchError('catalog', error instanceof Error ? error.message : 'Review the current automation definition.');
+        });
+        if (reviewed?.task) {
+          this.markStarted(run.id, { sessionId: null, runId: null });
+          const result = await runProfileAutomationCommand(reviewed.task, this.controller.signal);
+          const completed = result.code === 0 && !result.timedOut && !result.outputTruncated;
+          this.markFinished(run.id, {
+            status: completed ? 'completed' : 'failed',
+            reason: null,
+            detail: completed ? 'Reviewed command completed.' : 'The reviewed command did not complete within its limits.',
+            reviewId: null,
+            resetAt: null,
+          });
+          return;
+        }
+        return this.launcher.launch(
           {
             scheduledJob,
             run: publicRun(run),
             operatorStarted,
             ciHead,
+            workflowIdentity: reviewed?.workflowIdentity,
             previousReport: this.store.previousReport(scheduledJob.id),
           },
           {
             started: link => this.markStarted(run.id, link),
             finished: outcome => this.markFinished(run.id, outcome),
           },
-        ),
-      )
+        );
+      })
       .catch(error => this.abandon(run.id, error))
       .catch(() => undefined)
       .finally(() => this.launches.delete(launching));
@@ -811,8 +868,28 @@ export class ScheduledJobService {
   private emitJob(scheduledJob: ScheduledJob): void {
     this.emit({
       type: 'scheduled-job-changed',
-      scheduledJob: structuredClone(scheduledJob),
+      scheduledJob: structuredClone(this.visible(scheduledJob)),
     });
+  }
+
+  private visible(job: ScheduledJob): ScheduledJob {
+    const binding = this.profile?.binding(job.id);
+    return binding
+      ? { ...job, profileOwnership: binding.retired ? 'withheld' : 'managed' }
+      : job;
+  }
+
+  private assertManual(id: string) {
+    if (this.profile?.binding(id))
+      throw new ScheduledJobError('invalid-request', 'This automation is managed by the profile. Edit it in Your setup.');
+  }
+
+  private assertProfileReady(id: string) {
+    try {
+      this.profile?.assertReady(id);
+    } catch {
+      throw new ScheduledJobError('invalid-request', 'Review the current profile automation before starting it.');
+    }
   }
 
   private emitRun(run: StoredRun): void {

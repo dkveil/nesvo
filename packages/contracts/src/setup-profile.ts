@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { inboxRuleFieldsSchema, inboxSettingsSchema } from './inbox-rules';
 import { repositoryPatternSchema } from './repository-identity';
+import { scheduledJobTimeZoneSchema } from './scheduled-jobs';
 import { providerSchema, SESSION_BRANCH_PATTERN } from './sessions';
 
 const id = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
@@ -193,14 +194,21 @@ const limit = z.strictObject({
   threshold: z.number().min(0).max(100),
   effect: z.enum(['warn', 'hold']),
 });
-const automation = z.strictObject({
+export const setupProfileAutomationSchema = z.strictObject({
   id,
   name: label,
-  timeZone: label,
+  timeZone: scheduledJobTimeZoneSchema,
   schedule: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u),
   directory: setupProfilePathSchema,
+  provider: providerSchema.optional(),
+  model: label.optional(),
+  effort: label.optional(),
   task: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('workflow'), name: id }),
+    z.strictObject({
+      kind: z.literal('workflow'),
+      name: id,
+      spec: relativePath.optional(),
+    }),
     z.strictObject({ kind: z.literal('command'), command }),
     z.strictObject({ kind: z.literal('ritual'), name: id }),
   ]),
@@ -208,6 +216,15 @@ const automation = z.strictObject({
   maxRunsPerDay: z.number().int().min(1).max(24).optional(),
   desired: z.enum(['paused', 'active']).optional(),
   askFirst: z.boolean().optional(),
+});
+export type SetupProfileAutomation = z.infer<
+  typeof setupProfileAutomationSchema
+>;
+
+const ritual = z.strictObject({
+  id,
+  name: label,
+  prompt: z.string().trim().min(1).max(4000),
 });
 
 export const setupProfileSessionControlSchema = z.strictObject({
@@ -241,7 +258,8 @@ export const setupProfileDocumentSchema = z.strictObject({
     })
     .optional(),
   limits: withIds(limit).optional(),
-  automations: withIds(automation).optional(),
+  automations: withIds(setupProfileAutomationSchema).optional(),
+  rituals: withIds(ritual).optional(),
   github: withIds(
     z.strictObject({
       id,
@@ -260,6 +278,7 @@ export const setupProfileCollectionKeys = [
   'externalMessages',
   'limits',
   'automations',
+  'rituals',
   'github',
 ] as const;
 
@@ -269,7 +288,7 @@ export const setupProfileDeclarationSchema = z.strictObject({
   field: z.string().min(1).max(140),
   label,
   revision: setupProfileDigestSchema,
-  state: z.enum(['ordinary', 'pending', 'masked', 'unsupported']),
+  state: z.enum(['ordinary', 'pending', 'reviewed', 'masked', 'unsupported']),
   preview: z.string().max(300).optional(),
 });
 export const setupProfileReviewSchema = z.strictObject({

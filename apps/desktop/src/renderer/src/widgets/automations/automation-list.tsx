@@ -134,6 +134,13 @@ export function AutomationList({
                         <ComputerChip computer={computer} />
                         <FolderChip directory={job.directory} />
                         <ModelChip job={job} />
+                        {job.profileOwnership && (
+                          <span>
+                            {job.profileOwnership === 'withheld'
+                              ? 'Profile review required'
+                              : 'From profile'}
+                          </span>
+                        )}
                       </span>
                     }
                     trailing={

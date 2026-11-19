@@ -547,7 +547,7 @@ export function AutomationDetail({
             onClick={onEdit}
           >
             <Pencil />
-            Edit
+            {job.profileOwnership ? 'Edit profile setting' : 'Edit'}
           </Button>
         </DisabledHint>
         <DropdownMenu>
@@ -558,7 +558,7 @@ export function AutomationDetail({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuItem
-              disabled={!!editBlockedReason}
+              disabled={!!editBlockedReason || !!job.profileOwnership}
               onSelect={onDuplicate}
             >
               <Copy />
@@ -566,7 +566,7 @@ export function AutomationDetail({
             </DropdownMenuItem>
             <DropdownMenuItem
               variant="destructive"
-              disabled={!connected || !!activeRun}
+              disabled={!connected || !!activeRun || !!job.profileOwnership}
               onSelect={() => setConfirming(true)}
             >
               <Trash2 />

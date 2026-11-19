@@ -20,6 +20,7 @@ import {
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { adoptLegacyFolder } from './legacy-folders';
 import { automationContext } from '../scheduled-jobs/reports';
+import { profileWorkflowIdentity } from '../scheduled-jobs/profile-workflow-identity';
 import { savedSkillInput } from '../skills/service';
 import {
   BudgetRefusal,
@@ -64,6 +65,7 @@ type WorkflowAutomationContext = {
   browser?: boolean;
   prompt?: string;
   promptSkill?: WorkflowRun['promptSkill'];
+  profileWorkflowIdentity?: string;
 };
 
 type AuthorSessions = Pick<
@@ -338,6 +340,9 @@ export class WorkflowTasks {
         input.workflowName,
         await loadCatalog(directory, signal),
       );
+      if (automation?.profileWorkflowIdentity &&
+        profileWorkflowIdentity(workflow, loaded.source) !== automation.profileWorkflowIdentity)
+        throw new WorkflowRunError('invalid-request', 'The reviewed workflow or task spec changed.');
       if (automation?.browser) {
         const steps = workflow.steps.filter(step => step.needs.includes('browser'));
         if (workflow.source.scope !== 'global' || !steps.length || steps.some(step => step.source.scope !== 'global'))

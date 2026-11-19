@@ -549,7 +549,11 @@ function mergeProfile(
       field: entry.field,
       label: (entry.value.name ?? entry.value.id).slice(0, 120),
       revision: sha(JSON.stringify(entry.value)),
-      state: value.disabled ? 'masked' : ordinary ? 'ordinary' : 'pending',
+      state: value.disabled
+        ? 'masked'
+        : ordinary || key.startsWith('rituals/')
+          ? 'ordinary'
+          : 'pending',
       preview: configurationText(preview ?? '').slice(0, 300) || undefined,
     });
   }
@@ -567,6 +571,7 @@ function mergeProfile(
     branches: collection('branches'),
     recipes: collection('recipes').filter(entry => !('provider' in entry)),
     automations: collection('automations'),
+    rituals: collection('rituals'),
     limits: [...usageLimits.values()],
     sessionControl,
     inbox: {

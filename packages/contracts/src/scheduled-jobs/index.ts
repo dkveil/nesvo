@@ -307,6 +307,7 @@ export const scheduledJobSchema = z
     ...scheduledJobDefinitionShape,
     lastCheck: scheduledJobCheckSchema.optional(),
     pendingStart: scheduledJobPendingStartSchema.optional(),
+    profileOwnership: z.enum(['managed', 'withheld']).optional(),
     nextRunAt: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),

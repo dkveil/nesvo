@@ -36,7 +36,10 @@ import {
   type LoadedSetupProfile,
   type SetupInboxRule,
 } from './setup-profile-file';
-import { SetupProfileReviewQueue } from './setup-profile-review-queue';
+import {
+  SetupProfileReviewQueue,
+  type SetupReviewInspection,
+} from './setup-profile-review-queue';
 
 const target = {
   area: 'setup-profile',
@@ -83,6 +86,17 @@ export function installSetupProfile(database: DatabaseSync) {
   database.exec(
     'CREATE TABLE IF NOT EXISTS setup_profile (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL, document TEXT CHECK (json_valid(document)), route TEXT, managed INTEGER NOT NULL)',
   );
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS setup_automation_bindings (
+      id TEXT PRIMARY KEY,
+      declaration TEXT NOT NULL,
+      profile TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      retired INTEGER NOT NULL DEFAULT 0,
+      generation INTEGER NOT NULL DEFAULT 0
+    )
+  `);
 }
 
 function tableExists(database: DatabaseSync | undefined, name: string) {
@@ -106,6 +120,10 @@ function activeProfileSelection(database: DatabaseSync): Selection | null {
     .prepare('SELECT document FROM setup_profile WHERE id = 1')
     .get();
   return typeof row?.document === 'string' ? JSON.parse(row.document) : null;
+}
+
+export function activeSetupProfile(database: DatabaseSync) {
+  return activeProfileSelection(database)?.profile;
 }
 
 export function managedSessionLimits(database: DatabaseSync): SessionLimits {
@@ -281,19 +299,27 @@ export class SetupProfileService {
     directory: string | undefined,
     private readonly database?: DatabaseSync,
     private readonly changes?: ConfigurationChanges,
+    inspectReview?: SetupReviewInspection,
+    private readonly projectProfile?: (
+      profile: LoadedSetupProfile | null,
+    ) => void,
   ) {
     this.defaultFile = defaultSetupProfilePath(directory);
     changes?.register('setup-profile', this.writer());
     changes?.register('setup-profile-file', this.fileWriter());
     if (changes)
-      this.reviews = new SetupProfileReviewQueue(changes, () => {
-        const current = this.current();
-        if (!current.selection || !current.instanceId) return null;
-        return {
-          profile: current.selection.profile,
-          instanceId: current.instanceId,
-        };
-      });
+      this.reviews = new SetupProfileReviewQueue(
+        changes,
+        () => {
+          const current = this.current();
+          if (!current.selection || !current.instanceId) return null;
+          return {
+            profile: current.selection.profile,
+            instanceId: current.instanceId,
+          };
+        },
+        inspectReview,
+      );
   }
 
   private current() {
@@ -355,7 +381,12 @@ export class SetupProfileService {
               : 'changed',
         files: loaded.files,
         issues: [],
-        declarations: loaded.declarations,
+        declarations: loaded.declarations.map(entry =>
+          current.instanceId &&
+          this.reviews?.isApplied(loaded, current.instanceId, entry)
+            ? { ...entry, state: 'reviewed' }
+            : entry,
+        ),
         changes: profileChanges(
           current.selection?.profile.declarations ?? [],
           loaded.declarations,
@@ -676,6 +707,7 @@ export class SetupProfileService {
       selection?.profile.route ?? null,
       selection?.managed ? 1 : 0,
     );
+    this.projectProfile?.(selection?.profile ?? null);
   }
 
   private fileWriter(): ConfigurationWriter {

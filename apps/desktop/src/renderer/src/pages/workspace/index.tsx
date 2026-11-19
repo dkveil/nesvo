@@ -5810,12 +5810,17 @@ ${text}`
           onSetActive={active =>
             void setAutomationActive(automationJob, active)
           }
-          onEdit={() =>
-            openAutomationEditor(
-              automationValues(automationJob),
-              entityKey(automationJob),
-            )
-          }
+          onEdit={() => {
+            if (automationJob.profileOwnership) {
+              setAccountSettingsHostId(automationJob.hostId);
+              setSettingsPage('your-setup');
+            } else {
+              openAutomationEditor(
+                automationValues(automationJob),
+                entityKey(automationJob),
+              );
+            }
+          }}
           onDuplicate={() =>
             openAutomationEditor(duplicateValues(automationJob))
           }

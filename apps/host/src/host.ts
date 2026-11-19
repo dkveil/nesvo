@@ -173,6 +173,7 @@ import {
 } from './workflows/writer';
 import { importBundle, prepareShare } from './workflows/sharing';
 import { ScheduledJobStore } from './scheduled-jobs/store';
+import { ProfileAutomations } from './scheduled-jobs/profile';
 import {
   ScheduledJobError,
   ScheduledJobService,
@@ -1185,6 +1186,11 @@ export const serveHost = ({
         ),
         service => Effect.promise(() => service.close()),
       );
+      const profileAutomations = new ProfileAutomations(
+        database,
+        computerId,
+        probes.controller.signal,
+      );
       const scheduledJobs = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const service = new ScheduledJobService(
@@ -1241,7 +1247,9 @@ export const serveHost = ({
             new RedCiPoll(new GitHubCli(probes.controller.signal), () =>
               trackedRepositories.list(),
             ),
+            profileAutomations,
           );
+          profileAutomations.service = service;
           service.start();
           return service;
         }),
@@ -1281,6 +1289,8 @@ export const serveHost = ({
         directory,
         database,
         configuration,
+        profileAutomations.inspect,
+        profile => profileAutomations.reconcile(profile),
       );
       const setupDetection = new SetupDetection(
         database,
@@ -2334,6 +2344,11 @@ export const serveHost = ({
                   )),
                 };
               case 'decide-config-proposal':
+                if (
+                  request.input.decision === 'accept' &&
+                  changes.isPendingSetupReview(request.input)
+                )
+                  await setupProfile.recoverPendingReviews();
                 return {
                   ok: true,
                   kind: 'receipt',

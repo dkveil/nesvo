@@ -412,9 +412,11 @@ export function SetupProfileSettings({
                 description={
                   item.state === 'pending'
                     ? 'Awaiting review on this computer'
-                    : item.state === 'masked'
-                      ? 'Disabled by profile'
-                      : (item.preview ?? item.field)
+                    : item.state === 'reviewed'
+                      ? 'Reviewed on this computer'
+                      : item.state === 'masked'
+                        ? 'Disabled by profile'
+                        : (item.preview ?? item.field)
                 }
               />
             ))}

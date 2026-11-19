@@ -76,6 +76,7 @@ export type ScheduledWorkflows = {
       browser?: boolean;
       prompt?: string;
       promptSkill?: ScheduledJob['promptSkill'];
+      profileWorkflowIdentity?: string;
     },
   ) => Promise<WorkflowRun>;
   getRun: (runId: string) => WorkflowRun | undefined;
@@ -240,6 +241,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
       operatorStarted,
       previousReport,
       ciHead,
+      workflowIdentity,
     }: ScheduledJobLaunch,
     progress: ScheduledJobRunProgress,
   ): Promise<void> {
@@ -262,6 +264,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
         progress,
         operatorStarted,
         previousReport,
+        workflowIdentity,
       );
     if (scheduledJob.browser)
       throw new ScheduledJobLaunchError(
@@ -362,6 +365,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     progress: ScheduledJobRunProgress,
     operatorStarted?: boolean,
     previousReport?: string,
+    workflowIdentity?: string,
   ): Promise<void> {
     const signal = this.controller.signal;
     const workflows = this.workflows;
@@ -371,7 +375,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
         'Workflows are not available on this host.',
       );
     const isolation =
-      directory && (await this.repositories(directory, signal))
+      !workflowIdentity && directory && (await this.repositories(directory, signal))
         ? 'worktree'
         : 'none';
     signal.throwIfAborted();
@@ -399,6 +403,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
           browser: scheduledJob.browser,
           prompt: scheduledJob.browser ? scheduledJob.prompt : undefined,
           promptSkill: scheduledJob.promptSkill,
+          profileWorkflowIdentity: workflowIdentity,
         },
       );
     } catch (error) {

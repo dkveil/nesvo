@@ -358,6 +358,13 @@ export class ConfigurationChanges {
     return this.requireProposal(input).mutation.draft;
   }
 
+  isPendingSetupReview(input: Pick<ConfigurationDecision, 'id' | 'revision'>) {
+    const record = this.store.get(input.id);
+    return record?.change.target.area === 'setup-review' &&
+      record.change.status === 'pending' &&
+      record.change.revision === input.revision;
+  }
+
   status(principal: ConfigurationPrincipal, id: string) {
     const receipt = this.store.receipt(
       principalId(principal.source),

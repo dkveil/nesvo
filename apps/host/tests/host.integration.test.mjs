@@ -2855,6 +2855,129 @@ test('profile Inbox rules use verified repository scopes and retire transferred 
   }
 });
 
+test('a reviewed profile command is registered paused and executes only at the approved fingerprint', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-automation-')),
+  );
+  const file = join(root, 'profile.yaml');
+  const script = join(root, 'write-receipt.cjs');
+  const sentinel = join(root, 'automation-ran');
+  const marker = count =>
+    `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, '${count}')`;
+  await writeFile(script, marker(1));
+  await writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      automations: [
+        {
+          id: 'record',
+          name: 'Record evidence',
+          timeZone: 'UTC',
+          schedule: '08:00',
+          directory: root,
+          provider: 'Claude Code',
+          model: 'haiku',
+          task: {
+            kind: 'command',
+            command: { executable: process.execPath, argv: [script] },
+          },
+          desired: 'active',
+        },
+      ],
+    }),
+  );
+  const open = () =>
+    launch(join(root, 'data'), join(root, 'pids.json'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_PROFILE_PATH: file,
+      NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+    });
+  let host = open();
+  const list = async () =>
+    (await host.request('list-scheduled-jobs', {})).list.scheduledJobs;
+  const proposal = async () =>
+    (
+      await host.request('list-config-changes', { area: 'setup-review' })
+    ).result.page.changes.find(change => change.status === 'pending');
+  const approve = async change =>
+    (
+      await host.request('decide-config-proposal', {
+        id: change.id,
+        revision: change.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+        confirmAuthority: true,
+      })
+    ).result;
+  const run = async id => {
+    const result = await host.request('run-scheduled-job-now', {
+      id,
+      requestId: randomUUID(),
+    });
+    assert.equal(result.type, 'scheduled-job-run', JSON.stringify(result));
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const { page } = await host.request('list-scheduled-job-runs', {
+        scheduledJobId: id,
+      });
+      const settled = page.runs.find(item => item.id === result.run.id);
+      if (settled?.finishedAt) return settled;
+      await delay(50);
+    }
+    assert.fail('The automation did not settle.');
+  };
+  try {
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    const applied = (
+      await host.request('setup-profile', {
+        action: 'apply',
+        file,
+        instanceId: review.instanceId,
+        revision: review.revision,
+        effectiveRevision: review.effectiveRevision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(applied.receipt?.status, 'applied', JSON.stringify(applied));
+    assert.deepEqual(await list(), []);
+    assert.equal(existsSync(sentinel), false);
+    const first = await proposal();
+    assert.ok(first);
+    const approved = await approve(first);
+    assert.equal(approved.receipt?.status, 'applied', JSON.stringify(approved));
+    const [job] = await list();
+    assert.equal(job.active, false);
+    assert.equal(job.profileOwnership, 'managed');
+    assert.equal(job.nextRunAt, null);
+    assert.equal(existsSync(sentinel), false);
+    await host.stop();
+    host = open();
+    assert.equal((await list())[0].id, job.id);
+    assert.equal(existsSync(sentinel), false);
+    assert.equal((await run(job.id)).status, 'completed');
+    assert.equal(await readFile(sentinel, 'utf8'), '1');
+    await writeFile(script, marker(2));
+    const refused = await run(job.id);
+    assert.equal(refused.status, 'failed');
+    assert.match(refused.detail, /changed/);
+    assert.equal(await readFile(sentinel, 'utf8'), '1');
+    assert.equal(
+      (
+        await host.request('delete-scheduled-job', {
+          id: job.id,
+          expectedRevision: job.revision,
+        })
+      ).type,
+      'error',
+    );
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('setup profiles expose ordinary Inbox rules, templates and paused desired automation', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-profile-values-')),
