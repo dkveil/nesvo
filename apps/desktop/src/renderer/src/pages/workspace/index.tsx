@@ -1315,9 +1315,10 @@ export function Workspace({
       )
     : [];
   const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
-  const compactDock =
-    !!visiblePanel && viewportWidth >= 1200 && viewportWidth < 1500;
-  const headerIconSize = compactDock ? 24 : 32;
+  const compactViewport = viewportWidth >= 1200 && viewportWidth < 1500;
+  const compactDock = !!visiblePanel && compactViewport;
+  const headerIconSize =
+    compactViewport && (visiblePanel || cardOpen) ? 24 : 32;
   const cardSession = !browsing && !creating && selected ? selected : null;
   const cardRun = cardSession ? selectedRun : undefined;
   useEffect(() => {
@@ -4075,6 +4076,7 @@ ${text}`
                     )}
                     api={desktopApi(selected.hostId)}
                     reviewing={reviewingSessionPullRequest}
+                    triggerSize={headerIconSize}
                     onOpen={reference =>
                       reviewingSessionPullRequest
                         ? closeDiff()
@@ -4159,7 +4161,7 @@ ${text}`
           </IconButton>
           {headerActions.length > 0 && (
             <RowActionsMenu
-              header
+              headerSize={headerIconSize}
               label="Session actions"
               actions={headerActions}
             />

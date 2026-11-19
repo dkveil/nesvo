@@ -84,11 +84,16 @@ export function WorkerItem({
         trailing={
           <>
             {(status.attention || finished) && (
-              <span className={statusTextTones[status.tone]}>
+              <span
+                className={cn(
+                  'text-ui leading-5',
+                  statusTextTones[status.tone],
+                )}
+              >
                 {resultLabel}
               </span>
             )}
-            {elapsed && <span>{elapsed}</span>}
+            {elapsed && <span className="text-ui leading-5">{elapsed}</span>}
           </>
         }
         aria-expanded={delegation ? expanded : undefined}

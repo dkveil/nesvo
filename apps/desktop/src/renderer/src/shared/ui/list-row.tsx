@@ -103,7 +103,7 @@ export function ListRow({
           className={cn(
             'flex shrink-0 items-center [&_svg:not([class*=size-])]:size-3.5',
             sidebar ? 'text-sidebar-icon' : 'text-muted-foreground',
-            twoLine && size === 'sm' && 'h-4',
+            twoLine && size === 'sm' && 'h-5',
           )}
         >
           {leading}
@@ -129,7 +129,7 @@ export function ListRow({
           {meta && twoLine && (
             <span
               className={cn(
-                'flex shrink-0 items-center gap-1 text-2xs leading-4 tabular-nums',
+                'flex shrink-0 items-center gap-1 text-ui leading-5 tabular-nums',
                 mutedText,
                 overlay && hiddenWhileActionsShow,
               )}
@@ -222,7 +222,7 @@ export function ListRow({
               ? [
                   'invisible absolute right-1 rounded-sm pr-0 group-focus-within/row:visible group-hover/row:visible has-[[aria-expanded=true]]:visible',
                   !twoLine && 'top-1/2 -translate-y-1/2',
-                  twoLine && (size === 'sm' ? 'top-0.5' : 'top-1'),
+                  twoLine && 'top-1',
                   sidebar &&
                     'bg-sidebar-row-hover group-data-selected/row:bg-sidebar-row-selected',
                 ]

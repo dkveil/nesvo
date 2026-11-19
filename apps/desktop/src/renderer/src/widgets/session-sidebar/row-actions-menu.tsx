@@ -24,7 +24,7 @@ type Props = {
   actions: RowAction[];
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  header?: boolean;
+  headerSize?: 24 | 32;
 };
 
 export function RowActionsMenu({
@@ -32,14 +32,15 @@ export function RowActionsMenu({
   actions,
   open,
   onOpenChange,
-  header,
+  headerSize,
 }: Props) {
+  const header = headerSize !== undefined;
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
       <DropdownMenuTrigger asChild>
         <IconButton
           label={label}
-          size={header ? 32 : 20}
+          size={headerSize ?? 20}
           tone={header ? undefined : 'sidebar'}
           tooltipSide="bottom"
         >

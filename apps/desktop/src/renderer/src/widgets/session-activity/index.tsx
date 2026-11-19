@@ -55,12 +55,12 @@ function ActivityItem({ item }: { item: Activity }) {
       title={
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate">{item.title}</span>
-          <span className="shrink-0 text-2xs text-muted-foreground">
+          <span className="shrink-0 text-muted-foreground">
             {activityStatusLabels[item.status]}
           </span>
         </span>
       }
-      contentClassName="ml-3.5 space-y-2 border-l pt-1 pb-3 pl-3"
+      contentClassName="space-y-2 pt-1 pb-2 pl-12"
     >
       <ActivityDetails item={item} />
     </NativeDisclosure>
@@ -219,7 +219,7 @@ export function SessionActivity({
             )}
           </span>
         }
-        contentClassName="ml-3.5 max-h-80 space-y-px overflow-y-auto border-l pt-1 pl-2"
+        contentClassName="max-h-80 space-y-px overflow-y-auto pt-1 pl-2"
       >
         <ActivityRows items={items} truncated={truncated} />
       </NativeDisclosure>
@@ -245,7 +245,7 @@ function ActivityRows({
             triggerLabel={`Toggle ${batch.kind} activity`}
             icon={<Icon />}
             title={batchLabel(batch)}
-            contentClassName="ml-3.5 space-y-px border-l pt-0 pb-0 pl-2"
+            contentClassName="space-y-px py-0 pl-5"
           >
             {batch.items.map(item => (
               <ActivityItem key={item.id} item={item} />

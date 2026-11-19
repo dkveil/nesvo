@@ -30,6 +30,7 @@ type SessionPullRequestProps = {
   unavailableReason: string;
   api: PullRequestApi;
   reviewing?: boolean;
+  triggerSize: 24 | 32;
   onOpen: (reference: PullRequestReference) => void;
   onLinked: (session: Session) => void;
   onFinishAfterMerge?: () => void;
@@ -47,6 +48,7 @@ export function SessionPullRequest({
   unavailableReason,
   api,
   reviewing = false,
+  triggerSize,
   onOpen,
   onLinked,
   onFinishAfterMerge,
@@ -171,11 +173,20 @@ export function SessionPullRequest({
       }}
     >
       <PopoverTrigger asChild>
-        <IconButton label="Link a pull request" size={24} tooltipSide="bottom">
+        <IconButton
+          label="Link a pull request"
+          size={triggerSize}
+          tooltipSide="bottom"
+        >
           <GitPullRequest />
         </IconButton>
       </PopoverTrigger>
-      <PopoverContent align="end" size="md" className="space-y-3">
+      <PopoverContent
+        surface="solid"
+        align="end"
+        size="md"
+        className="space-y-3"
+      >
         <div className="space-y-1.5">
           <p className="text-ui font-medium">Link a pull request</p>
           <div className="flex items-center gap-2">

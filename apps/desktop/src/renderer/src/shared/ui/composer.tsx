@@ -62,12 +62,14 @@ type ComposerToolbarProps = {
   start?: ReactNode;
   end?: ReactNode;
   className?: string;
+  containerClassName?: string;
 };
 
 export function ComposerToolbar({
   start,
   end,
   className,
+  containerClassName,
 }: ComposerToolbarProps) {
   const variant = useContext(ComposerVariantContext);
   return (
@@ -76,6 +78,7 @@ export function ComposerToolbar({
       className={cn(
         'flex min-w-0 items-center justify-between gap-3',
         variant === 'default' ? 'pt-1' : 'mt-1.5',
+        containerClassName,
       )}
     >
       <div

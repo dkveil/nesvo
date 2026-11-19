@@ -746,7 +746,8 @@ export function Conversation({
                 maxLength={MESSAGE_MAX_LENGTH}
               />
               <ComposerToolbar
-                className="flex-wrap gap-x-0.5 gap-y-1"
+                className="flex-wrap"
+                containerClassName="py-0.5"
                 start={
                   <>
                     <AttachButton
