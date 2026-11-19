@@ -416,6 +416,20 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       if (version < 28) migrateTranscriptCosts(database);
       installTranscriptIndex(database);
       installInboxTables(database);
+      if (version < 33)
+        database.exec(`UPDATE reviews AS review
+          SET document = json_set(document, '$.status', 'done', '$.revision', coalesce(json_extract(document, '$.revision'), 1) + 1)
+          WHERE json_extract(document, '$.status') = 'pending'
+            AND coalesce(json_array_length(document, '$.diff.files'), 0) = 0
+            AND coalesce(json_extract(document, '$.diff.patch'), '') = ''
+            AND coalesce(json_extract(document, '$.role'), 'standalone') <> 'worker'
+            AND NOT EXISTS (
+              SELECT 1 FROM sessions
+              WHERE id = review.session_id
+                AND (json_extract(document, '$.role') = 'worker'
+                  OR json_extract(document, '$.workflowRunId') IS NOT NULL
+                  OR json_extract(document, '$.workflowStepId') IS NOT NULL)
+            )`);
       database.exec(
         'CREATE TABLE IF NOT EXISTS mcp_repository_trust (provider TEXT NOT NULL, repository TEXT NOT NULL, fingerprint TEXT NOT NULL, definitions TEXT NOT NULL CHECK (json_valid(definitions)), trusted INTEGER NOT NULL CHECK (trusted IN (0, 1)), PRIMARY KEY (provider, repository))',
       );

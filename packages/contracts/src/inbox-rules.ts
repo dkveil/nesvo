@@ -40,6 +40,9 @@ export const inboxRuleTriggerSchema = z.enum([
   'files-changed',
   'run-cost',
   'external',
+  'decision-needed',
+  'question-for-you',
+  'result-to-review',
 ]);
 export type InboxRuleTrigger = z.infer<typeof inboxRuleTriggerSchema>;
 
@@ -153,11 +156,24 @@ export const inboxRuleFieldsSchema = z
           message:
             'External rules only route the posted item and preserve its body and actions.',
         });
+    } else if (
+      ['decision-needed', 'question-for-you', 'result-to-review'].includes(
+        rule.trigger,
+      )
+    ) {
+      need('route', 'Select where this item appears.');
+      if (rule.action !== 'route' || rule.show.length || rule.body)
+        context.addIssue({
+          code: 'custom',
+          path: ['action'],
+          message: 'Use route with the original item content and actions.',
+        });
     } else if (rule.action === 'route')
       context.addIssue({
         code: 'custom',
         path: ['action'],
-        message: 'Only external rules use the route action.',
+        message:
+          'Only external, decision-needed, question-for-you and result-to-review rules use the route action.',
       });
     if (rule.trigger === 'pull-request')
       need('actions', 'A pull-request rule lists its actions.');

@@ -71,6 +71,8 @@ import {
   type answerSessionQuestionSchema,
   parseFencedStageReport,
   pendingStageQuestion,
+  pendingTurnQuestion,
+  type TurnQuestion,
   sessionControlToolDefinitions,
   sessionPlanLimits,
   stageToolDefinitions,
@@ -108,6 +110,7 @@ import { shiftPlacement } from '../providers/interleave';
 import { makeActivity } from '../providers/activity';
 import type { SessionInboxHooks } from '../inbox-rules/turn-gate';
 import type { DecisionRoute } from '@nesvo/contracts';
+import { closingQuestion, reviewReason } from '../review/turn-outcome';
 import { SessionStore, type SessionOrigin } from './store';
 import {
   appendStageRecord,
@@ -382,6 +385,8 @@ const canonicalDirectory = (directory: string) => {
 };
 
 type ActiveRun = {
+  questions?: TurnQuestion;
+  resultRoute?: Review['route'];
   session: Session;
   handle: ReturnType<typeof startClaude> | ReturnType<typeof startCodex>;
   finished: Promise<void>;
@@ -2647,6 +2652,14 @@ export class SessionService {
       'Wait for this session to finish or use Stop.',
     );
     this.ensureNoStageDecision(session);
+    if (
+      input.replyToRunId &&
+      pendingTurnQuestion(session)?.runId !== input.replyToRunId
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This question is no longer waiting for an answer.',
+      );
     if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
@@ -2896,12 +2909,12 @@ export class SessionService {
     signal: AbortSignal,
   ): Promise<Session> {
     const session = this.acceptingSession(input.sessionId);
-    if (session.role === 'worker')
+    if (input.workflow !== undefined && session.role === 'worker')
       throw new SessionError(
         'invalid-request',
         'Workers follow the task from their parent and cannot carry a workflow.',
       );
-    if (session.workflowRunId)
+    if (input.workflow !== undefined && session.workflowRunId)
       throw new SessionError(
         'invalid-request',
         'This session already belongs to a workflow task.',
@@ -2928,11 +2941,16 @@ export class SessionService {
     }
     const current = this.acceptingSession(input.sessionId);
     const previous = current.workflow;
-    current.workflow = input.workflow ? { ...input.workflow } : null;
+    const previousReview = current.reviewEveryResult;
+    if (input.workflow !== undefined)
+      current.workflow = input.workflow ? { ...input.workflow } : null;
+    if (input.reviewEveryResult !== undefined)
+      current.reviewEveryResult = input.reviewEveryResult;
     try {
       this.publish(current);
     } catch (error) {
       current.workflow = previous;
+      current.reviewEveryResult = previousReview;
       throw error;
     }
     return structuredClone(current);
@@ -2948,6 +2966,7 @@ export class SessionService {
     refuseClaudeCommand(session, input);
     this.ensureWorktreeOpen(session);
     this.ensureNoStageDecision(session);
+    if (input.replyToRunId) return this.send(input, { session });
     if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
@@ -3384,7 +3403,10 @@ export class SessionService {
     return record;
   }
 
-  private finishStage(session: Session): SessionStageRecord[] {
+  private finishStage(
+    session: Session,
+    awaitingAnswer = false,
+  ): SessionStageRecord[] {
     const runId = session.runId;
     if (!runId) return [];
     const captured = this.capturedPlans.get(runId);
@@ -3394,6 +3416,7 @@ export class SessionService {
     const added: SessionStageRecord[] = [];
     const plan = session.plan;
     if (plan?.status === 'planning' && plan.runId === runId) {
+      if (awaitingAnswer && !captured) return [];
       if (session.status === 'completed') {
         const text = (captured ?? reply?.body ?? '').slice(
           0,
@@ -3553,7 +3576,12 @@ export class SessionService {
       this.active.get(sessionId)?.session ??
       this.unsaved.get(sessionId) ??
       this.store.get(sessionId);
-    if (!session || !session.queue.some(item => !item.held)) return;
+    if (!session) return;
+    const reply = session.messages.at(-1);
+    const markDecision =
+      session.status === 'completed' && reply?.outcome?.kind === 'done';
+    if (!markDecision && !session.queue.some(item => !item.held)) return;
+    if (markDecision) reply.outcome = { kind: 'decision-needed' };
     holdQueue(session);
     this.publish(session);
   }
@@ -4616,6 +4644,11 @@ export class SessionService {
                   'Inbox rules could not be checked. No provider turn was started.',
               };
         }
+        if (inboxRules) {
+          session.decisionRouteOverride = inboxRules.decisionRoute;
+          session.questionRouteOverride = inboxRules.questionRoute;
+          active.resultRoute = inboxRules.resultRoute;
+        }
         if (inboxRules?.refusal)
           return { status: 'failed', error: inboxRules.refusal };
         for (const [index, warning] of (inboxRules?.warnings ?? []).entries())
@@ -4652,6 +4685,12 @@ export class SessionService {
             ? startCodex({
                 ...options,
                 prompt: images.prompt,
+                questions:
+                  !unattended &&
+                  !ephemeral &&
+                  !outputSchema &&
+                  !assistantPrompt &&
+                  !privateResponse,
                 environment: turnEnvironment,
                 mcpTurn,
                 sessionId: session.providerSessionId,
@@ -4769,6 +4808,12 @@ export class SessionService {
                 ...(controlCall && controlTools
                   ? { control: { tools: controlTools, call: controlCall } }
                   : {}),
+                questions:
+                  !unattended &&
+                  !ephemeral &&
+                  !outputSchema &&
+                  !assistantPrompt &&
+                  !privateResponse,
                 ...(planTurn ? { planTurn } : {}),
                 sessionId: session.providerSessionId!,
                 forkFrom: session.pendingClaudeFork ?? undefined,
@@ -4862,7 +4907,15 @@ export class SessionService {
             reportedAt: session.messages.at(-1)!.completedAt!,
           };
         finishActivities(session, session.status);
-        const stageRecords = this.finishStage(session);
+        const questions =
+          session.status === 'completed' &&
+          !(session.runId && this.resultlessRuns.has(session.runId)) &&
+          !outputSchema &&
+          !session.workflowStepId
+            ? (active.questions ??
+              closingQuestion(session.messages.at(-1)!.body))
+            : undefined;
+        const stageRecords = this.finishStage(session, !!questions);
         const diff: ReviewDiff =
           baseline && session.status === 'completed'
             ? compareWorkspace(
@@ -4878,7 +4931,7 @@ export class SessionService {
                 fingerprint: null,
               };
         baseline = null;
-        await this.saveTerminal(session, diff);
+        await this.saveTerminal(session, diff, questions, active.resultRoute);
         this.announceStage(session, stageRecords);
       })
       .catch(async () => {
@@ -4985,10 +5038,9 @@ export class SessionService {
     } catch {
       held = false;
     }
-    if (held && session.queue.some(item => !item.held)) {
-      holdQueue(session);
+    if (held) {
       try {
-        this.publish(session);
+        this.holdQueueFor(session.id);
       } catch {
         session.revision += 1;
       }
@@ -5016,10 +5068,47 @@ export class SessionService {
   private async saveTerminal(
     session: Session,
     diff: ReviewDiff,
+    questions?: TurnQuestion,
+    resultRoute?: Review['route'],
   ): Promise<void> {
     const resultless = session.runId
       ? this.resultlessRuns.delete(session.runId)
       : false;
+    const reason = reviewReason(session, diff, !!resultRoute);
+    const stageQuestion = pendingStageQuestion(session);
+    const waitingForPlan =
+      session.plan?.status === 'plan-ready' ||
+      session.delegations.some(item => item.status === 'plan-ready');
+    if (stageQuestion && stageQuestion.runId === session.runId) {
+      questions = [
+        {
+          text: stageQuestion.question.question.slice(0, 2000),
+          options: stageQuestion.question.options.map(option => option.label),
+        },
+      ];
+    }
+    const reviewRequired =
+      !waitingForPlan && !stageQuestion && !questions ? reason : undefined;
+    const reply = session.messages.at(-1);
+    if (
+      session.status === 'completed' &&
+      reply?.author === 'agent' &&
+      (!resultless || waitingForPlan || stageQuestion)
+    ) {
+      reply.outcome = waitingForPlan
+        ? { kind: 'decision-needed' }
+        : questions
+          ? {
+              kind: 'question-for-you',
+              questions,
+              route: session.questionRouteOverride ?? 'inbox',
+              ...(stageQuestion ? { source: 'stage' } : {}),
+            }
+          : reason
+            ? { kind: 'result-to-review' }
+            : { kind: 'done' };
+      if (reply.outcome.kind === 'question-for-you') holdQueue(session);
+    }
     const reviews =
       session.status === 'completed' &&
       !session.workflowStepId &&
@@ -5027,7 +5116,10 @@ export class SessionService {
       !(session.runId && this.planRuns.has(session.runId))
         ? [
             ...this.reviews.supersededBy(session.id),
-            this.reviews.result(session, diff),
+            this.reviews.result(session, diff, {
+              reason: reviewRequired,
+              route: resultRoute,
+            }),
           ]
         : [];
     for (let attempt = 0; ; attempt++) {
@@ -5381,6 +5473,11 @@ export class SessionService {
   private update(session: Session, event: ClaudeEvent | CodexEvent): void {
     const active = this.active.get(session.id);
     if (active?.finalizing) return;
+    if (event.type === 'question') {
+      if (active && session.status === 'running')
+        active.questions = event.questions;
+      return;
+    }
     if (event.type === 'tool-activity') {
       if (
         !active ||
@@ -5421,6 +5518,9 @@ export class SessionService {
         candidates.set(event.approval.id, event.recheckRule);
         this.allowCandidates.set(session, candidates);
       }
+      const reply = session.messages.at(-1);
+      if (reply?.author === 'agent')
+        reply.outcome = { kind: 'decision-needed' };
       session.pendingApprovals.push(
         candidate
           ? {

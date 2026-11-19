@@ -57,7 +57,11 @@ import type {
   SessionControlToolDefinition,
 } from '../session-control/types';
 
+import { providerQuestion } from './turn-question';
+import type { TurnQuestion } from '@nesvo/contracts';
+
 export type CodexEvent =
+  | { type: 'question'; questions: TurnQuestion }
   | { type: 'init'; sessionId: string; model: string }
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
@@ -1610,6 +1614,7 @@ type CodexRunOptions = {
   summaryInstructions?: string;
   images?: readonly CodexImage[];
   compact?: boolean;
+  questions?: boolean;
   experimentalApi?: boolean;
 } & ({ fork: true; prompt?: never } | { fork?: false; prompt: string });
 
@@ -1654,6 +1659,7 @@ export function startCodex(options: CodexRunOptions): {
     resolveTurn = resolve;
   });
   let compacted = false;
+  let askedQuestion = false;
   const outcome: { confirmed?: CodexResult } = {};
   const confirmTurn = (result: CodexResult) => {
     if (outcome.confirmed) return;
@@ -1826,6 +1832,27 @@ export function startCodex(options: CodexRunOptions): {
           'Codex returned an invalid or repeated server request ID.',
         );
       seenRequests.add(id);
+      if (
+        message.method === 'item/tool/requestUserInput' &&
+        options.questions &&
+        !askedQuestion &&
+        threadId &&
+        turnId &&
+        params?.threadId === threadId &&
+        params.turnId === turnId
+      ) {
+        const questions = providerQuestion(params.questions);
+        if (questions) {
+          askedQuestion = true;
+          emit({ type: 'question', questions });
+          void peer
+            .request('turn/interrupt', { threadId, turnId })
+            .catch(() =>
+              fail('Codex could not pause for the operator question.'),
+            );
+          return;
+        }
+      }
       if (
         message.method === 'item/tool/call' &&
         params &&
@@ -2115,7 +2142,12 @@ export function startCodex(options: CodexRunOptions): {
       delegationController.abort();
       for (const id of approvals.keys()) resolveApproval(id);
       const usage = codexTurnUsage(firstTokens, latestTokens, turn);
-      if (turn.status === 'completed' && options.compact)
+      if (
+        askedQuestion &&
+        (turn.status === 'interrupted' || turn.status === 'completed')
+      )
+        confirmTurn({ status: 'completed', error: null, usage });
+      else if (turn.status === 'completed' && options.compact)
         confirmTurn(
           compacted
             ? { status: 'completed', error: null, usage, compacted: true }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { providerSchema } from './sessions';
+import { decisionRouteSchema } from './decision-route';
 
 export const reviewDiffSchema = z.strictObject({
   status: z.enum(['complete', 'unavailable', 'not-applicable']),
@@ -35,7 +36,10 @@ export const reviewSchema = z.strictObject({
     'changes-requested',
     'rejected',
     'superseded',
+    'done',
   ]),
+  route: decisionRouteSchema.optional(),
+  reason: z.enum(['files', 'worker', 'workflow', 'policy']).optional(),
   decision: z
     .strictObject({
       id: z.uuid(),

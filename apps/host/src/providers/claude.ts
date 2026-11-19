@@ -78,7 +78,11 @@ import {
 import type { SessionControlTurn } from '../session-control/types';
 import { PLAN_RECEIVED_MESSAGE } from '../sessions/stages';
 
+import { providerQuestion } from './turn-question';
+import type { TurnQuestion } from '@nesvo/contracts';
+
 export type ClaudeEvent =
+  | { type: 'question'; questions: TurnQuestion }
   | { type: 'init'; sessionId: string; model: string }
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
@@ -189,6 +193,7 @@ const claudeModes = {
 >;
 const optionalModes = ['accept-edits', 'auto', 'full-access'] as const;
 const EXIT_PLAN_TOOL = 'ExitPlanMode';
+const QUESTION_TOOL = 'AskUserQuestion';
 const PLAN_BROWSER_MESSAGE =
   'While planning, Nesvo only allows read-only browser tools.';
 const isBrowserTool = (tool: string) =>
@@ -1367,6 +1372,7 @@ export function startClaude(options: {
   compact?: { instructions: string | null };
   control?: SessionControlTurn;
   planTurn?: boolean;
+  questions?: boolean;
   browser?: boolean;
   gate?: TurnGate;
   onEvent: (event: ClaudeEvent) => void;
@@ -1498,12 +1504,15 @@ export function startClaude(options: {
         gate?.askRules.length && !canAsk && !readOnly
           ? gate.withoutHostPrompts.warning
           : null;
+      const canAskQuestion = canAsk && options.questions === true;
+      let askedQuestion = false;
       const webFetch = !!options.permissionRules && canAsk && !readOnly;
       const tools = options.summaryInstructions
         ? ''
         : [
             ...permission.tools,
             ...(presentsPlan ? [EXIT_PLAN_TOOL] : []),
+            ...(canAskQuestion ? [QUESTION_TOOL] : []),
             ...(webFetch ? ['WebFetch'] : []),
           ].join(',');
       const askRules =
@@ -1522,6 +1531,7 @@ export function startClaude(options: {
           Object.keys(servers).length > 0 ||
           controlled ||
           presentsPlan ||
+          canAskQuestion ||
           !!options.browser);
       const allowedTools = options.summaryInstructions
         ? ''
@@ -1791,6 +1801,27 @@ export function startClaude(options: {
             } catch {
               fail('Claude control answer could not be delivered.');
             }
+          return;
+        }
+        if (
+          request.tool_name === QUESTION_TOOL &&
+          typeof value.request_id === 'string' &&
+          value.request_id.length <= 200
+        ) {
+          const questions =
+            canAskQuestion && !askedQuestion
+              ? providerQuestion(object(request.input)?.questions)
+              : undefined;
+          if (questions) {
+            askedQuestion = true;
+            emit({ type: 'question', questions });
+          }
+          deny(
+            value.request_id,
+            questions
+              ? 'Nesvo saved your question for the operator. End this turn now and wait for their next message.'
+              : 'This question could not be recorded. Use a closing question in your response if you still need an answer.',
+          );
           return;
         }
         const parsed = parseClaudePermissionRequest(value, options.directory);
@@ -2437,6 +2468,8 @@ export function startClaude(options: {
             ? { limit: { resetsAt: rateLimitResetsAt } }
             : {}),
         };
+      if (!stopped && resultSeen && successful && askedQuestion)
+        return { status: 'completed', error: null, ...reported };
       if (stopped && resultSeen && successful && lastText)
         return { status: 'completed', error: null, ...reported };
       if (stopped) return { status: 'stopped', error: null, ...reported };

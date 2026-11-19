@@ -1,4 +1,4 @@
-import type { Approval, Session, SessionMode } from '@nesvo/contracts';
+import type { Approval, DecisionRoute, Session, SessionMode } from '@nesvo/contracts';
 
 export type ProviderToolSubject = {
   tool: string;
@@ -15,6 +15,9 @@ export type PreparedTurnRules = {
   gate: TurnGate;
   refusal: string | null;
   warnings: string[];
+  decisionRoute?: DecisionRoute;
+  questionRoute?: DecisionRoute;
+  resultRoute?: DecisionRoute;
 };
 
 export type SessionInboxHooks = {

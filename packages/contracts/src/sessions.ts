@@ -360,6 +360,7 @@ export const createSessionSchema = z
     mcp: mcpSelectionSchema.optional(),
     planFirst: z.boolean().optional(),
     browser: z.boolean().optional(),
+    reviewEveryResult: z.boolean().optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -381,6 +382,7 @@ export const createSessionSchema = z
 export const sendMessageSchema = z.strictObject({
   sessionId: z.uuid(),
   messageId: z.uuid(),
+  replyToRunId: z.uuid().optional(),
   text: z.string().trim().min(1).max(32000),
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
@@ -390,10 +392,17 @@ export const sendMessageSchema = z.strictObject({
   attachments: messageAttachmentsSchema.optional(),
   codeComments: messageCodeCommentsSchema.optional(),
 });
-export const assignSessionWorkflowSchema = z.strictObject({
-  sessionId: z.uuid(),
-  workflow: sessionWorkflowSchema.nullable(),
-});
+export const assignSessionWorkflowSchema = z
+  .strictObject({
+    sessionId: z.uuid(),
+    workflow: sessionWorkflowSchema.nullable().optional(),
+    reviewEveryResult: z.boolean().optional(),
+  })
+  .refine(
+    input =>
+      input.workflow !== undefined || input.reviewEveryResult !== undefined,
+    'Choose a session setting to update.',
+  );
 export const forkSessionSchema = z.strictObject({
   sessionId: z.uuid(),
   profileId: z.uuid().nullable().optional(),
@@ -493,6 +502,31 @@ export const sessionCompactionSchema = z.strictObject({
   instructions: z.boolean(),
 });
 export type SessionCompaction = z.infer<typeof sessionCompactionSchema>;
+export const turnQuestionSchema = z
+  .array(
+    z.strictObject({
+      text: z.string().trim().min(1).max(2000),
+      options: z.array(z.string().trim().min(1).max(200)).max(6),
+      multiple: z.boolean().optional(),
+    }),
+  )
+  .min(1)
+  .max(4);
+export type TurnQuestion = z.infer<typeof turnQuestionSchema>;
+
+export const turnOutcomeSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('decision-needed') }),
+  z.strictObject({
+    kind: z.literal('question-for-you'),
+    questions: turnQuestionSchema,
+    route: decisionRouteSchema,
+    source: z.literal('stage').optional(),
+  }),
+  z.strictObject({ kind: z.literal('result-to-review') }),
+  z.strictObject({ kind: z.literal('done') }),
+]);
+export type TurnOutcome = z.infer<typeof turnOutcomeSchema>;
+
 export const sessionMessageSchema = z.strictObject({
   id: z.uuid(),
   runId: z.uuid(),
@@ -514,7 +548,21 @@ export const sessionMessageSchema = z.strictObject({
   mcp: messageMcpSchema.nullable().default(null),
   attachments: messageAttachmentsSchema.optional(),
   codeComments: messageCodeCommentsSchema.optional(),
+  outcome: turnOutcomeSchema.optional(),
 });
+export function pendingTurnQuestion(
+  session: Pick<Session, 'messages' | 'runId' | 'status'>,
+) {
+  const latest = session.messages.at(-1);
+  return session.status === 'completed' &&
+    latest &&
+    latest.runId === session.runId &&
+    latest.outcome?.kind === 'question-for-you' &&
+    latest.outcome.source !== 'stage'
+    ? { runId: latest.runId, messageId: latest.id, ...latest.outcome }
+    : undefined;
+}
+
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
   provider: providerSchema,
@@ -549,6 +597,9 @@ export const sessionSchema = z.strictObject({
   workflowRunId: z.uuid().nullable().default(null),
   workflowStepId: z.uuid().nullable().default(null),
   workflow: sessionWorkflowSchema.nullable().default(null),
+  reviewEveryResult: z.boolean().optional(),
+  decisionRouteOverride: decisionRouteSchema.optional(),
+  questionRouteOverride: decisionRouteSchema.optional(),
   mcp: sessionMcpSchema.default({ servers: [], hooks: false }),
   pullRequest: pullRequestReferenceSchema.nullable().default(null),
   pullRequestDismissed: z.array(pullRequestReferenceSchema).max(20).default([]),

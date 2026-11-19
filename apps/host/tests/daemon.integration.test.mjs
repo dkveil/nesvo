@@ -305,13 +305,18 @@ test(
       }
       assert.fail(`Session did not settle: ${JSON.stringify(current)}`);
     };
-    const create = async (client, mode = 'read-only') => {
+    const create = async (
+      client,
+      mode = 'read-only',
+      reviewEveryResult = false,
+    ) => {
       const response = await client.request('create-session', {
         title: 'Daemon fixture session',
         provider: 'Codex',
         model: 'fixture-codex',
         mode,
         directory: '',
+        reviewEveryResult,
       });
       assert.equal(response.type, 'session', JSON.stringify(response));
       return response.session;
@@ -529,7 +534,7 @@ test(
     );
     assert.equal((await first.request('health')).health.instanceId, instanceId);
 
-    const parent = await create(first);
+    const parent = await create(first, 'read-only', true);
     const planned = await send(first, parent, 'fixture:delegate-two-hold');
     const plan = (
       await first.next(
@@ -703,7 +708,7 @@ test(
     const offlineReview = (await first.request('list-reviews')).reviews.find(
       value => value.runId === offlineCompleted.runId,
     );
-    assert.equal(offlineReview.status, 'pending');
+    assert.equal(offlineReview.status, 'done');
     const completedTurns = await readTurns();
     assert.equal(
       (await first.request('send-message', offlineRun.input)).session.runId,
@@ -865,8 +870,7 @@ test(
     const lateReviews = (await late.request('list-reviews')).reviews;
     assert.equal(
       lateReviews.filter(
-        value =>
-          value.id === lateRuns[0].reviewId && value.status === 'pending',
+        value => value.id === lateRuns[0].reviewId && value.status === 'done',
       ).length,
       1,
     );

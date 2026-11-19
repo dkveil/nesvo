@@ -71,6 +71,7 @@ export class ReviewStore {
       .filter(
         review =>
           review.status !== 'superseded' &&
+          review.status !== 'done' &&
           (review.sessionId === sessionId ||
             review.dependencies.some(
               dependency => dependency.sessionId === sessionId,
@@ -124,7 +125,11 @@ export class ReviewStore {
       );
   }
 
-  result(session: Session, diff: ReviewDiff): Review {
+  result(
+    session: Session,
+    diff: ReviewDiff,
+    classification: Pick<Review, 'reason' | 'route'>,
+  ): Review {
     const now = new Date().toISOString();
     const dependencies: Review['dependencies'] = [];
     for (const proposal of session.delegations) {
@@ -171,7 +176,8 @@ export class ReviewStore {
         )
         .map(message => message.body)
         .join('\n'),
-      status: 'pending',
+      ...classification,
+      status: classification.reason ? 'pending' : 'done',
       decision: null,
       dependencies,
       diff,

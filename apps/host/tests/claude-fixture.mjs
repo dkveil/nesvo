@@ -458,10 +458,15 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.has('--json-schema'), false);
     assert.equal(values.has('--append-system-prompt'), false);
   } else assert.equal(values.has('--permission-prompt-tool'), false);
+  const offersQuestion = values
+    .get('--tools')
+    .split(',')
+    .includes('AskUserQuestion');
+  if (offersQuestion) assert.ok(hostPrompts);
   const presentsPlan =
     permissionMode === 'plan' &&
     hostPrompts &&
-    values.get('--tools') === `${READ_TOOLS},ExitPlanMode`;
+    values.get('--tools').split(',').includes('ExitPlanMode');
   const browser = values.has('--chrome');
   const offersWebFetch = values.get('--tools').endsWith(',WebFetch');
   if (offersWebFetch) assert.ok(hostPrompts && permissionMode !== 'plan');
@@ -478,8 +483,9 @@ if (args.length === 1 && args[0] === '--version') {
       summaryMode
         ? ''
         : presentsPlan
-          ? `${READ_TOOLS},ExitPlanMode`
+          ? `${READ_TOOLS},ExitPlanMode${offersQuestion ? ',AskUserQuestion' : ''}`
           : MODE_TOOLS.get(permissionMode) +
+            (offersQuestion ? ',AskUserQuestion' : '') +
             (offersWebFetch ? ',WebFetch' : ''),
     ],
   ])
@@ -1458,7 +1464,10 @@ if (args.length === 1 && args[0] === '--version') {
       content_block: { type: 'tool_use', id: toolUse, name: toolName, input },
     });
     const requestId = randomUUID();
-    if (!hostPrompts) {
+    if (
+      !hostPrompts ||
+      (permissionMode === 'plan' && !toolName.startsWith('mcp__'))
+    ) {
       emit({
         type: 'user',
         message: {
@@ -2008,6 +2017,30 @@ if (args.length === 1 && args[0] === '--version') {
     );
     start(text);
     finish(text);
+  } else if (command === 'fixture:ask-option') {
+    assert.ok(offersQuestion);
+    const requestId = randomUUID();
+    emit({
+      type: 'control_request',
+      request_id: requestId,
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'AskUserQuestion',
+        input: {
+          questions: [
+            {
+              question: 'Which release channel should I use?',
+              options: [{ label: 'Stable' }, { label: 'Preview' }],
+            },
+          ],
+        },
+        tool_use_id: 'fixture-question',
+      },
+    });
+    const answer = await nextFrame();
+    assert.equal(answer.response.request_id, requestId);
+    assert.equal(answer.response.response.behavior, 'deny');
+    finish('The release channel is open.');
   } else if (command.startsWith('fixture:exit-plan ')) {
     assert.ok(presentsPlan, 'A plan turn offers ExitPlanMode');
     const plan = command.slice('fixture:exit-plan '.length);

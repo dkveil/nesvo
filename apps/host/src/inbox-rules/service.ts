@@ -574,6 +574,7 @@ export class InboxRules {
       : undefined;
     const route =
       rule?.route ??
+      session?.decisionRouteOverride ??
       session?.decisionRoute ??
       group?.defaults.decisionRoute ??
       this.settings().defaultRoute;
@@ -630,7 +631,14 @@ export class InboxRules {
       `The Inbox rule "${rule.name}" needs the Claude Code host permission prompt, which this CLI or turn does not offer.`;
     const refusing = needPrompts.find(rule => rule.on_unsupported === 'refuse');
     const warning = needPrompts.find(rule => rule.on_unsupported === 'warn');
+    const route = (trigger: InboxRuleTrigger) => {
+      const match = rules.find(({ rule }) => rule.trigger === trigger && rule.action === 'route');
+      return match ? this.routeFor(match.rule, session) : undefined;
+    };
     return {
+      decisionRoute: route('decision-needed'),
+      questionRoute: route('question-for-you'),
+      resultRoute: route('result-to-review'),
       refusal: refusals.length
         ? `${refusals.join(' ')} No provider turn was started.`
         : null,

@@ -681,6 +681,198 @@ test(
   },
 );
 
+test(
+  'turn outcomes and legacy pending results are classified by the host',
+  { timeout: 40000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-turn-outcomes-')),
+    );
+    const workspace = join(directory, 'workspace');
+    const policyWorkspace = join(directory, 'policy-project');
+    const agents = join(directory, 'agents');
+    const ruleRoot = join(agents, 'inbox-rules');
+    await Promise.all([
+      mkdir(workspace),
+      mkdir(policyWorkspace),
+      mkdir(ruleRoot, { recursive: true }),
+    ]);
+    await writeFile(
+      join(ruleRoot, 'review-policy-project.md'),
+      [
+        '---',
+        'name: review-policy-project',
+        'trigger: result-to-review',
+        'action: route',
+        'route: inbox',
+        'repository: policy-project',
+        '---',
+        '',
+      ].join('\n'),
+    );
+    const openHost = () =>
+      launch(directory, join(directory, 'pids.json'), {
+        NESVO_WORKFLOWS_HOME: join(agents, 'workflows'),
+      });
+    let host = openHost();
+    t.after(async () => {
+      if (host.child.exitCode === null) await host.stop();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const create = async (input = {}) => {
+      const response = await host.request('create-session', {
+        title: 'Turn outcome',
+        model: 'sonnet',
+        provider: 'Claude Code',
+        directory: workspace,
+        ...input,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const turn = async (session, text, input = {}) => {
+      const response = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text,
+        ...input,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      const finished = await host.event(
+        candidate =>
+          candidate.runId === response.session.runId &&
+          candidate.status !== 'running',
+      );
+      assert.equal(finished.status, 'completed', finished.error);
+      return finished;
+    };
+    const outcomeOf = session => session.messages.at(-1).outcome;
+    const planning = await turn(
+      await create({ planFirst: true }),
+      'fixture:exit-plan Check the release notes',
+    );
+    assert.equal(outcomeOf(planning).kind, 'decision-needed');
+    assert.equal(planning.plan.status, 'plan-ready');
+
+    const standalone = await create();
+    const done = await turn(standalone, 'fixture:say A syntax check passed.');
+    assert.deepEqual(outcomeOf(done), { kind: 'done' });
+    const prose = await turn(
+      standalone,
+      'fixture:say-lines ["There are two ways forward.","","Napisz, kt\u00f3r\u0105 opcj\u0119 wybierasz\u2026"]',
+    );
+    assert.equal(outcomeOf(prose).kind, 'question-for-you');
+    assert.equal(outcomeOf(prose).questions[0].options.length, 0);
+    assert.match(outcomeOf(prose).questions[0].text, /^Napisz,/);
+
+    for (const provider of ['Claude Code', 'Codex']) {
+      const asked = await turn(
+        await create({
+          provider,
+          model: provider === 'Codex' ? 'fixture-codex' : 'sonnet',
+        }),
+        'fixture:ask-option',
+      );
+      assert.deepEqual(outcomeOf(asked).questions, [
+        {
+          text: 'Which release channel should I use?',
+          options: ['Stable', 'Preview'],
+        },
+      ]);
+      const answered = await turn(asked, 'Stable', {
+        replyToRunId: asked.runId,
+      });
+      assert.equal(answered.messages.at(-2).body, 'Stable');
+      assert.equal(answered.providerSessionId, asked.providerSessionId);
+      const stale = await host.request('send-message', {
+        sessionId: asked.id,
+        messageId: randomUUID(),
+        text: 'Preview',
+        replyToRunId: asked.runId,
+      });
+      assert.equal(stale.type, 'error');
+      assert.match(stale.message, /no longer waiting/);
+    }
+
+    await writeFile(join(workspace, 'deleted.txt'), 'Legacy note\n');
+    const written = await turn(
+      await create({
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode: 'supervised',
+      }),
+      'fixture:review-write',
+    );
+    assert.equal(outcomeOf(written).kind, 'result-to-review');
+    const policy = await turn(
+      await create({ directory: policyWorkspace }),
+      'fixture:continue',
+    );
+    assert.equal(outcomeOf(policy).kind, 'result-to-review');
+    const optIn = await create();
+    const configured = await host.request('assign-session-workflow', {
+      sessionId: optIn.id,
+      reviewEveryResult: true,
+    });
+    assert.equal(configured.session.reviewEveryResult, true);
+    const optedIn = await turn(optIn, 'fixture:continue');
+    assert.equal(outcomeOf(optedIn).kind, 'result-to-review');
+
+    const reviews = (await host.request('list-reviews')).reviews;
+    const reviewOf = session =>
+      reviews.find(review => review.runId === session.runId);
+    assert.equal(reviewOf(done).status, 'done');
+    assert.equal(reviewOf(prose).status, 'done');
+    assert.equal(reviewOf(prose).version, 2);
+    assert.equal(reviewOf(written).status, 'pending');
+    assert.ok(reviewOf(written).diff.files.length > 0);
+    assert.equal(reviewOf(policy).route, 'inbox');
+    assert.equal(reviewOf(optedIn).reason, 'policy');
+    await host.stop();
+
+    const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      database.exec('PRAGMA user_version = 32');
+      const legacy = database.prepare(
+        `UPDATE reviews SET document = json_remove(json_set(document, '$.status', 'pending'), '$.reason', '$.route') WHERE id = ?`,
+      );
+      legacy.run(reviewOf(done).id);
+      legacy.run(reviewOf(prose).id);
+      const preserve = database.prepare(
+        `UPDATE reviews SET document = json_set(document, '$.role', 'worker') WHERE id = ?`,
+      );
+      preserve.run(reviewOf(optedIn).id);
+      database
+        .prepare(
+          `UPDATE sessions SET document = json_set(document, '$.workflowRunId', ?) WHERE id = ?`,
+        )
+        .run(randomUUID(), policy.id);
+    } finally {
+      database.close();
+    }
+    host = openHost();
+    const migrated = (await host.request('list-reviews')).reviews;
+    const formerlyPending = [reviewOf(done).id, reviewOf(prose).id];
+    const retired = migrated.filter(
+      review => formerlyPending.includes(review.id) && review.status === 'done',
+    );
+    assert.equal(retired.length, 2);
+    assert.equal(migrated.length, reviews.length);
+    for (const original of [
+      reviewOf(written),
+      reviewOf(policy),
+      reviewOf(optedIn),
+    ])
+      assert.equal(
+        migrated.find(review => review.id === original.id).status,
+        'pending',
+      );
+    t.diagnostic(
+      'Migration fixture: 2 of 5 legacy pending results left the Inbox; all versions were retained.',
+    );
+  },
+);
+
 test('host diagnostics redact secret patterns and secret environment values', () => {
   const secretValues = [
     'ghp_synthetictoken123456',
@@ -2178,7 +2370,7 @@ test(
     assert.deepEqual(health.health, {
       status: 'ready',
       protocolVersion: 1,
-      contractRevision: 5,
+      contractRevision: 6,
       instanceId,
       capabilities: [
         'scheduled-jobs',
@@ -5283,6 +5475,10 @@ test(
         .feedback,
       correctionInput.feedback,
     );
+    await reviewsReopened.request('assign-session-workflow', {
+      sessionId: writing.id,
+      reviewEveryResult: true,
+    });
     const refreshRun = await sendCodex(
       reviewsReopened,
       writing,
@@ -5482,6 +5678,10 @@ test(
     );
     await delay(100);
     assert.deepEqual(await providerState(), stateBeforeRecovery);
+    await afterParentCrash.request('assign-session-workflow', {
+      sessionId: crashRecovered.id,
+      reviewEveryResult: true,
+    });
     const resumedParentRun = await sendCodex(
       afterParentCrash,
       crashRecovered,
@@ -12325,7 +12525,7 @@ test(
     };
 
     await t.test(
-      'a scheduled Claude run streams into a session and leaves a pending review',
+      'a scheduled Claude run streams into a session and preserves its informational result',
       async () => {
         const job = save('Morning digest', { active: true });
         assert.equal(job.nextRunAt, '2026-11-16T08:00:00.000Z');
@@ -12393,7 +12593,7 @@ test(
           .find(item => item.id === run.reviewId);
         assert.deepEqual(
           [review.sessionId, review.runId, review.status, review.diff.status],
-          [session.id, run.runId, 'pending', 'not-applicable'],
+          [session.id, run.runId, 'done', 'not-applicable'],
         );
         log.push(
           `${new Date().toISOString()} review ${review.id.slice(0, 8)} ${review.status} v${review.version} in the inbox`,
@@ -26005,7 +26205,7 @@ test('Claude Code writable modes add plan, subagent and skill tools while subage
   );
   assert.equal(existsSync(join(project, 'subagent-note.txt')), false);
   assert.deepEqual(await lastTools(), [
-    'Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,TodoWrite,Agent,Skill,WebFetch',
+    'Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,TodoWrite,Agent,Skill,AskUserQuestion,WebFetch',
     'Read,Glob,Grep,TodoWrite',
   ]);
 
@@ -26018,7 +26218,10 @@ test('Claude Code writable modes add plan, subagent and skill tools while subage
       !['running', 'stopping'].includes(session.status),
   );
   assert.equal(planned.status, 'completed', planned.error);
-  assert.deepEqual(await lastTools(), ['Read,Glob,Grep', 'Read,Glob,Grep']);
+  assert.deepEqual(await lastTools(), [
+    'Read,Glob,Grep,AskUserQuestion',
+    'Read,Glob,Grep',
+  ]);
 });
 
 test('Claude Code native commands are listed from the CLI, passed through and refused visibly, with repository commands and instructions only after trust', async t => {
@@ -26385,7 +26588,7 @@ test('Browser access is a session property that Claude Code checks before starti
   assert.equal(args[args.indexOf('--permission-prompts') + 1], 'host');
   assert.equal(
     args[args.indexOf('--tools') + 1],
-    'Read,Glob,Grep,ExitPlanMode',
+    'Read,Glob,Grep,ExitPlanMode,AskUserQuestion',
   );
   const planAllowed = args[args.indexOf('--allowedTools') + 1].split(',');
   assert.deepEqual(planAllowed.slice(0, 3), ['Read', 'Glob', 'Grep']);

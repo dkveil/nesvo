@@ -1076,6 +1076,23 @@ if (args.length === 1 && args[0] === '--version') {
         }),
       );
       const prompt = turnText;
+      if (prompt === 'fixture:ask-option') {
+        emit({
+          id: randomUUID(),
+          method: 'item/tool/requestUserInput',
+          params: scoped({
+            itemId: current.itemId,
+            questions: [
+              {
+                id: 'channel',
+                question: 'Which release channel should I use?',
+                options: [{ label: 'Stable' }, { label: 'Preview' }],
+              },
+            ],
+          }),
+        });
+        return;
+      }
       if (prompt === 'fixture:ask-mcp') {
         const server = effectiveConfig(threadConfig).mcp_servers.search;
         assert.equal(server.default_tools_approval_mode, 'prompt');
