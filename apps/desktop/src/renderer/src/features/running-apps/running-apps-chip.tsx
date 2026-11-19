@@ -38,8 +38,8 @@ function PortRows({ apps, local, owner }: Props) {
             <ListRow
               density={description ? 'two-line' : 'compact'}
               title={
-                <span className="tabular-nums" title={label + ':' + app.port}>
-                  {app.web ? 'Web app' : 'TCP'} · port {app.port}
+                <span data-server-address className="text-ui tabular-nums">
+                  {label}:{app.port}
                 </span>
               }
               description={description || undefined}
@@ -51,6 +51,7 @@ function PortRows({ apps, local, owner }: Props) {
                     variant="ghost"
                     aria-label={'Open ' + label + ':' + app.port}
                     size="xs"
+                    className="text-ui"
                     onClick={() =>
                       void window.nesvo
                         .openExternal('http://' + host + ':' + app.port)
