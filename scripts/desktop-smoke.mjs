@@ -4957,7 +4957,11 @@ async function smokeDesktop() {
     name: 'Flows',
     exact: true,
   });
-  await flows.getByText('No live workflows', { exact: true }).waitFor();
+  await flows
+    .getByRole('region', { name: 'Ad hoc orchestration', exact: true })
+    .locator(`[data-orchestration-session="${resumedParent.id}"]`)
+    .waitFor();
+  assert.equal(await flows.locator('[data-flow-step]').count(), 0);
   const liveFlow = await workflowCall('startTask', 'local', {
     specPath: join('.agents', 'tasks', 'flows-smoke.md'),
     workflowName: 'flows-smoke',
