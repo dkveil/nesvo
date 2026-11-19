@@ -243,6 +243,112 @@ async function smokeSetupProfile() {
   );
 }
 
+async function smokeSetupDetection() {
+  const file = join(directory, 'profile.yaml');
+  const fixtureConfig = join(claudeConfigDirectory, 'settings.json');
+  await mkdir(claudeConfigDirectory, { recursive: true });
+  await writeFile(
+    fixtureConfig,
+    JSON.stringify({
+      hooks: { SessionStart: [] },
+      mcpServers: { 'demo-review': { command: 'fixture-never-run' } },
+    }),
+  );
+  application = await launchApplication({
+    NESVO_PROFILE_PATH: file,
+    NESVO_TEST_SHOW_ONBOARDING: '1',
+  });
+  const page = await application.firstWindow();
+  const guide = page.getByRole('main', {
+    name: 'Getting started',
+    exact: true,
+  });
+  hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+  await guide.getByRole('button', { name: 'Get started' }).click();
+  await guide.getByRole('button', { name: 'Skip this step' }).click();
+  await guide
+    .getByRole('heading', { name: 'Computers', exact: true })
+    .waitFor();
+  await guide.getByRole('button', { name: 'Continue', exact: true }).click();
+  await guide
+    .getByRole('heading', { name: 'Your setup', exact: true })
+    .waitFor();
+  await guide.getByText('No profile found', { exact: true }).waitFor();
+  await guide
+    .getByText('Claude Code user configuration', { exact: true })
+    .waitFor();
+  await setupShot(application, page, 'stage-b-guide-without-profile');
+  await writeFile(file, 'version: 1\ninbox:\n  defaultRoute: both\n');
+  await guide.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await guide.getByText('Profile ready to review', { exact: true }).waitFor();
+  await guide
+    .getByRole('button', { name: 'Skip profile', exact: true })
+    .click();
+  await guide.getByText('Profile skipped', { exact: true }).waitFor();
+  await guide
+    .getByRole('button', { name: 'Show profile', exact: true })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Load profile', exact: true })
+    .click();
+  await guide.getByText('Active profile', { exact: true }).waitFor();
+  await guide
+    .getByRole('button', { name: 'Sessions to import', exact: true })
+    .click();
+  await guide.getByRole('button', { name: 'Open import', exact: true }).click();
+  assert.equal(
+    (await page.evaluate(() => window.nesvo.listSessions())).length,
+    0,
+  );
+  await guide.getByRole('button', { name: 'Finish setup later' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Your setup', exact: true }).click();
+  await page.getByText('Active profile', { exact: true }).waitFor();
+  await page
+    .getByText('Claude Code user configuration', { exact: true })
+    .waitFor();
+  await page
+    .getByRole('button', { name: 'Mark reviewed', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Show current setup' }).waitFor();
+  await writeFile(
+    fixtureConfig,
+    JSON.stringify({
+      hooks: { SessionStart: [], Stop: [] },
+      mcpServers: { 'demo-review': { command: 'fixture-never-run' } },
+    }),
+  );
+  await page.getByRole('button', { name: 'Detect again', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Review changes', exact: true })
+    .click();
+  await page
+    .getByText(/Hook events: SessionStart, Stop/)
+    .last()
+    .waitFor();
+  await page
+    .getByRole('heading', { name: 'Setup changed', exact: true })
+    .scrollIntoViewIfNeeded();
+  assert.equal(
+    await page.getByText('Active profile', { exact: true }).count(),
+    1,
+  );
+  await setupShot(application, page, 'stage-b-setup-changed');
+  await page.getByRole('button', { name: 'Close setup review' }).click();
+  assert.equal(
+    (await page.evaluate(() => window.nesvo.listSessions())).length,
+    0,
+  );
+  console.log(
+    JSON.stringify({
+      result: 'passed',
+      scenario: 'passive setup detection',
+      stage: setupStage,
+      platform: process.platform,
+    }),
+  );
+}
+
 async function configurationShot(app, page, name, ready) {
   if (!configurationScreenshots) return;
   await mkdir(configurationScreenshots, { recursive: true });
@@ -1135,6 +1241,7 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 async function smokeDesktop() {
+  if (setupStage === 'B') return smokeSetupDetection();
   if (setupStage) return smokeSetupProfile();
   if (process.env.NESVO_D85_SMOKE_ONLY === '1') {
     application = await launchApplication();
@@ -1505,7 +1612,9 @@ async function smokeDesktop() {
     name: guideRule.name,
     expectedHash: guideRule.contentHash,
   });
-  await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+  await guide
+    .getByRole('button', { name: 'Finish setup later', exact: true })
+    .click();
   await guide.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => window.nesvo.colorScheme()), 'system');
   assert.equal(
@@ -2423,6 +2532,7 @@ async function smokeDesktop() {
     'coordinator-orchestration',
     'portable-checks',
     'setup-profile-v1',
+    'setup-detection-v1',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
@@ -3495,7 +3605,9 @@ async function smokeDesktop() {
   await guide
     .getByRole('heading', { name: 'Coding agents', exact: true })
     .waitFor();
-  await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+  await guide
+    .getByRole('button', { name: 'Finish setup later', exact: true })
+    .click();
   await guide.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const aboutSettings = page.getByRole('dialog', {
@@ -3511,7 +3623,9 @@ async function smokeDesktop() {
   await guide
     .getByRole('heading', { name: 'vibe with full control', exact: true })
     .waitFor();
-  await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+  await guide
+    .getByRole('button', { name: 'Finish setup later', exact: true })
+    .click();
   await guide.waitFor({ state: 'detached' });
   assert.equal(
     await page.evaluate(() => localStorage.getItem('nesvo.onboarding.v1')),

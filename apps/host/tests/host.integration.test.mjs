@@ -2641,6 +2641,87 @@ test('setup profiles validate and apply offline, own routing, and reconcile incl
   }
 });
 
+test('setup detection reports bounded passive evidence and keeps changed hooks withheld', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-setup-detection-')),
+  );
+  const claude = join(root, 'claude');
+  const repo = join(root, 'project');
+  const commandLog = join(root, 'commands.jsonl');
+  await mkdir(claude);
+  await mkdir(join(repo, '.git'), { recursive: true });
+  await writeFile(
+    join(repo, 'package.json'),
+    JSON.stringify({ scripts: { verify: 'never-run-this-metadata' } }),
+  );
+  await writeFile(join(repo, 'bun.lock'), '');
+  const settings = join(claude, 'settings.json');
+  await writeFile(
+    settings,
+    JSON.stringify({
+      mcpServers: { review: { command: 'never-run-this-metadata' } },
+    }),
+  );
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_TEST_COMMAND_LOG: commandLog,
+    CLAUDE_CONFIG_DIR: claude,
+  });
+  const scan = (trigger = 'manual', directory) =>
+    host.request('setup-detection', { action: 'scan', trigger, directory });
+  try {
+    const [first, duplicate] = await Promise.all([scan(), scan()]);
+    assert.equal(first.result.scan.revision, duplicate.result.scan.revision);
+    const report = first.result.scan;
+    assert.equal(
+      report.findings.find(item => item.id === 'configuration/claude/1')
+        .readiness,
+      'withheld',
+    );
+    assert.doesNotMatch(JSON.stringify(report), /never-run-this-metadata/);
+    const ack = {
+      action: 'acknowledge',
+      instanceId: report.instanceId,
+      revision: report.revision,
+      completed: true,
+    };
+    assert.equal(
+      (await host.request('setup-detection', ack)).result.scan.completed,
+      true,
+    );
+    const focused = (await scan('first-open', repo)).result.scan;
+    assert.equal(focused.directory, repo);
+    assert.match(
+      focused.findings.find(item => item.id === 'recipe/metadata').description,
+      /bun\.lock.*verify/,
+    );
+    assert.doesNotMatch(JSON.stringify(focused), /never-run-this-metadata/);
+    await writeFile(
+      settings,
+      JSON.stringify({
+        mcpServers: { review: { command: 'never-run-this-metadata' } },
+        hooks: { SessionStart: [] },
+      }),
+    );
+    const next = (await scan()).result.scan;
+    assert.deepEqual(next.changes, ['configuration/claude/1']);
+    assert.equal(
+      next.findings.find(item => item.id === 'configuration/claude/1')
+        .readiness,
+      'withheld',
+    );
+    assert.equal(
+      (await host.request('setup-detection', ack)).result.code,
+      'conflict',
+    );
+    assert.equal((await host.request('list-sessions')).sessions.length, 0);
+    assert.equal(await readFile(commandLog, 'utf8').catch(() => ''), '');
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('configuration permission proposals require exact owner confirmation and honor managed policy', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-config-authority-')),
@@ -5215,6 +5296,7 @@ test(
         'coordinator-orchestration',
         'portable-checks',
         'setup-profile-v1',
+        'setup-detection-v1',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6118,10 +6200,16 @@ test(
       duplicate.error(),
       /Another Nesvo host already owns this data directory\./,
     );
+    const afterDuplicate = (await host.request('list-sessions')).sessions.find(
+      value => value.id === session.id,
+    );
+    assert.ok(afterDuplicate.revision >= beforeDuplicate.revision);
     assert.deepEqual(
-      (await host.request('list-sessions')).sessions.find(
-        value => value.id === session.id,
-      ),
+      {
+        ...afterDuplicate,
+        revision: beforeDuplicate.revision,
+        updatedAt: beforeDuplicate.updatedAt,
+      },
       beforeDuplicate,
     );
     assert.equal((await host.request('health')).health.instanceId, instanceId);
@@ -10877,6 +10965,7 @@ test(
       'coordinator-orchestration',
       'portable-checks',
       'setup-profile-v1',
+      'setup-detection-v1',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -34351,7 +34440,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-17), [
+  assert.deepEqual(capabilities.slice(-18), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -34369,6 +34458,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'coordinator-orchestration',
     'portable-checks',
     'setup-profile-v1',
+    'setup-detection-v1',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {
