@@ -33,8 +33,10 @@ export const inboxRuleMeta = (item: HostedInboxItem) =>
     ? [
         'External',
         item.deviceName !== item.source ? item.deviceName : null,
-        item.answer ?? statusLabels[item.status],
+        item.answer
+          ? `${statusLabels[item.status]} · ${item.answer}`
+          : statusLabels[item.status],
       ]
         .filter(Boolean)
         .join(' · ')
-    : `Inbox rule ${item.rule.name} · ${triggerLabels[item.trigger]} · ${statusLabels[item.status]}`;
+    : `${triggerLabels[item.trigger]} · ${statusLabels[item.status]}`;

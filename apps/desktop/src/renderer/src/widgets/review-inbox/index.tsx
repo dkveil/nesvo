@@ -37,20 +37,14 @@ import {
 } from '@/features/review-decision';
 import { Button } from '@/shared/ui/button';
 import { EmptyState } from '@/shared/ui/empty-state';
-import { Label } from '@/shared/ui/label';
 import { ListRow } from '@/shared/ui/list-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/shared/ui/select';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
+import type { WorkflowRun, WorkflowStepRecord } from '@/entities/workflow';
+import { WorkflowGateDecision } from './workflow-gate-decision';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
-import { Toast, ToastRegion } from '@/shared/ui/toast';
 import { undoGateRule } from '@/features/gate-rules/undo-gate-rule';
 import { errorDetail } from '@/entities/session';
 import { GateRuleRow } from './gate-rule-row';
@@ -75,6 +69,8 @@ import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 type Props = ReviewDecisionProps & {
   onContinueCoordinator: (session: Session) => Promise<void>;
   reviews: Review[];
+  workflowRuns: WorkflowRun[];
+  workflowSteps: WorkflowStepRecord[];
   sessions: Session[];
   loading: boolean;
   error: string;
@@ -138,6 +134,13 @@ type ActionRow =
       at: string;
       id: string;
     }
+  | {
+      type: 'workflow-gate';
+      run: WorkflowRun;
+      step: WorkflowStepRecord;
+      at: string;
+      id: string;
+    }
   | { type: 'rule'; item: HostedInboxItem; at: string; id: string }
   | { type: 'automation'; job: ScheduledJob; at: string; id: string }
   | {
@@ -194,6 +197,7 @@ type ActionItemProps = Omit<ComponentProps<'article'>, 'title'> & {
   title: string;
   onOpen?: () => void;
   location: string;
+  typeLabel?: string;
   why?: string;
   summary: ReactNode;
   meta: ReactNode;
@@ -203,6 +207,7 @@ function ActionItem({
   title,
   onOpen,
   location,
+  typeLabel,
   why,
   summary,
   meta,
@@ -213,23 +218,33 @@ function ActionItem({
   return (
     <article {...props}>
       <ListRow density="block" columns={ROW_COLUMNS}>
-        <div className="min-w-0 space-y-1">
-          {onOpen ? (
-            <Button
-              variant="link"
-              size="inline"
-              className="max-w-full justify-start text-ui text-foreground"
-              aria-label={openLabel}
-              onClick={onOpen}
-            >
-              <span className="truncate">{title}</span>
-              <ArrowUpRight className="size-3 text-muted-foreground" />
-            </Button>
-          ) : (
-            <p className="text-ui font-medium [overflow-wrap:anywhere]">
-              {title}
-            </p>
-          )}
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            {typeLabel && (
+              <span className="text-xs font-medium text-muted-foreground">
+                {typeLabel}
+              </span>
+            )}
+            {onOpen ? (
+              <Button
+                variant="link"
+                size="inline"
+                className="max-w-full justify-start text-ui text-foreground"
+                aria-label={openLabel}
+                onClick={onOpen}
+              >
+                <span className="truncate">{title}</span>
+                <ArrowUpRight className="size-3 text-muted-foreground" />
+              </Button>
+            ) : (
+              <p className="text-ui font-medium [overflow-wrap:anywhere]">
+                {title}
+              </p>
+            )}
+            {location && (
+              <span className="text-xs text-muted-foreground">{location}</span>
+            )}
+          </div>
           {why && (
             <p
               className="line-clamp-1 text-2xs font-medium text-muted-foreground"
@@ -237,9 +252,6 @@ function ActionItem({
             >
               {why}
             </p>
-          )}
-          {location && (
-            <p className="text-2xs text-muted-foreground">{location}</p>
           )}
           {summary}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
@@ -368,6 +380,8 @@ function approvalPreview(approval: Session['pendingApprovals'][number]) {
 
 export function ReviewInbox({
   reviews,
+  workflowRuns,
+  workflowSteps,
   sessions,
   loading,
   error,
@@ -412,22 +426,23 @@ export function ReviewInbox({
       .map(item => `${item.hostId}/${item.sessionId}`),
   );
   const inInbox = (session: Session) => routesToInbox(routeOf(session));
-  const [gateToast, setGateToast] = useState<{
+  const [gateFeedback, setGateFeedback] = useState<{
     row: GateRuleProposal;
     hostId: string;
+    undone?: boolean;
   } | null>(null);
   const [undoError, setUndoError] = useState('');
   const [undoPending, setUndoPending] = useState(false);
   const undoSaved = async () => {
-    if (!gateToast?.row.changeId) return;
+    if (!gateFeedback?.row.changeId) return;
     setUndoPending(true);
     setUndoError('');
     try {
-      await undoGateRule(gateToast.hostId, {
-        conversationId: gateToast.row.sessionId,
-        changeId: gateToast.row.changeId,
+      await undoGateRule(gateFeedback.hostId, {
+        conversationId: gateFeedback.row.sessionId,
+        changeId: gateFeedback.row.changeId,
       });
-      setGateToast(null);
+      setGateFeedback({ ...gateFeedback, undone: true });
     } catch (reason) {
       setUndoError(errorDetail(reason));
     } finally {
@@ -450,6 +465,25 @@ export function ReviewInbox({
       at: review.createdAt,
       id: entityKey(review),
     }));
+  if (filter !== 'history')
+    for (const run of workflowRuns) {
+      if (run.status !== 'awaiting-human') continue;
+      for (const step of workflowSteps) {
+        if (
+          step.runId !== run.id ||
+          step.hostId !== run.hostId ||
+          step.state !== 'awaiting-human'
+        )
+          continue;
+        rows.push({
+          type: 'workflow-gate',
+          run,
+          step,
+          at: step.startedAt ?? run.updatedAt,
+          id: hostKey(step.id, run.hostId),
+        });
+      }
+    }
   if (filter !== 'history')
     for (const session of sessions)
       if (session.coordinatorWait)
@@ -567,6 +601,23 @@ export function ReviewInbox({
         at: proposal.createdAt,
         id: hostKey(proposal.id, hostId),
       });
+  if (
+    filter !== 'history' &&
+    gateFeedback &&
+    !rows.some(
+      row =>
+        row.type === 'gate-rule-proposal' &&
+        row.id === hostKey(gateFeedback.row.id, gateFeedback.hostId),
+    )
+  ) {
+    rows.push({
+      type: 'gate-rule-proposal',
+      row: gateFeedback.row,
+      hostId: gateFeedback.hostId,
+      id: hostKey(gateFeedback.row.id, gateFeedback.hostId),
+      at: gateFeedback.row.createdAt,
+    });
+  }
   rows.sort(
     (left, right) =>
       right.at.localeCompare(left.at) || left.id.localeCompare(right.id),
@@ -578,39 +629,26 @@ export function ReviewInbox({
     return online ? name : `${name} · Offline snapshot`;
   };
   return (
-    <ScrollArea className="min-h-0 min-w-0 flex-1">
+    <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:h-full">
       <section
         aria-label="Inbox"
-        className="mx-auto w-full max-w-4xl px-5 py-6 lg:px-8"
+        className="group/inbox mx-auto flex min-h-full w-full max-w-5xl flex-col px-5 pb-6 xl:ml-5"
       >
-        <div className="mb-3 flex items-center justify-between gap-3 px-2">
+        <div className="sticky top-0 z-10 mb-1 flex items-center justify-between gap-3 border-b bg-background px-2 py-2">
           <span className="text-xs text-muted-foreground tabular-nums">
-            {rows.length}{' '}
-            {filter === 'history'
-              ? 'past decisions'
-              : filter === 'all'
-                ? 'items'
-                : 'pending'}
+            {rows.length > 0 &&
+              `${rows.length} ${filter === 'history' ? 'past decisions' : filter === 'all' ? 'items' : 'pending'}`}
           </span>
-          <Label htmlFor="inbox-filter" className="sr-only">
-            View
-          </Label>
-          <Select
+          <SegmentedControl<Filter>
+            label="Inbox view"
             value={filter}
-            onValueChange={value => {
-              if (value === 'pending' || value === 'history' || value === 'all')
-                setFilter(value);
-            }}
-          >
-            <SelectTrigger id="inbox-filter" variant="ghost" className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="history">History</SelectItem>
-              <SelectItem value="all">All</SelectItem>
-            </SelectContent>
-          </Select>
+            options={[
+              { value: 'pending', label: 'Pending' },
+              { value: 'history', label: 'History' },
+              { value: 'all', label: 'All' },
+            ]}
+            onChange={setFilter}
+          />
         </div>
         {notice}
         {filter !== 'history' && lessons}
@@ -620,25 +658,6 @@ export function ReviewInbox({
               {message}
             </StatusMessage>
           ))}
-        {gateToast && (
-          <ToastRegion>
-            <Toast
-              tone={undoError ? 'error' : 'success'}
-              title={undoError || 'Gate rule saved'}
-              description={gateToast.row.error}
-              action={
-                gateToast.row.changeId
-                  ? {
-                      label: 'Undo',
-                      onClick: () => void undoSaved(),
-                      disabled: undoPending,
-                    }
-                  : undefined
-              }
-              onDismiss={() => setGateToast(null)}
-            />
-          </ToastRegion>
-        )}
         {error && (
           <div className="mb-4 flex flex-wrap items-center gap-3 px-2">
             <StatusMessage tone="error">{error}</StatusMessage>
@@ -676,7 +695,7 @@ export function ReviewInbox({
             </StatusMessage>
           )}
         {rows.length > 0 ? (
-          <div className="divide-y divide-border/60">
+          <div className="divide-y divide-border/55">
             {rows.map(row => {
               if (row.type === 'gate-rule-proposal') {
                 const title =
@@ -685,6 +704,50 @@ export function ReviewInbox({
                       session.hostId === row.hostId &&
                       session.id === row.row.taskSessionId,
                   )?.title ?? row.row.workflow;
+                if (
+                  gateFeedback?.hostId === row.hostId &&
+                  gateFeedback.row.id === row.row.id
+                )
+                  return (
+                    <ActionItem
+                      key={row.id}
+                      aria-label="Gate rule decision"
+                      title={title}
+                      location={location(row.hostId)}
+                      typeLabel="Gate rule proposal"
+                      summary={
+                        <p className="text-ui">{row.row.proposal.body.rule}</p>
+                      }
+                      meta={
+                        <StatusMessage tone={undoError ? 'error' : 'success'}>
+                          {undoError ||
+                            (gateFeedback.undone
+                              ? 'Gate rule change undone'
+                              : gateFeedback.row.status === 'dismissed'
+                                ? 'Gate rule dismissed'
+                                : 'Gate rule saved')}
+                        </StatusMessage>
+                      }
+                    >
+                      <div className="col-start-2 row-start-1 self-center">
+                        {gateFeedback.row.changeId && !gateFeedback.undone && (
+                          <Button
+                            variant="ghost"
+                            disabled={undoPending}
+                            onClick={() => void undoSaved()}
+                          >
+                            Undo
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          onClick={() => setGateFeedback(null)}
+                        >
+                          Close
+                        </Button>
+                      </div>
+                    </ActionItem>
+                  );
                 return (
                   <GateRuleRow
                     key={row.id}
@@ -695,7 +758,7 @@ export function ReviewInbox({
                     onSession={onSession}
                     onSaved={(saved, hostId) => {
                       setUndoError('');
-                      setGateToast({ row: saved, hostId });
+                      setGateFeedback({ row: saved, hostId });
                     }}
                   />
                 );
@@ -759,6 +822,46 @@ export function ReviewInbox({
                   </ActionItem>
                 );
               }
+              if (row.type === 'workflow-gate') {
+                const { run, step } = row;
+                const task = sessions.find(
+                  session =>
+                    session.hostId === run.hostId &&
+                    session.id === run.sessionId,
+                );
+                const definition = run.workflow.steps.find(
+                  item => item.name === step.name,
+                );
+                return (
+                  <ActionItem
+                    key={row.id}
+                    aria-label={`Workflow gate: ${step.name}`}
+                    data-host-id={run.hostId}
+                    data-workflow-step-id={step.id}
+                    typeLabel={`Workflow decision · ${step.name}`}
+                    title={task?.title ?? run.specTitle ?? run.workflow.name}
+                    onOpen={
+                      run.sessionId
+                        ? () => onSession(hostKey(run.sessionId!, run.hostId))
+                        : undefined
+                    }
+                    location={location(run.hostId)}
+                    summary={
+                      <p className="line-clamp-3 text-ui whitespace-pre-wrap">
+                        {definition?.body.trim() ||
+                          'Review this step before the workflow continues.'}
+                      </p>
+                    }
+                    meta={<time dateTime={row.at}>{reviewDate(row.at)}</time>}
+                  >
+                    <WorkflowGateDecision
+                      run={run}
+                      step={step}
+                      enabled={isOperationEnabled(run)}
+                    />
+                  </ActionItem>
+                );
+              }
               if (row.type === 'review') {
                 const { review } = row;
                 const origin = originLabel?.(review) ?? '';
@@ -768,6 +871,12 @@ export function ReviewInbox({
                       session.id === review.sessionId &&
                       session.hostId === review.hostId,
                   )?.title ?? review.title;
+                const awaitingGate = rows.some(
+                  item =>
+                    item.type === 'workflow-gate' &&
+                    item.run.hostId === review.hostId &&
+                    item.run.sessionId === review.sessionId,
+                );
                 const reviewError =
                   decisionProps.decisionErrors[entityKey(review)];
                 return (
@@ -775,7 +884,16 @@ export function ReviewInbox({
                     key={`review/${row.id}`}
                     aria-label={`Review result: ${review.title}, version ${review.version}`}
                     data-host-id={review.hostId}
-                    title={title}
+                    title={
+                      origin.startsWith('Automation · ')
+                        ? origin.slice('Automation · '.length)
+                        : title
+                    }
+                    typeLabel={
+                      review.status === 'pending'
+                        ? 'Saved result'
+                        : reviewStatusLabels[review.status]
+                    }
                     why={resultReason(review)}
                     data-inbox-kind="result-to-review"
                     onOpen={() =>
@@ -818,10 +936,7 @@ export function ReviewInbox({
                             Open diff
                           </Button>
                         )}
-                        <span>
-                          Result · v{review.version} ·{' '}
-                          {reviewStatusLabels[review.status]}
-                        </span>
+                        <span>Version {review.version}</span>
                         {review.diff.status === 'unavailable' && (
                           <span>· Diff unavailable</span>
                         )}
@@ -831,7 +946,11 @@ export function ReviewInbox({
                       </>
                     }
                   >
-                    {review.status === 'pending' ? (
+                    {awaitingGate ? (
+                      <StatusMessage className="col-span-full">
+                        Decide the workflow step before reviewing this result.
+                      </StatusMessage>
+                    ) : review.status === 'pending' ? (
                       <ReviewDecision
                         compact
                         review={review}
@@ -864,6 +983,17 @@ export function ReviewInbox({
                         : `Inbox rule ${item.rule.name}: ${item.sessionTitle}`
                     }
                     data-host-id={item.hostId}
+                    typeLabel={
+                      item.status !== 'pending'
+                        ? inboxRuleMeta(item)
+                        : item.binding === 'external'
+                          ? 'External request'
+                          : item.trigger === 'workflow-step'
+                            ? 'Workflow step hold'
+                            : item.action === 'hold'
+                              ? 'Operation held by a rule'
+                              : 'Inbox rule'
+                    }
                     data-inbox-rule={item.rule?.name}
                     data-inbox-type={
                       item.binding === 'external' ? 'external' : undefined
@@ -910,7 +1040,9 @@ export function ReviewInbox({
                     }
                     meta={
                       <>
-                        <span>{inboxRuleMeta(item)}</span>
+                        {item.status === 'pending' && (
+                          <span>{inboxRuleMeta(item)}</span>
+                        )}
                         {item.binding === 'external' && item.sessionId && (
                           <span>
                             {subjectSession?.title ?? item.sessionTitle}
@@ -1157,6 +1289,7 @@ export function ReviewInbox({
                         : `Requests approval: ${approval.title}`
                     }
                     aria-label={`Operation approval: ${session.title}`}
+                    typeLabel="Operation approval"
                     data-approval-id={approval.id}
                     data-host-id={session.hostId}
                     title={session.title}
@@ -1185,6 +1318,7 @@ export function ReviewInbox({
                     }
                   >
                     <ApprovalActions
+                      compact
                       approval={approval}
                       sessionId={session.id}
                       runId={session.runId ?? ''}
@@ -1220,18 +1354,19 @@ export function ReviewInbox({
                   why={`Wants to start a worker: ${delegation.title}`}
                   aria-label={`Start worker: ${delegation.title}`}
                   data-host-id={session.hostId}
-                  title={session.title}
+                  typeLabel="Worker approval"
+                  title={delegation.title}
+                  openLabel={`Open session: ${session.title}`}
                   onOpen={() =>
                     onSession(entityKey(session), `delegation-${delegation.id}`)
                   }
                   location={location(session.hostId)}
                   summary={
-                    <FullText text={delegation.task}>
-                      <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
-                        {delegation.title}:{' '}
-                        {compactPreview(delegation.task, 180)}
+                    <NativeDisclosure title={delegation.scope || 'Worker task'}>
+                      <p className="text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {delegation.task}
                       </p>
-                    </FullText>
+                    </NativeDisclosure>
                   }
                   meta={
                     <>
@@ -1240,14 +1375,6 @@ export function ReviewInbox({
                         {modelLabel(delegation.model)} ·{' '}
                         {modeLabel(delegation.provider, delegation.mode)}
                       </span>
-                      <FullText text={delegation.scope}>
-                        <span
-                          aria-label={`Scope: ${delegation.scope}`}
-                          className="max-w-40 truncate"
-                        >
-                          {delegation.scope}
-                        </span>
-                      </FullText>
                       <Directory path={delegation.directory} />
                     </>
                   }
@@ -1279,6 +1406,7 @@ export function ReviewInbox({
           !error && (
             <EmptyState
               icon={Inbox}
+              className="flex-1 group-has-[[data-lesson-key]]/inbox:hidden"
               title={
                 filter === 'history'
                   ? 'No past decisions'

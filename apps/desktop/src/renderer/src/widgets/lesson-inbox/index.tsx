@@ -15,7 +15,6 @@ import {
 import type { Session } from '@/entities/session';
 import { LessonRow } from '@/features/lessons/lesson-row';
 import { Button } from '@/shared/ui/button';
-import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type LessonInboxProps = {
@@ -72,11 +71,8 @@ function LessonTable({
   return (
     <section
       aria-label={`Lessons on ${computer.name}`}
-      className="mb-5 space-y-1.5"
+      className="divide-y divide-border/55 border-b"
     >
-      <SectionLabel as="h2" count={rows.length} className="px-2">
-        {showLocation ? `Lessons · ${computer.name}` : 'Lessons'}
-      </SectionLabel>
       {lessons.error && (
         <StatusMessage tone="error" className="px-2">
           {lessons.error}
@@ -102,6 +98,7 @@ function LessonTable({
             >
               <Button
                 size="sm"
+                variant="secondary"
                 disabled={busy}
                 onClick={() => decide(lesson, 'approve')}
               >

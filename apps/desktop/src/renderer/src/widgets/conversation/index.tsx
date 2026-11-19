@@ -1133,28 +1133,34 @@ export function Conversation({
                     : session.error ||
                       'The last outcome is unconfirmed. Review the current state before continuing.'}
                 </StatusMessage>
-                <div className="flex flex-wrap gap-2">
-                  {canResend && (
+                {session.coordinatorWait ? (
+                  <p className="text-xs text-muted-foreground">
+                    Use Continue in the session header to resume this group.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {canResend && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={!canSend || sending}
+                        onClick={onResend}
+                      >
+                        Resend last message
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="xs"
-                      variant="outline"
+                      variant="ghost"
                       disabled={!canSend || sending}
-                      onClick={onResend}
+                      onClick={() => messageInput.current?.focus()}
                     >
-                      Resend last message
+                      Write a follow-up
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="ghost"
-                    disabled={!canSend || sending}
-                    onClick={() => messageInput.current?.focus()}
-                  >
-                    Write a follow-up
-                  </Button>
-                </div>
+                  </div>
+                )}
               </section>
             )}
             {delegations}

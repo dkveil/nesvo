@@ -57,7 +57,7 @@ export function WorkerItem({
   const status = workerStatus(delegation, child);
   const pending = current && delegation?.status === 'pending';
   const [toggled, setToggled] = useState<boolean | null>(null);
-  const expanded = toggled ?? (pending || status.tone === 'error');
+  const expanded = toggled ?? false;
   const detailsId = useId();
   const finished = !status.attention && status.variant !== 'spinner';
   const result = child?.worktree?.workerResolution;
@@ -81,6 +81,9 @@ export function WorkerItem({
           <StatusDot tone={status.tone} variant={status.variant} size="md" />
         }
         title={title}
+        description={
+          pending && delegation?.scope ? delegation.scope : undefined
+        }
         trailing={
           <>
             {(status.attention || finished) && (
@@ -123,6 +126,7 @@ export function WorkerItem({
             <Button
               type="button"
               size="xs"
+              variant="secondary"
               disabled={!canDecide}
               onClick={() => onDecision('accept')}
             >

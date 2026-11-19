@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -98,25 +97,28 @@ export async function smokeGateRuleFlow({
             step.state === 'awaiting-human',
         ),
     );
-    await page.evaluate(
-      input => window.nesvo.workflows.decideGate('local', input),
-      {
-        runId,
-        stepId: step.id,
-        reviewId: step.reviewId,
-        version: step.reviewVersion,
-        decision: kind,
-        comment,
-        decisionId: randomUUID(),
-      },
-    );
+    const gate = page
+      .getByRole('article', { name: 'Workflow gate: approve' })
+      .and(page.locator(`[data-workflow-step-id="${step.id}"]`));
+    if (kind === 'fix') {
+      await gate.getByRole('button', { name: 'Reject', exact: true }).click();
+      await gate.getByRole('textbox', { name: 'Reject comment' }).fill(comment);
+      await gate.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await gate.getByRole('button', { name: 'Fix', exact: true }).click();
+      await gate.getByRole('textbox', { name: 'Fix comment' }).fill(comment);
+      await gate
+        .getByRole('button', { name: 'Request fix', exact: true })
+        .click();
+    } else {
+      await gate.getByRole('button', { name: 'Accept', exact: true }).click();
+    }
     return step.id;
   };
   const quote = 'Application messages must use the shared logger.';
   const source = await start();
+  await page.getByRole('button', { name: /^Inbox/ }).click();
   const fix = await decision(source.id, 'fix', quote);
   await decision(source.id, 'accept', '', fix);
-  await page.getByRole('button', { name: /^Inbox/ }).click();
   const row = page.getByRole('article', { name: 'Gate rule proposal' });
   await row
     .getByText(`From your Fix comment: “${quote}”`, { exact: true })
@@ -128,15 +130,15 @@ export async function smokeGateRuleFlow({
     .fill('Use the shared logger for every application message.');
   await row.getByRole('button', { name: 'Save rule', exact: true }).click();
   await row.waitFor({ state: 'hidden' });
-  const toast = page
-    .locator('[data-slot="toast"]')
+  const savedRule = page
+    .getByRole('article', { name: 'Gate rule decision' })
     .filter({ hasText: 'Gate rule saved' });
-  await toast.getByRole('button', { name: 'Undo', exact: true }).waitFor();
+  await savedRule.getByRole('button', { name: 'Undo', exact: true }).waitFor();
   assert.match(
     await readFile(ruleFile, 'utf8'),
     /Use the shared logger for every application message/,
   );
-  await toast.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await savedRule.getByRole('button', { name: 'Close', exact: true }).click();
 
   const verify = async () => {
     const run = await start();

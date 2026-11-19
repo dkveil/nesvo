@@ -4940,6 +4940,8 @@ ${text}`
               onRuleOpenPullRequest={openRulePullRequest}
               routeOf={routeOf}
               reviews={store.reviews}
+              workflowRuns={store.workflowRuns}
+              workflowSteps={store.workflowSteps}
               automations={automations.jobs}
               automationPending={automationPending}
               automationErrors={automationErrors}

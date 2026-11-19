@@ -83,7 +83,7 @@ export function ReviewDecision({
       {expanded && (
         <form
           id={formId}
-          className={cn(fullWidth, compact && 'pt-1.5')}
+          className={cn(fullWidth, compact && 'w-full max-w-2xl pt-1.5')}
           onSubmit={event => {
             event.preventDefault();
             if (!disabled && feedback.trim())
@@ -111,6 +111,7 @@ export function ReviewDecision({
                 <Button
                   type="submit"
                   size="sm"
+                  variant="secondary"
                   disabled={disabled || !feedback.trim()}
                 >
                   Send feedback
@@ -125,8 +126,10 @@ export function ReviewDecision({
           Saving decision…
         </StatusMessage>
       )}
-      {reason && review.status === 'pending' && !compact && (
-        <StatusMessage>{reason}</StatusMessage>
+      {reason && review.status === 'pending' && (
+        <StatusMessage className={fullWidth || undefined}>
+          {reason}
+        </StatusMessage>
       )}
       {!reason && unavailable && (
         <StatusMessage tone="warning" className={fullWidth || undefined}>

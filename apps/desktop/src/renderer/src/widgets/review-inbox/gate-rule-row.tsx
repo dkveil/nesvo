@@ -65,7 +65,8 @@ export function GateRuleRow({
         hostId,
       );
       const saved = overview.proposals.find(item => item.id === row.id);
-      if (saved?.status === 'accepted') onSaved(saved, hostId);
+      if (saved?.status === 'accepted' || saved?.status === 'dismissed')
+        onSaved(saved, hostId);
       if (saved?.status === 'stale') setEditing(false);
     } catch (reason) {
       setError(errorDetail(reason));
@@ -84,7 +85,10 @@ export function GateRuleRow({
   return (
     <article aria-label="Gate rule proposal" data-host-id={hostId}>
       <ListRow density="block" columns="minmax(0, 1fr) auto">
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-xs font-medium text-foreground/80">
+            Gate rule proposal
+          </p>
           <Button
             variant="link"
             size="inline"
@@ -160,6 +164,7 @@ export function GateRuleRow({
           {row.status === 'pending' && (
             <Button
               size="sm"
+              variant="secondary"
               disabled={busy || editing}
               onClick={() => void decide({ action: 'accept' })}
             >
@@ -231,7 +236,7 @@ function GateRuleEditor({
   });
   return (
     <form
-      className="col-span-full space-y-2 rounded-surface border bg-card p-3"
+      className="col-span-full grid gap-x-4 gap-y-2 border-t py-2 sm:grid-cols-2"
       aria-label="Edit gate rule"
       onSubmit={event => {
         event.preventDefault();
@@ -247,9 +252,11 @@ function GateRuleEditor({
           }
         />
       </Field>
-      <Field label="Rule" id={`${id}-rule`}>
+      <Field label="Rule" id={`${id}-rule`} className="sm:col-span-2">
         <Textarea
           id={`${id}-rule`}
+          resize="none"
+          rows={2}
           value={edit.body.rule}
           onChange={event =>
             setEdit({
@@ -327,11 +334,11 @@ function GateRuleEditor({
         </Field>
       </div>
       {!parsed.success && (
-        <StatusMessage tone="error">
+        <StatusMessage tone="error" className="sm:col-span-2">
           {parsed.error.issues[0]?.message}
         </StatusMessage>
       )}
-      <div className="flex justify-end gap-1">
+      <div className="flex justify-end gap-1 sm:col-span-2">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>

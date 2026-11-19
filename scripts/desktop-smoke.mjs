@@ -3156,10 +3156,12 @@ try {
   );
   await page.reload();
   await openInbox();
-  await page.getByRole('combobox', { name: 'View', exact: true }).click();
-  await page.getByRole('option', { name: 'History', exact: true }).click();
+  await page
+    .getByRole('radiogroup', { name: 'Inbox view' })
+    .getByRole('radio', { name: 'History', exact: true })
+    .click();
   await reviewRow(correctedReview)
-    .getByText(`Result · v${correctedReview.version} · Accepted`, {
+    .getByText(`Version ${correctedReview.version}`, {
       exact: true,
     })
     .waitFor();
@@ -3597,11 +3599,9 @@ try {
     exact: true,
   });
   await restartedInbox.waitFor();
-  await restartedPage
-    .getByRole('combobox', { name: 'View', exact: true })
-    .click();
-  await restartedPage
-    .getByRole('option', { name: 'Pending', exact: true })
+  await restartedInbox
+    .getByRole('radiogroup', { name: 'Inbox view' })
+    .getByRole('radio', { name: 'Pending', exact: true })
     .click();
   await restartedInbox
     .getByRole('article', {
@@ -3610,18 +3610,16 @@ try {
     })
     .filter({ hasText: pendingResult.summary })
     .waitFor();
-  await restartedPage
-    .getByRole('combobox', { name: 'View', exact: true })
-    .click();
-  await restartedPage
-    .getByRole('option', { name: 'History', exact: true })
+  await restartedInbox
+    .getByRole('radiogroup', { name: 'Inbox view' })
+    .getByRole('radio', { name: 'History', exact: true })
     .click();
   const restartedAccepted = restartedInbox.getByRole('article', {
     name: `Review result: ${correctedReview.title}, version ${correctedReview.version}`,
     exact: true,
   });
   await restartedAccepted
-    .getByText(`Result · v${correctedReview.version} · Accepted`, {
+    .getByText(`Version ${correctedReview.version}`, {
       exact: true,
     })
     .waitFor();

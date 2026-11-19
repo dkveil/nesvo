@@ -38,6 +38,7 @@ export function ApprovalActions({
   runId,
   hostId,
   enabled,
+  compact = false,
   onDecide,
 }: {
   approval: Approval;
@@ -45,6 +46,7 @@ export function ApprovalActions({
   runId: string;
   hostId: string;
   enabled: boolean;
+  compact?: boolean;
   onDecide: (decision: Decision) => void;
 }) {
   const fieldId = useId();
@@ -124,6 +126,7 @@ export function ApprovalActions({
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             type="button"
+            variant={compact ? 'secondary' : 'default'}
             disabled={!enabled}
             onClick={() => onDecide({ decision: 'accept' })}
           >
