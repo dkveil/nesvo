@@ -5,6 +5,7 @@ import {
   KeyRound,
   FolderGit2,
   GitFork,
+  Import,
   Inbox,
   Info,
   Keyboard,
@@ -44,6 +45,7 @@ export type SettingsPage =
   | 'account'
   | 'mcp'
   | 'data'
+  | 'import'
   | 'about'
   | 'components';
 
@@ -196,6 +198,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: UserRound,
     group: 'Account',
     keywords: 'usage quota limits reset weekly',
+  },
+  {
+    id: 'import',
+    label: 'Import',
+    icon: Import,
+    group: 'System',
+    keywords: 'move conversations projects groups sessions T3 Code Agent Deck',
   },
   {
     id: 'data',

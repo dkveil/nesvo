@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { managerImportSources } from '@nesvo/contracts';
 import type { Provider } from '@/entities/session';
 import { useDefaultSessionFolders } from '@/features/default-session-folder';
+import {
+  ManagerImportPicker,
+  type DetectedImports,
+} from '@/features/import-manager';
 import { Button } from '@/shared/ui/button';
 import { Progress } from '@/shared/ui/progress';
 import { SectionLabel } from '@/shared/ui/section-label';
@@ -26,6 +31,11 @@ const steps = [
     id: 'providers',
     title: 'Coding agents',
     description: 'Nesvo runs the agents you already have installed.',
+  },
+  {
+    id: 'import',
+    title: 'Import sessions',
+    description: 'Bring existing conversations and their groups into Nesvo.',
   },
   {
     id: 'computers',
@@ -53,18 +63,61 @@ const steps = [
 
 export function Onboarding({ onStartSession, onClose }: Props) {
   const api = window.nesvo;
-  const [index, setIndex] = useState(0);
+  const [stepId, setStepId] = useState<(typeof steps)[number]['id']>('welcome');
   const [editingComputer, setEditingComputer] = useState(false);
+  const [detected, setDetected] = useState<DetectedImports>();
+  const [checkingImports, setCheckingImports] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importCompleted, setImportCompleted] = useState(false);
   const [outcomes, setOutcomes] = useState<RoutineOutcomes>({});
   const { computers, local, error, statuses, checkProviders } =
     useOnboardingComputers(api);
   const defaultFolders = useDefaultSessionFolders(computers);
-  const step = steps[index]!;
+  const visibleSteps = steps.filter(
+    step => step.id !== 'import' || Object.keys(detected ?? {}).length,
+  );
+  const index = visibleSteps.findIndex(step => step.id === stepId);
+  const step = visibleSteps[index] ?? steps[0];
   const last = step.id === 'finish';
   const folder = defaultFolders.folders.local ?? null;
   useEffect(() => {
     document.getElementById('onboarding-step')?.focus();
-  }, [index]);
+  }, [stepId]);
+
+  const advance = async () => {
+    if (stepId !== 'providers' || detected) {
+      const next = visibleSteps[index + 1];
+      if (next) setStepId(next.id);
+      return;
+    }
+    if (
+      local?.status !== 'connected' ||
+      !local.capabilities.includes('manager-import')
+    ) {
+      setStepId('computers');
+      return;
+    }
+    setCheckingImports(true);
+    const replies = await Promise.allSettled(
+      managerImportSources.map(source =>
+        api.listManagerImport({ source, offset: 0 }, local.id),
+      ),
+    );
+    const sources: DetectedImports = {};
+    for (const [position, reply] of replies.entries()) {
+      if (
+        reply.status === 'fulfilled' &&
+        (reply.value.groupCount ||
+          reply.value.sessionCount ||
+          reply.value.status === 'choose-root' ||
+          reply.value.status === 'retry')
+      )
+        sources[managerImportSources[position]!] = reply.value;
+    }
+    setDetected(sources);
+    setCheckingImports(false);
+    setStepId(Object.keys(sources).length ? 'import' : 'computers');
+  };
 
   return (
     <main
@@ -79,12 +132,12 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               Getting started
             </SectionLabel>
             <p className="text-2xs text-muted-foreground tabular-nums">
-              Step {index + 1} of {steps.length}
+              Step {index + 1} of {visibleSteps.length}
             </p>
           </div>
           <Progress
             label="Getting started progress"
-            value={((index + 1) / steps.length) * 100}
+            value={((index + 1) / visibleSteps.length) * 100}
           />
         </header>
         <OnboardingStepLayout
@@ -98,6 +151,15 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               statuses={statuses}
               computerName={local?.name ?? 'this computer'}
               onCheckAgain={checkProviders}
+            />
+          )}
+          {step.id === 'import' && (
+            <ManagerImportPicker
+              api={api}
+              computer={local}
+              detected={detected}
+              onBusyChange={setImporting}
+              onImported={() => setImportCompleted(true)}
             />
           )}
           {step.id === 'computers' && (
@@ -115,7 +177,7 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               hostId="local"
               directory={folder ?? ''}
               statuses={statuses}
-              onSetupAgents={() => setIndex(1)}
+              onSetupAgents={() => setStepId('providers')}
             />
           )}
           {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
@@ -128,8 +190,8 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               outcomes={outcomes}
               setOutcomes={setOutcomes}
               onCheckProviders={checkProviders}
-              onChooseComputer={() => setIndex(2)}
-              onSetupAgents={() => setIndex(1)}
+              onChooseComputer={() => setStepId('computers')}
+              onSetupAgents={() => setStepId('providers')}
             />
           )}
           {last && (
@@ -158,7 +220,8 @@ export function Onboarding({ onStartSession, onClose }: Props) {
                 <Button
                   variant="ghost"
                   size="md"
-                  onClick={() => setIndex(index - 1)}
+                  disabled={checkingImports || importing}
+                  onClick={() => setStepId(visibleSteps[index - 1]!.id)}
                 >
                   <ArrowLeft />
                   Back
@@ -167,11 +230,28 @@ export function Onboarding({ onStartSession, onClose }: Props) {
             </div>
             {!last && (
               <div className="flex gap-2">
-                <Button variant="ghost" size="md" onClick={onClose}>
-                  Skip
-                </Button>
-                <Button size="md" onClick={() => setIndex(index + 1)}>
-                  {index === 0 ? 'Get started' : 'Continue'}
+                {stepId !== 'import' && (
+                  <Button variant="ghost" size="md" onClick={onClose}>
+                    Skip
+                  </Button>
+                )}
+                <Button
+                  variant={
+                    stepId === 'import' && !importCompleted
+                      ? 'ghost'
+                      : 'default'
+                  }
+                  size="md"
+                  disabled={checkingImports || importing}
+                  onClick={() => void advance()}
+                >
+                  {checkingImports
+                    ? 'Checking for imports…'
+                    : index === 0
+                      ? 'Get started'
+                      : stepId === 'import' && !importCompleted
+                        ? 'Skip import'
+                        : 'Continue'}
                   <ArrowRight />
                 </Button>
               </div>

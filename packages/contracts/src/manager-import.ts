@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { providerSchema } from './sessions';
 
-const sourceSchema = z.enum(['t3-code', 'agent-deck']);
+export const managerImportSources = ['t3-code', 'agent-deck'] as const;
+const sourceSchema = z.enum(managerImportSources);
 const key = z
   .string()
   .length(64)
@@ -15,6 +16,7 @@ export const listManagerImportSchema = z.strictObject({
   source: sourceSchema,
   root: root.optional(),
   offset: z.number().int().min(0).max(500).default(0),
+  scanId: z.uuid().optional(),
 });
 
 export const adoptManagerImportSchema = z.strictObject({
@@ -64,6 +66,7 @@ export const managerImportCatalogSchema = z.strictObject({
   profileCount: z.number().int().nonnegative(),
   rows: z.array(z.discriminatedUnion('kind', [group, session])).max(100),
   nextOffset: z.number().int().nullable(),
+  scanId: z.uuid().nullable(),
 });
 
 export const managerImportResultSchema = z.strictObject({

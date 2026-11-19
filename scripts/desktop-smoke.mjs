@@ -21,7 +21,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
 import { smokeGateRuleFlow } from './gate-rule-flow-smoke.mjs';
+import { smokeManagerImport } from './manager-import-smoke.mjs';
 import { EXPIRED_SHARE_ID, startShareServer } from './share-server-fixture.mjs';
+
+await smokeManagerImport();
 
 const directory = await realpath(
   await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
@@ -59,6 +62,8 @@ const env = {
   CLAUDE_CONFIG_DIR: claudeConfigDirectory,
   CODEX_HOME: codexConfigDirectory,
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
+  T3CODE_HOME: join(directory, 'empty-t3'),
+  NESVO_TEST_AGENT_DECK_ROOT: join(directory, 'empty-agent-deck'),
 };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NESVO_WORK_LAPTOP_MODE;
@@ -1077,6 +1082,7 @@ try {
     'costs',
     'mcp-servers',
     'conversation-import',
+    'manager-import',
     'scheduled-job-change-triggers',
     'database-backup',
     'claude-approvals',

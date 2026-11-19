@@ -100,6 +100,7 @@ import { ManageComputers } from '@/features/manage-computers';
 import { useDefaultSessionFolders } from '@/features/default-session-folder';
 import { HistorySearchDialog } from '@/features/search-history';
 import { ImportConversation } from '@/features/import-conversation';
+import { ManagerImportPicker } from '@/features/import-manager';
 import { ImportWorkflowDialog } from '@/features/import-workflow';
 import {
   ShareWorkflowDialog,
@@ -5662,6 +5663,15 @@ ${text}`
               </div>
             ) : page === 'sharing' ? (
               <SharingSettings api={window.nesvo.sharing} />
+            ) : page === 'import' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <ManagerImportPicker
+                  key={settingsHostId}
+                  api={window.nesvo}
+                  computer={settingsComputer}
+                />
+              </div>
             ) : page === 'data' ? (
               <DataSettings api={desktopApi()} computers={store.computers} />
             ) : page === 'about' ? (

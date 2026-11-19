@@ -52,8 +52,15 @@ type Candidate = {
 };
 
 type Scan = {
-  catalog: Omit<ManagerImportCatalog, 'rows' | 'nextOffset'>;
+  catalog: Omit<ManagerImportCatalog, 'rows' | 'nextOffset' | 'scanId'>;
   entries: Map<string, Candidate>;
+};
+
+type CatalogPage = {
+  key: string;
+  catalog: Scan['catalog'];
+  rows: ManagerImportRow[];
+  until: number;
 };
 
 type Outcome = ManagerImportResult['outcomes'][number];
@@ -180,7 +187,7 @@ class ImportTranscripts {
 
 export class ManagerImport {
   private tail = Promise.resolve();
-  private page?: { key: string; scan: Scan; until: number };
+  private readonly pages = new Map<string, CatalogPage>();
 
   constructor(
     private readonly database: DatabaseSync,
@@ -212,31 +219,45 @@ export class ManagerImport {
   list(input: ListManagerImportInput): Promise<ManagerImportCatalog> {
     return this.serialize(async signal => {
       const key = sourceKey(input.source, input.root);
-      if (
-        input.offset &&
-        (this.page?.key !== key || this.page.until < Date.now())
-      )
-        return {
-          ...emptyCatalog(
-            'retry',
-            'Refresh the import list before loading another page.',
-          ).catalog,
-          rows: [],
-          nextOffset: null,
+      const now = Date.now();
+      for (const [id, page] of this.pages)
+        if (page.until < now) this.pages.delete(id);
+      const scanId = input.offset ? input.scanId : randomUUID();
+      let page = scanId ? this.pages.get(scanId) : undefined;
+      if (input.offset) {
+        if (!page || page.key !== key)
+          return {
+            ...emptyCatalog(
+              'retry',
+              'Refresh the import list before loading another page.',
+            ).catalog,
+            rows: [],
+            nextOffset: null,
+            scanId: null,
+          };
+      } else {
+        const scan = await this.scan(input, signal);
+        page = {
+          key,
+          catalog: scan.catalog,
+          rows: [...scan.entries.values()].map(entry => entry.row),
+          until: Date.now() + 60_000,
         };
-      const scan =
-        input.offset && this.page
-          ? this.page.scan
-          : await this.scan(input, signal);
-      this.page = { key, scan, until: Date.now() + 60_000 };
-      const rows = [...scan.entries.values()]
-        .slice(input.offset, input.offset + pageSize)
-        .map(entry => entry.row);
+      }
+      const rows = page.rows.slice(input.offset, input.offset + pageSize);
       const next = input.offset + rows.length;
+      const nextOffset = next < page.rows.length ? next : null;
+      if (nextOffset !== null && scanId) {
+        page.until = Date.now() + 60_000;
+        this.pages.set(scanId, page);
+        if (this.pages.size > 4)
+          this.pages.delete(this.pages.keys().next().value!);
+      }
       return {
-        ...scan.catalog,
+        ...page.catalog,
         rows,
-        nextOffset: next < scan.entries.size ? next : null,
+        nextOffset,
+        scanId: nextOffset !== null ? (scanId ?? null) : null,
       };
     });
   }
@@ -283,15 +304,15 @@ export class ManagerImport {
           )
           .run(input.requestId, fingerprint, JSON.stringify(report()));
       };
-      const scan = await this.scan(input, signal);
+      const selected = new Map(
+        input.selected.map(row => [row.key, row.revision]),
+      );
+      const scan = await this.scan(input, signal, new Set(selected.keys()));
       if (!['ready', 'partial', 'not-found'].includes(scan.catalog.status))
         throw new SessionError(
           'unavailable',
           scan.catalog.message ?? 'The source could not be checked.',
         );
-      const selected = new Map(
-        input.selected.map(row => [row.key, row.revision]),
-      );
       const ordered = new Set(
         [...scan.entries.keys()].filter(key => selected.has(key)),
       );
@@ -328,7 +349,9 @@ export class ManagerImport {
           }
         }
       } finally {
-        this.page = undefined;
+        for (const [id, page] of this.pages)
+          if (page.key === sourceKey(input.source, input.root))
+            this.pages.delete(id);
         this.publishGroups();
       }
       return report();
@@ -338,6 +361,7 @@ export class ManagerImport {
   private async scan(
     input: Pick<ListManagerImportInput, 'source' | 'root'>,
     signal: AbortSignal,
+    selection?: ReadonlySet<string>,
   ): Promise<Scan> {
     try {
       const readSource =
@@ -356,7 +380,7 @@ export class ManagerImport {
           'Agent Deck has conflicting data stores. Choose the one to import.',
           source.roots,
         );
-      return await this.resolve(source, signal);
+      return await this.resolve(source, signal, selection);
     } catch (error) {
       this.closing.throwIfAborted();
       if (error instanceof ImportSourceError)
@@ -376,6 +400,7 @@ export class ManagerImport {
   private async resolve(
     source: ManagerSource,
     signal: AbortSignal,
+    selection?: ReadonlySet<string>,
   ): Promise<Scan> {
     const entries = new Map<string, Candidate>();
     const folders = new Map<string, Promise<string | undefined>>();
@@ -389,10 +414,9 @@ export class ManagerImport {
       return pending;
     };
     const transcripts = new ImportTranscripts(this.profiles, signal, folder);
-    const sessions = source.sessions.slice(
-      0,
-      Math.max(0, managerRowLimit - source.groups.length),
-    );
+    const sessions = source.sessions
+      .slice(0, Math.max(0, managerRowLimit - source.groups.length))
+      .filter(row => !selection || selection.has(row.key));
     await transcripts.index(sessions);
     const known = this.knownConversations();
     for (const group of source.groups.slice(0, managerRowLimit)) {
@@ -469,7 +493,7 @@ export class ManagerImport {
     const partial =
       source.partial ||
       transcripts.partial ||
-      entries.size < source.groupCount + source.sessionCount;
+      (!selection && entries.size < source.groupCount + source.sessionCount);
     return {
       catalog: {
         status: partial ? 'partial' : 'ready',
