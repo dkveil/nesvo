@@ -29,7 +29,6 @@ import {
   FolderOpen,
   RefreshCw,
   WrapText,
-  X,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
@@ -37,19 +36,8 @@ import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { ListRow } from '@/shared/ui/list-row';
-import {
-  PANEL_MIN_WIDTH_PX,
-  usePanelWidth,
-} from '@/shared/lib/use-panel-width';
-import {
-  Panel,
-  PanelAction,
-  PanelHeader,
-  PanelSearch,
-  Toolbar,
-} from '@/shared/ui/panel';
-import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelSurface } from '@/shared/ui/panel-styles';
+import { PanelAction, PanelSearch, Toolbar } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { FileGlyph } from './file-glyph';
@@ -391,14 +379,6 @@ function FilePreview({
   );
 }
 
-const EDITOR_WIDTH_RATIO = 0.56;
-const EDITOR_MAX_WIDTH_PX = 1000;
-
-const defaultEditorWidth = (viewportWidth: number) =>
-  Math.min(EDITOR_MAX_WIDTH_PX, viewportWidth * EDITOR_WIDTH_RATIO);
-
-const defaultTreeWidth = () => PANEL_MIN_WIDTH_PX;
-
 export default function WorkspaceFiles({
   session,
   api,
@@ -448,15 +428,6 @@ export default function WorkspaceFiles({
     session.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
   const segments = path ? path.split('/') : [];
   const editing = tabs.length > 0;
-  const {
-    attach: attachPanel,
-    style: panelStyle,
-    resizing,
-    resizer,
-  } = usePanelWidth(
-    editing ? 'files-editor' : 'files-tree',
-    editing ? defaultEditorWidth : defaultTreeWidth,
-  );
   const tree = (
     <nav
       aria-label="Workspace folders"
@@ -517,21 +488,17 @@ export default function WorkspaceFiles({
     </nav>
   );
   return (
-    <Panel
+    <SidePanel
+      kind={editing ? 'files-editor' : 'files-tree'}
+      resizeLabel="Resize files panel"
       aria-label="Workspace files"
       data-session-id={session.id}
       data-editing={editing}
-      ref={attachPanel}
-      style={panelStyle}
-      className={cn(
-        panelSurface,
-        'transition-[width] duration-slow ease-out',
-        resizing && 'transition-none',
-      )}
     >
-      <PanelResizer label="Resize files panel" {...resizer} />
-      <PanelHeader
-        titleBar
+      <SidePanelHeader
+        closeLabel="Close files"
+        onClose={onClose}
+        closeRef={closeButton}
         icon={FolderOpen}
         title="Files"
         meta={
@@ -563,10 +530,7 @@ export default function WorkspaceFiles({
             <WrapText />
           </PanelAction>
         )}
-        <PanelAction ref={closeButton} label="Close files" onClick={onClose}>
-          <X className="size-4" />
-        </PanelAction>
-      </PanelHeader>
+      </SidePanelHeader>
       {editing && (
         <>
           <Tabs
@@ -631,6 +595,6 @@ export default function WorkspaceFiles({
         )}
         {tree}
       </div>
-    </Panel>
+    </SidePanel>
   );
 }

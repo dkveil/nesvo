@@ -310,6 +310,7 @@ import {
 import { useWorkspaceShortcuts } from './use-workspace-shortcuts';
 import { paletteSessions, workspaceCommands } from './workspace-commands';
 import { PanelPlaceholder } from './panel-placeholder';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { SidebarResizer } from './sidebar-resizer';
 import {
   clampSidebarWidth,
@@ -426,7 +427,15 @@ export function Workspace({
     null,
   );
   const [panel, setPanel] = useState<
-    'diff' | 'files' | 'skills' | 'pull-request' | 'changes' | 'terminal' | null
+    | 'diff'
+    | 'files'
+    | 'skills'
+    | 'pull-request'
+    | 'changes'
+    | 'terminal'
+    | 'details'
+    | 'context'
+    | null
   >(location.diff ? 'diff' : null);
   const [pullRequestsView, setPullRequestsView] = useState(false);
   const [pullRequestHandoff, setPullRequestHandoff] = useState<Session | null>(
@@ -809,11 +818,10 @@ export function Workspace({
   const headerRef = useRef<HTMLElement>(null);
   const headerActionsTrigger = useRef<HTMLButtonElement>(null);
   const [narrowHeader, setNarrowHeader] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const contextFromOverflow = useRef(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const resultsTrigger = useRef<HTMLButtonElement>(null);
-  const [cardOpen, setCardOpen] = useState(false);
+  const contextTrigger = useRef<HTMLButtonElement>(null);
+  const cardOpen = panel === 'details';
   const [creating, setCreating] = useState(
     initialSessionProvider !== undefined,
   );
@@ -1480,13 +1488,11 @@ export function Workspace({
         : null;
   const openDiff = (reviewId: string, path?: string) => {
     diffTrigger.current = panelTrigger();
-    setCardOpen(false);
     setDiffTarget({ reviewId, path });
     setPanel('diff');
   };
   const openFiles = () => {
     diffTrigger.current = panelTrigger();
-    setCardOpen(false);
     if (!diffReview) {
       const latest = store.reviews
         .filter(
@@ -1501,11 +1507,10 @@ export function Workspace({
   };
   const openChanges = () => {
     diffTrigger.current = panelTrigger();
-    setCardOpen(false);
     setPanel(panel === 'changes' ? null : 'changes');
   };
   const closeCard = () => {
-    setCardOpen(false);
+    setPanel(current => (current === 'details' ? null : current));
     const trigger = cardTrigger.current;
     requestAnimationFrame(() => {
       const target = trigger?.isConnected
@@ -1521,7 +1526,7 @@ export function Workspace({
         ...previous,
         [entityKey(selectedRun)]: '',
       }));
-    setCardOpen(true);
+    setPanel('details');
   };
   const toggleCard = (trigger: HTMLElement) => {
     if (cardOpen) {
@@ -1561,7 +1566,6 @@ export function Workspace({
     setPullRequestsView(false);
     setAutomation('');
     setNavigationOpen(false);
-    setDetailsOpen(false);
   };
   const openInbox = () => guardEditor(openInboxNow);
   const openInboxDiff = (review: Review) =>
@@ -1630,14 +1634,12 @@ export function Workspace({
     setPullRequestsView(true);
     setPullRequestHandoff(handoff);
     setNavigationOpen(false);
-    setDetailsOpen(false);
   };
   const openPullRequest = (
     target: PullRequestTarget,
     layout: PullRequestPanelLayout = 'surface',
   ) => {
     diffTrigger.current = panelTrigger();
-    setCardOpen(false);
     setPullRequestTarget(target);
     setPullRequestLayout(layout);
     setPanel('pull-request');
@@ -1664,7 +1666,6 @@ export function Workspace({
     setPullRequestsView(false);
     setAutomation(target);
     setNavigationOpen(false);
-    setDetailsOpen(false);
   };
   const openCreate = () =>
     guardEditor(() => {
@@ -1711,7 +1712,6 @@ export function Workspace({
   const openCreateNow = () => {
     navigationVersion.current += 1;
     setNavigationOpen(false);
-    setDetailsOpen(false);
     setPanel(null);
     setDiffTarget(null);
     setInbox(false);
@@ -1734,8 +1734,6 @@ export function Workspace({
       setPullRequestsView(false);
       setAutomation('');
       setNavigationOpen(false);
-      setDetailsOpen(false);
-      setCardOpen(false);
       setShowBudgets(budgets);
       setCostsView(true);
     });
@@ -3213,7 +3211,6 @@ ${text}`
   const openSessionFiles = (session: Session) =>
     showSession(session, () => {
       diffTrigger.current = panelTrigger();
-      setCardOpen(false);
       const latest = store.reviews
         .filter(
           review =>
@@ -3553,11 +3550,19 @@ ${text}`
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setCardOpen(false);
     setPanel('skills');
   };
-  const toggleClaudeTerminal = () =>
-    setPanel(panel === 'terminal' ? null : 'terminal');
+  const toggleHeaderPanel = (
+    kind: 'terminal' | 'context',
+    trigger: HTMLElement | null,
+  ) => {
+    if (panel === kind) {
+      closeDiff();
+      return;
+    }
+    diffTrigger.current = trigger;
+    setPanel(kind);
+  };
   const headerMenuActions: RowAction[] = compactSessionHeader
     ? [
         ...(!cardRun
@@ -3597,17 +3602,16 @@ ${text}`
               {
                 label: 'Open Claude terminal',
                 icon: <SquareTerminal />,
-                onSelect: toggleClaudeTerminal,
+                onSelect: () =>
+                  toggleHeaderPanel('terminal', headerActionsTrigger.current),
               },
             ]
           : []),
         {
           label: 'Open context',
           icon: <PanelRight />,
-          onSelect: () => {
-            contextFromOverflow.current = true;
-            setDetailsOpen(true);
-          },
+          onSelect: () =>
+            toggleHeaderPanel('context', headerActionsTrigger.current),
         },
         ...(headerActions.length ? ['separator' as const] : []),
         ...headerActions,
@@ -4433,7 +4437,9 @@ ${text}`
                 size={headerIconSize}
                 label="Open Claude terminal"
                 pressed={panel === 'terminal'}
-                onClick={toggleClaudeTerminal}
+                onClick={event =>
+                  toggleHeaderPanel('terminal', event.currentTarget)
+                }
               >
                 <SquareTerminal />
               </IconButton>
@@ -4465,105 +4471,18 @@ ${text}`
               }}
             />
           )}
-          {!browsing && !creating && selected && (
-            <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
-              <SheetTrigger asChild>
-                <IconButton
-                  size={headerIconSize}
-                  label="Open context"
-                  className={cn(compactSessionHeader && 'hidden')}
-                >
-                  <PanelRight />
-                </IconButton>
-              </SheetTrigger>
-              <SheetContent
-                onCloseAutoFocus={event => {
-                  if (!contextFromOverflow.current) return;
-                  contextFromOverflow.current = false;
-                  event.preventDefault();
-                  headerActionsTrigger.current?.focus();
-                }}
-              >
-                <SheetHeader>
-                  <SheetTitle>Context</SheetTitle>
-                  <SheetDescription>
-                    Session details and access.
-                  </SheetDescription>
-                </SheetHeader>
-                <ScrollArea className="min-h-0 flex-1">
-                  <SessionDetails
-                    session={selected}
-                    permissions={
-                      selected.provider === 'Claude Code' &&
-                      autonomy.data && (
-                        <PermissionRules
-                          key={selectedKey}
-                          rules={autonomy.data.rules.filter(rule => {
-                            if (rule.scope === 'session')
-                              return rule.sessionId === selected.id;
-                            const folder = selected.directory.replaceAll(
-                              '\\',
-                              '/',
-                            );
-                            const project = rule.directory
-                              .replaceAll('\\', '/')
-                              .replace(/\/$/, '');
-                            return (
-                              folder === project ||
-                              folder.startsWith(project + '/')
-                            );
-                          })}
-                          onRemove={async id => {
-                            await autonomy.execute({
-                              action: 'remove-rule',
-                              id,
-                            });
-                          }}
-                        />
-                      )
-                    }
-                  >
-                    <RunningAppsSection
-                      apps={selectedApps}
-                      owner={portOwner}
-                      local={selected.hostId === 'local'}
-                    />
-                    {selected.pullRequest && (
-                      <PullRequestCard
-                        hostId={selectedHostId}
-                        reference={selected.pullRequest}
-                        api={pullRequestApi(selectedHostId)}
-                        unavailableReason={pullRequestBlockedReason(
-                          selectedHostId,
-                        )}
-                        onReview={next =>
-                          reviewPullRequest({
-                            hostId: selectedHostId,
-                            reference: next,
-                          })
-                        }
-                        onOpen={next =>
-                          openPullRequestSurface({
-                            hostId: selectedHostId,
-                            reference: next,
-                          })
-                        }
-                      />
-                    )}
-
-                    {sessionRecipe.run && (
-                      <WorktreeRecipeResources
-                        run={sessionRecipe.run}
-                        runningApps={selectedApps.filter(
-                          app => app.sessionId === selected.id,
-                        )}
-                        local={selectedComputer?.kind === 'local'}
-                      />
-                    )}
-                  </SessionDetails>
-                </ScrollArea>
-              </SheetContent>
-            </Sheet>
+          {sessionPanels && !compactSessionHeader && (
+            <IconButton
+              size={headerIconSize}
+              label="Open context"
+              ref={contextTrigger}
+              pressed={panel === 'context'}
+              onClick={event =>
+                toggleHeaderPanel('context', event.currentTarget)
+              }
+            >
+              <PanelRight />
+            </IconButton>
           )}
         </header>
         {store.error && (
@@ -4591,123 +4510,6 @@ ${text}`
           </div>
         )}
         <main className="relative flex min-h-0 min-w-0 flex-1">
-          {cardOpen && (
-            <SessionCard
-              id="session-card"
-              docked={workers.length > 0 && viewportWidth >= 1200}
-              computer={selectedComputer}
-              connection={connection}
-              session={cardSession}
-              run={cardRun}
-              gitBranch={branch}
-              pullRequest={
-                cardSession?.pullRequest && (
-                  <PullRequestSection
-                    hostId={cardSession.hostId}
-                    reference={cardSession.pullRequest}
-                    api={pullRequestApi(cardSession.hostId)}
-                    unavailableReason={pullRequestBlockedReason(
-                      cardSession.hostId,
-                    )}
-                    onReview={() => {
-                      if (cardSession.pullRequest)
-                        reviewPullRequest({
-                          hostId: cardSession.hostId,
-                          reference: cardSession.pullRequest,
-                        });
-                    }}
-                  />
-                )
-              }
-              onComputers={() => setSettingsPage('computers')}
-              onFiles={openFiles}
-              onPermissions={
-                cardSession?.provider === 'Claude Code' &&
-                supportsAutonomy(cardSession.hostId)
-                  ? () => {
-                      setCardOpen(false);
-                      setDetailsOpen(true);
-                    }
-                  : undefined
-              }
-              changes={
-                cardSession &&
-                store.hostReady(cardSession.hostId) &&
-                supportsSessionChanges(cardSession.hostId) && (
-                  <ChangesRow
-                    session={cardSession}
-                    api={desktopApi(cardSession.hostId)}
-                    onOpen={openChanges}
-                  />
-                )
-              }
-              onRunWorkflow={() =>
-                cardSession && void runAssignedWorkflow(cardSession)
-              }
-              onClose={closeCard}
-              workflow={
-                cardRun && (
-                  <WorkflowSection
-                    key={entityKey(cardRun)}
-                    run={cardRun}
-                    hostId={cardRun.hostId}
-                    gateRulesEnabled={store.computers.some(
-                      computer =>
-                        computer.id === cardRun.hostId &&
-                        computer.capabilities.includes('gate-rules'),
-                    )}
-                    steps={selectedRunSteps}
-                    connected={store.hostReady(selectedHostId)}
-                    pending={!!workflowPending[entityKey(cardRun)]}
-                    error={workflowErrors[entityKey(cardRun)] ?? ''}
-                    api={window.nesvo.workflows}
-                    onStop={() => void controlWorkflow('stop')}
-                    onResume={() => void controlWorkflow('resume')}
-                    onConfirmAction={stepId =>
-                      void controlWorkflow('confirm', stepId)
-                    }
-                    onInbox={openInbox}
-                    onSession={select}
-                  />
-                )
-              }
-              workers={
-                cardSession && (
-                  <SubsessionsSection
-                    entries={subsessions}
-                    parentDirectory={cardSession.directory}
-                    connected={store.hostReady(selectedHostId)}
-                    onSession={select}
-                    onStop={child => void stop(child)}
-                  />
-                )
-              }
-              servers={
-                cardSession &&
-                selectedApps.length > 0 && (
-                  <RunningAppsSection
-                    apps={selectedApps}
-                    owner={portOwner}
-                    local={selectedHostId === 'local'}
-                  />
-                )
-              }
-              usage={
-                <UsageSection
-                  states={usage.states}
-                  connected={store.hostReady(selectedHostId)}
-                />
-              }
-              context={
-                cardSession && (
-                  <ContextSection
-                    context={cardSession.context}
-                    provider={cardSession.provider}
-                  />
-                )
-              }
-            />
-          )}
           {showingNewThread ? (
             <NewThread
               setup={threadSetup}
@@ -5494,12 +5296,209 @@ ${text}`
           )}
         </main>
       </div>
+      {cardOpen && (
+        <SessionCard
+          id="session-card"
+          computer={selectedComputer}
+          connection={connection}
+          session={cardSession}
+          run={cardRun}
+          gitBranch={branch}
+          pullRequest={
+            cardSession?.pullRequest && (
+              <PullRequestSection
+                hostId={cardSession.hostId}
+                reference={cardSession.pullRequest}
+                api={pullRequestApi(cardSession.hostId)}
+                unavailableReason={pullRequestBlockedReason(cardSession.hostId)}
+                onReview={() => {
+                  if (cardSession.pullRequest)
+                    reviewPullRequest({
+                      hostId: cardSession.hostId,
+                      reference: cardSession.pullRequest,
+                    });
+                }}
+              />
+            )
+          }
+          onComputers={() => setSettingsPage('computers')}
+          onFiles={openFiles}
+          onPermissions={
+            cardSession?.provider === 'Claude Code' &&
+            supportsAutonomy(cardSession.hostId)
+              ? () => {
+                  diffTrigger.current = contextTrigger.current;
+                  setPanel('context');
+                }
+              : undefined
+          }
+          changes={
+            cardSession &&
+            store.hostReady(cardSession.hostId) &&
+            supportsSessionChanges(cardSession.hostId) && (
+              <ChangesRow
+                session={cardSession}
+                api={desktopApi(cardSession.hostId)}
+                onOpen={openChanges}
+              />
+            )
+          }
+          onRunWorkflow={() =>
+            cardSession && void runAssignedWorkflow(cardSession)
+          }
+          onClose={closeCard}
+          workflow={
+            cardRun && (
+              <WorkflowSection
+                key={entityKey(cardRun)}
+                run={cardRun}
+                hostId={cardRun.hostId}
+                gateRulesEnabled={store.computers.some(
+                  computer =>
+                    computer.id === cardRun.hostId &&
+                    computer.capabilities.includes('gate-rules'),
+                )}
+                steps={selectedRunSteps}
+                connected={store.hostReady(selectedHostId)}
+                pending={!!workflowPending[entityKey(cardRun)]}
+                error={workflowErrors[entityKey(cardRun)] ?? ''}
+                api={window.nesvo.workflows}
+                onStop={() => void controlWorkflow('stop')}
+                onResume={() => void controlWorkflow('resume')}
+                onConfirmAction={stepId =>
+                  void controlWorkflow('confirm', stepId)
+                }
+                onInbox={openInbox}
+                onSession={select}
+              />
+            )
+          }
+          workers={
+            cardSession && (
+              <SubsessionsSection
+                entries={subsessions}
+                parentDirectory={cardSession.directory}
+                connected={store.hostReady(selectedHostId)}
+                onSession={select}
+                onStop={child => void stop(child)}
+              />
+            )
+          }
+          servers={
+            cardSession &&
+            selectedApps.length > 0 && (
+              <RunningAppsSection
+                apps={selectedApps}
+                owner={portOwner}
+                local={selectedHostId === 'local'}
+              />
+            )
+          }
+          usage={
+            <UsageSection
+              states={usage.states}
+              connected={store.hostReady(selectedHostId)}
+            />
+          }
+          context={
+            cardSession && (
+              <ContextSection
+                context={cardSession.context}
+                provider={cardSession.provider}
+              />
+            )
+          }
+        />
+      )}
+      {panel === 'context' && !browsing && !creating && selected && (
+        <SidePanel
+          kind="context"
+          resizeLabel="Resize context panel"
+          role="dialog"
+          aria-label="Context"
+          focusOnOpen
+          onEscape={closeDiff}
+        >
+          <SidePanelHeader
+            title="Context"
+            closeLabel="Close context"
+            onClose={closeDiff}
+          />
+          <ScrollArea className="min-h-0 flex-1">
+            <SessionDetails
+              session={selected}
+              permissions={
+                selected.provider === 'Claude Code' &&
+                autonomy.data && (
+                  <PermissionRules
+                    key={selectedKey}
+                    rules={autonomy.data.rules.filter(rule => {
+                      if (rule.scope === 'session')
+                        return rule.sessionId === selected.id;
+                      const folder = selected.directory.replaceAll('\\', '/');
+                      const project = rule.directory
+                        .replaceAll('\\', '/')
+                        .replace(/\/$/, '');
+                      return (
+                        folder === project || folder.startsWith(project + '/')
+                      );
+                    })}
+                    onRemove={async id => {
+                      await autonomy.execute({
+                        action: 'remove-rule',
+                        id,
+                      });
+                    }}
+                  />
+                )
+              }
+            >
+              <RunningAppsSection
+                apps={selectedApps}
+                owner={portOwner}
+                local={selected.hostId === 'local'}
+              />
+              {selected.pullRequest && (
+                <PullRequestCard
+                  hostId={selectedHostId}
+                  reference={selected.pullRequest}
+                  api={pullRequestApi(selectedHostId)}
+                  unavailableReason={pullRequestBlockedReason(selectedHostId)}
+                  onReview={next =>
+                    reviewPullRequest({
+                      hostId: selectedHostId,
+                      reference: next,
+                    })
+                  }
+                  onOpen={next =>
+                    openPullRequestSurface({
+                      hostId: selectedHostId,
+                      reference: next,
+                    })
+                  }
+                />
+              )}
+
+              {sessionRecipe.run && (
+                <WorktreeRecipeResources
+                  run={sessionRecipe.run}
+                  runningApps={selectedApps.filter(
+                    app => app.sessionId === selected.id,
+                  )}
+                  local={selectedComputer?.kind === 'local'}
+                />
+              )}
+            </SessionDetails>
+          </ScrollArea>
+        </SidePanel>
+      )}
       {(panel === 'files' || panel === 'skills') &&
         !browsing &&
         !creating &&
         selected &&
         !store.hostReady(selectedHostId) && (
           <PanelPlaceholder
+            onClose={closeDiff}
             kind={panel === 'files' ? 'files-tree' : 'skills'}
             icon={panel === 'files' ? FolderOpen : BookOpen}
             title={panel === 'files' ? 'Files' : 'Shared library'}
@@ -5520,7 +5519,12 @@ ${text}`
       {panel === 'diff' && !creating && diffReview && diffTarget && (
         <Suspense
           fallback={
-            <PanelPlaceholder kind="diff" icon={FileCode2} title="Saved diff">
+            <PanelPlaceholder
+              onClose={closeDiff}
+              kind="diff"
+              icon={FileCode2}
+              title="Saved diff"
+            >
               <StatusMessage tone="loading" className="p-3">
                 Loading saved diff…
               </StatusMessage>
@@ -5556,6 +5560,7 @@ ${text}`
           <Suspense
             fallback={
               <PanelPlaceholder
+                onClose={closeDiff}
                 kind="files-tree"
                 icon={FolderOpen}
                 title="Files"
@@ -5584,6 +5589,7 @@ ${text}`
           <Suspense
             fallback={
               <PanelPlaceholder
+                onClose={closeDiff}
                 kind={
                   !pullRequestsView && pullRequestLayout === 'session'
                     ? 'pull-request-review'
@@ -5652,6 +5658,7 @@ ${text}`
           <Suspense
             fallback={
               <PanelPlaceholder
+                onClose={closeDiff}
                 kind="changes"
                 icon={GitCompareArrows}
                 title="Changes"
@@ -5679,6 +5686,7 @@ ${text}`
           <Suspense
             fallback={
               <PanelPlaceholder
+                onClose={closeDiff}
                 kind="skills"
                 icon={BookOpen}
                 title="Shared library"

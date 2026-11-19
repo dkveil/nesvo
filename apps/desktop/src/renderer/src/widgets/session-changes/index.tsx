@@ -11,16 +11,13 @@ import {
   GitCompareArrows,
   RefreshCw,
   WrapText,
-  X,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
-import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { ListRow } from '@/shared/ui/list-row';
-import { Panel, PanelAction, PanelHeader, Toolbar } from '@/shared/ui/panel';
-import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelSurface } from '@/shared/ui/panel-styles';
+import { PanelAction, Toolbar } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -61,12 +58,6 @@ type SessionChangesPanelProps = {
 };
 
 const DEFAULT_OPEN_FILES = 5;
-const DEFAULT_WIDTH_RATIO = 0.46;
-const DEFAULT_MAX_WIDTH_PX = 850;
-
-const defaultPanelWidth = (viewportWidth: number) =>
-  Math.min(DEFAULT_MAX_WIDTH_PX, viewportWidth * DEFAULT_WIDTH_RATIO);
-
 const fileName = (path: string) => path.split('/').at(-1) ?? path;
 
 const folderOf = (path: string) => path.split('/').slice(0, -1).join('/');
@@ -101,11 +92,6 @@ export default function SessionChangesPanel({
 }: SessionChangesPanelProps) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
-  const {
-    attach: attachPanel,
-    style: panelStyle,
-    resizer,
-  } = usePanelWidth('changes', defaultPanelWidth);
   const { changes, loading, error, refresh } = useSessionChanges(session, api);
   const [chosenScope, setScope] = useState<SessionChangeScope | null>(null);
   const scope = chosenScope ?? preferredScope(changes);
@@ -261,16 +247,16 @@ export default function SessionChangesPanel({
   };
   const fullscreenFile = files.find(file => file.path === fullscreen);
   return (
-    <Panel
+    <SidePanel
+      kind="changes"
+      resizeLabel="Resize changes panel"
       role="region"
       aria-label="Session changes"
-      ref={attachPanel}
-      style={panelStyle}
-      className={panelSurface}
     >
-      <PanelResizer label="Resize changes panel" {...resizer} />
-      <PanelHeader
-        titleBar
+      <SidePanelHeader
+        closeLabel="Close changes"
+        onClose={onClose}
+        closeRef={closeButton}
         icon={GitCompareArrows}
         title="Changes"
         meta={
@@ -294,10 +280,7 @@ export default function SessionChangesPanel({
         >
           <WrapText />
         </PanelAction>
-        <PanelAction ref={closeButton} label="Close changes" onClick={onClose}>
-          <X className="size-4" />
-        </PanelAction>
-      </PanelHeader>
+      </SidePanelHeader>
       <Toolbar label="Change scope" className="gap-2 px-2">
         <SegmentedControl
           label="Compare with"
@@ -462,6 +445,6 @@ export default function SessionChangesPanel({
       >
         {fullscreenFile && renderDiff(fullscreenFile, true)}
       </DiffFullscreen>
-    </Panel>
+    </SidePanel>
   );
 }

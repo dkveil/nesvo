@@ -52,6 +52,12 @@ import {
   menuSurface,
 } from '@/shared/ui/menu-styles';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { PanelBody } from '@/shared/ui/panel';
+import {
+  SidePanel,
+  SidePanelFooter,
+  SidePanelHeader,
+} from '@/shared/ui/side-panel';
 import {
   Sheet,
   SheetContent,
@@ -265,6 +271,8 @@ function ConfirmSpecimens() {
 }
 
 export function OverlaysSection() {
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const closeSidePanel = () => setSidePanelOpen(false);
   return (
     <CatalogSection
       id="overlays"
@@ -459,6 +467,36 @@ export function OverlaysSection() {
               </SheetFooter>
             </SheetContent>
           </Sheet>
+        </div>
+      </Specimen>
+      <Specimen title="SidePanel" source="shared/ui/side-panel.tsx">
+        <div className="relative flex min-h-40 overflow-hidden border">
+          <div className="flex-1 p-3">
+            <Button variant="outline" onClick={() => setSidePanelOpen(true)}>
+              Open side panel
+            </Button>
+          </div>
+          {sidePanelOpen && (
+            <SidePanel
+              kind="details"
+              resizeLabel="Resize sample side panel"
+              aria-label="Sample side panel"
+              focusOnOpen
+              onEscape={closeSidePanel}
+            >
+              <SidePanelHeader
+                title="Sample side panel"
+                closeLabel="Close side panel"
+                onClose={closeSidePanel}
+              />
+              <PanelBody className="p-3 text-ui">Body content.</PanelBody>
+              <SidePanelFooter label="Side panel actions">
+                <Button variant="ghost" onClick={closeSidePanel}>
+                  Done
+                </Button>
+              </SidePanelFooter>
+            </SidePanel>
+          )}
         </div>
       </Specimen>
     </CatalogSection>

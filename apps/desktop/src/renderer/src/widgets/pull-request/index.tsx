@@ -8,7 +8,6 @@ import {
   Maximize2,
   RefreshCw,
   Unlink,
-  X,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import {
@@ -25,7 +24,6 @@ import { DiffStat } from '@/entities/file-change';
 import { errorDetail, type Session } from '@/entities/session';
 import { toneText } from '@/entities/status';
 import { useNow } from '@/shared/lib/use-now';
-import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { Button } from '@/shared/ui/button';
 import {
   DropdownMenu,
@@ -35,9 +33,8 @@ import {
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import { PanelAction, PanelHeader } from '@/shared/ui/panel';
-import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelSurface } from '@/shared/ui/panel-styles';
+import { PanelAction } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { TabPanel, Tabs } from '@/shared/ui/tabs';
@@ -65,18 +62,6 @@ import { usePullRequestActions } from './use-pull-request-actions';
 import { useResource } from './use-resource';
 
 const RELATIVE_TIME_REFRESH_MS = 60_000;
-const DEFAULT_WIDTH_RATIO = 0.56;
-const DEFAULT_MAX_WIDTH_PX = 1000;
-
-const defaultPanelWidth = (viewportWidth: number) =>
-  Math.min(DEFAULT_MAX_WIDTH_PX, viewportWidth * DEFAULT_WIDTH_RATIO);
-
-const REVIEW_WIDTH_RATIO = 0.45;
-const REVIEW_MAX_WIDTH_PX = 820;
-
-const defaultReviewWidth = (viewportWidth: number) =>
-  Math.min(REVIEW_MAX_WIDTH_PX, viewportWidth * REVIEW_WIDTH_RATIO);
-
 const STALE_REVISION_REASON =
   'The pull request changed. Refresh to review the latest commit.';
 
@@ -144,14 +129,6 @@ export default function PullRequestPanel({
     useState<ReviewDraft>(EMPTY_REVIEW_DRAFT);
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
-  const {
-    attach: attachPanel,
-    style: panelStyle,
-    resizer,
-  } = usePanelWidth(
-    inSession ? 'pull-request-review' : 'pull-request',
-    inSession ? defaultReviewWidth : defaultPanelWidth,
-  );
   const readable = !blockedReason;
   const pullRequest = useResource(
     () => api.readPullRequest(reference),
@@ -350,22 +327,18 @@ export default function PullRequestPanel({
           ? { tone: 'success' as const, text: actions.states.review.message }
           : null);
   return (
-    <section
+    <SidePanel
+      kind={inSession ? 'pull-request-review' : 'pull-request'}
+      resizeLabel="Resize pull request panel"
       role="region"
       aria-label={`${inSession ? 'Review pull request' : 'Pull request'} ${reference.repository} #${reference.number}`}
       data-pull-request={`${reference.repository}#${reference.number}`}
       data-pull-request-layout={layout}
-      ref={attachPanel}
-      style={panelStyle}
-      className={`${panelSurface}${inSession ? '' : ' max-[1440px]:flex-1'}`}
     >
-      <PanelResizer
-        label="Resize pull request panel"
-        {...resizer}
-        className={inSession ? undefined : 'max-[1440px]:hidden'}
-      />
-      <PanelHeader
-        titleBar
+      <SidePanelHeader
+        closeLabel="Close pull request"
+        onClose={onClose}
+        closeRef={closeButton}
         leading={
           state ? (
             <PullRequestStateIcon state={state} />
@@ -506,14 +479,7 @@ export default function PullRequestPanel({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-        <PanelAction
-          ref={closeButton}
-          aria-label="Close pull request"
-          onClick={onClose}
-        >
-          <X />
-        </PanelAction>
-      </PanelHeader>
+      </SidePanelHeader>
       {notice && (
         <StatusMessage
           tone={notice.tone}
@@ -771,6 +737,6 @@ export default function PullRequestPanel({
           )}
         </>
       )}
-    </section>
+    </SidePanel>
   );
 }

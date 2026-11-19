@@ -216,6 +216,8 @@ Hovering the dot or, after a short delay, the row, or focusing the row from the 
 
 **Panel / PanelHeader / PanelBody / Toolbar** — `shared/ui/panel.tsx`. Docked panels: PanelHeader is 40 px with an icon, title, meta and PanelAction buttons (28 px, 14 px glyphs; `label` sets the accessible name and a tooltip, like IconButton); `titleBar` aligns it with the window caption. `leading` takes a coloured domain glyph instead of `icon`, and `title` may be rich text (a muted prefix); without `meta` a long title truncates. Toolbar is a 36 px `role="toolbar"` row with ToolbarSeparator and ToolbarSpacer.
 
+**SidePanel** — `shared/ui/side-panel.tsx`. Right drawers use one right-edge entrance with the slow duration and ease-out timing. They dock and resize at desktop widths and overlay their workspace on narrower windows. A panel's content determines its initial width within the shared resize bounds. SidePanelHeader places Close after the other header actions. PanelBody scrolls above the optional SidePanelFooter.
+
 **EmptyState** — `shared/ui/empty-state.tsx`. Icon tile, `text-title` title, description and actions; `size` `md` for whole views, `sm` inside lists and popovers.
 
 **StatusMessage / InlineNotice** — `shared/ui/status-message.tsx`, `shared/ui/inline-notice.tsx`. Replaces ad-hoc `role="status"` and `role="alert"` paragraphs. Tones `info | loading | success | warning | error`; error uses `role="alert"`, the others `role="status"`. `variant="inline"` is 11 px toned text; `variant="notice"` (InlineNotice) is a 12 px muted block with a toned icon and an accent background for anything but info.

@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs';
-import { FileCode2, FolderOpen, Maximize2, WrapText, X } from 'lucide-react';
+import { FileCode2, FolderOpen, Maximize2, WrapText } from 'lucide-react';
 import type { AgentCommentTarget } from '@/features/code-comments/agent-target';
 import { CodeCommentForm } from '@/features/diff-viewer/code-comment-form';
 import { DiffFileView } from '@/features/diff-viewer/diff-file-view';
@@ -17,13 +17,11 @@ import {
   type Review,
 } from '@/entities/review';
 import { DiffStat } from '@/entities/file-change';
-import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { ListRow } from '@/shared/ui/list-row';
-import { Panel, PanelAction, PanelHeader } from '@/shared/ui/panel';
-import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelSurface } from '@/shared/ui/panel-styles';
+import { PanelAction } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
@@ -95,12 +93,6 @@ function PatchSource({
   );
 }
 
-const DEFAULT_WIDTH_RATIO = 0.46;
-const DEFAULT_MAX_WIDTH_PX = 850;
-
-const defaultPanelWidth = (viewportWidth: number) =>
-  Math.min(DEFAULT_MAX_WIDTH_PX, viewportWidth * DEFAULT_WIDTH_RATIO);
-
 export default function ReviewDiff({
   review,
   selectedPath,
@@ -111,11 +103,6 @@ export default function ReviewDiff({
 }: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
-  const {
-    attach: attachPanel,
-    style: panelStyle,
-    resizer,
-  } = usePanelWidth('diff', defaultPanelWidth);
   const path = review.diff.files.some(file => file.path === selectedPath)
     ? selectedPath!
     : (review.diff.files[0]?.path ?? '');
@@ -199,18 +186,18 @@ export default function ReviewDiff({
     </p>
   );
   return (
-    <Panel
+    <SidePanel
+      kind="diff"
+      resizeLabel="Resize saved diff panel"
       role="region"
       aria-label="Saved result diff"
       data-review-id={review.id}
       data-review-version={review.version}
-      ref={attachPanel}
-      style={panelStyle}
-      className={panelSurface}
     >
-      <PanelResizer label="Resize saved diff panel" {...resizer} />
-      <PanelHeader
-        titleBar
+      <SidePanelHeader
+        closeLabel="Close diff"
+        onClose={onClose}
+        closeRef={closeButton}
         icon={FileCode2}
         title={`Result v${review.version}`}
         meta={reviewStatusLabels[review.status]}
@@ -232,10 +219,7 @@ export default function ReviewDiff({
         >
           <Maximize2 />
         </PanelAction>
-        <PanelAction ref={closeButton} label="Close diff" onClick={onClose}>
-          <X className="size-4" />
-        </PanelAction>
-      </PanelHeader>
+      </SidePanelHeader>
       <div className="shrink-0 border-b px-3 py-2.5">
         <p className="truncate text-ui font-medium">{review.title}</p>
         <p className="mt-1 text-2xs text-muted-foreground">
@@ -333,6 +317,6 @@ export default function ReviewDiff({
           expanded={!parsed.complete}
         />
       )}
-    </Panel>
+    </SidePanel>
   );
 }

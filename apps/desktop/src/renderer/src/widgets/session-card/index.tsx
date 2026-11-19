@@ -1,7 +1,6 @@
 import {
   useEffect,
   useEffectEvent,
-  useRef,
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
@@ -18,7 +17,9 @@ import {
 import { cn } from '@/shared/lib/cn';
 import type { WorkflowRun } from '@/entities/workflow';
 import type { Session } from '@/entities/session';
-import { cardSection, cardSurface } from '@/shared/ui/card-row-styles';
+import { cardSection } from '@/shared/ui/card-row-styles';
+import { PanelBody } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { SectionLabel } from '@/shared/ui/section-label';
@@ -33,7 +34,6 @@ export { PullRequestSection } from './pull-request-section';
 
 type Props = {
   id: string;
-  docked?: boolean;
   computer: Computer | undefined;
   connection: 'connecting' | 'ready' | 'unavailable';
   session: Session | null;
@@ -113,7 +113,6 @@ const branchOf = (
 
 export function SessionCard({
   id,
-  docked = false,
   computer,
   connection,
   session,
@@ -132,10 +131,8 @@ export function SessionCard({
   onRunWorkflow,
   onClose,
 }: Props) {
-  const card = useRef<HTMLElement>(null);
   const close = useEffectEvent(onClose);
   useEffect(() => {
-    card.current?.focus({ preventScroll: true });
     const escape = (event: globalThis.KeyboardEvent) => {
       if (
         event.key !== 'Escape' ||
@@ -153,125 +150,129 @@ export function SessionCard({
   const HostIcon = computer?.kind === 'ssh' ? Server : Monitor;
   const branch = branchOf(session, run, gitBranch);
   return (
-    <aside
-      ref={card}
+    <SidePanel
+      kind="details"
+      resizeLabel="Resize session details"
+      focusOnOpen
       id={id}
       tabIndex={-1}
+      role="complementary"
       aria-label="Session details"
       onKeyDown={moveBetweenRows}
-      className={cn(
-        'z-20 flex w-60 flex-col divide-y divide-border overflow-y-auto outline-none',
-        docked
-          ? 'order-last shrink-0 self-stretch border-l border-border'
-          : cn(
-              cardSurface,
-              'absolute top-2 right-3 max-h-[calc(100%-1rem)] shadow-(--popover-shadow)',
-            ),
-      )}
+      className="outline-none"
     >
-      <div className={cn(cardSection, 'flex min-w-0 items-center gap-1')}>
-        <ListRow
-          className="flex-1"
-          leading={<HostIcon />}
-          title={<span className="text-muted-foreground">{name}</span>}
-          trailing={
-            connection !== 'ready' && (
-              <span
-                className={cn(
-                  connection === 'unavailable' && 'text-warning-foreground',
-                )}
-              >
-                {connectionLabels[connection]}
-              </span>
-            )
-          }
-          mainProps={{
-            ...cardRowProps,
-            'aria-label': `Computer: ${name}, ${connectionLabels[connection]}`,
-          }}
-          onClick={onComputers}
-        />
-        {session && (
-          <IconButton
-            size={24}
-            label={`Browse files in ${session.directory}`}
-            className="mr-1"
-            onClick={onFiles}
+      <SidePanelHeader
+        title="Session details"
+        closeLabel="Close session details"
+        onClose={onClose}
+      />
+      <PanelBody className="divide-y divide-border">
+        <div className={cn(cardSection, 'flex min-w-0 items-center gap-1')}>
+          <ListRow
+            className="flex-1"
+            leading={<HostIcon />}
+            title={<span className="text-muted-foreground">{name}</span>}
+            trailing={
+              connection !== 'ready' && (
+                <span
+                  className={cn(
+                    connection === 'unavailable' && 'text-warning-foreground',
+                  )}
+                >
+                  {connectionLabels[connection]}
+                </span>
+              )
+            }
+            mainProps={{
+              ...cardRowProps,
+              'aria-label': `Computer: ${name}, ${connectionLabels[connection]}`,
+            }}
+            onClick={onComputers}
+          />
+          {session && (
+            <IconButton
+              size={24}
+              label={`Browse files in ${session.directory}`}
+              className="mr-1"
+              onClick={onFiles}
+            >
+              <FolderOpen />
+            </IconButton>
+          )}
+        </div>
+        {branch && (
+          <div
+            className={cardSection}
+            aria-label={`${branch.note ? `${branch.note} branch` : 'Git branch'}: ${branch.name}`}
+            role="group"
+            data-session-branch={branch.name}
           >
-            <FolderOpen />
-          </IconButton>
+            <ListRow
+              leading={branch.worktree ? <GitFork /> : <GitBranchIcon />}
+              title={
+                <span className={cn(branch.note === 'Detached' && 'font-mono')}>
+                  {branch.name}
+                </span>
+              }
+              trailing={branch.note}
+            />
+          </div>
         )}
-      </div>
-      {branch && (
-        <div
-          className={cardSection}
-          aria-label={`${branch.note ? `${branch.note} branch` : 'Git branch'}: ${branch.name}`}
-          role="group"
-          data-session-branch={branch.name}
-        >
-          <ListRow
-            leading={branch.worktree ? <GitFork /> : <GitBranchIcon />}
-            title={
-              <span className={cn(branch.note === 'Detached' && 'font-mono')}>
-                {branch.name}
-              </span>
-            }
-            trailing={branch.note}
-          />
-        </div>
-      )}
-      {session && <LifecycleSection session={session} />}
-      {pullRequest}
-      {changes && (
-        <div className={cardSection} data-session-changes-section>
-          {changes}
-        </div>
-      )}
-      {session && (
-        <div className={cardSection} data-session-workflow-section>
-          <SectionLabel
-            as="h2"
-            action={
-              <span
-                className="min-w-0 truncate text-2xs text-muted-foreground"
-                data-assigned-workflow={session.workflow?.name ?? ''}
-              >
-                {session.workflow
-                  ? `${session.workflow.name} · ${session.workflow.root === 'project' ? 'Project' : 'Global'}`
-                  : 'None'}
-              </span>
-            }
-          >
-            Workflow
-          </SectionLabel>
-          <ListRow
-            leading={<Play />}
-            title="Run workflow"
-            disabled={
-              !session.workflow ||
-              session.status === 'running' ||
-              session.status === 'stopping'
-            }
-            mainProps={cardRowProps}
-            onClick={onRunWorkflow}
-          />
-        </div>
-      )}
-      {workflow}
-      {workers}
-      {usage}
-      {servers && <div className={cn(cardSection, 'px-2 py-1')}>{servers}</div>}
-      {context}
-      {onPermissions && (
-        <div className={cardSection}>
-          <ListRow
-            leading={<ShieldCheck />}
-            title="Allow rules"
-            mainProps={cardRowProps}
-            onClick={onPermissions}
-          />
-        </div>
-      )}
-    </aside>
+        {session && <LifecycleSection session={session} />}
+        {pullRequest}
+        {changes && (
+          <div className={cardSection} data-session-changes-section>
+            {changes}
+          </div>
+        )}
+        {session && (
+          <div className={cardSection} data-session-workflow-section>
+            <SectionLabel
+              as="h2"
+              action={
+                <span
+                  className="min-w-0 truncate text-2xs text-muted-foreground"
+                  data-assigned-workflow={session.workflow?.name ?? ''}
+                >
+                  {session.workflow
+                    ? `${session.workflow.name} · ${session.workflow.root === 'project' ? 'Project' : 'Global'}`
+                    : 'None'}
+                </span>
+              }
+            >
+              Workflow
+            </SectionLabel>
+            <ListRow
+              leading={<Play />}
+              title="Run workflow"
+              disabled={
+                !session.workflow ||
+                session.status === 'running' ||
+                session.status === 'stopping'
+              }
+              mainProps={cardRowProps}
+              onClick={onRunWorkflow}
+            />
+          </div>
+        )}
+        {workflow}
+        {workers}
+        {usage}
+        {servers && (
+          <div className={cn(cardSection, 'px-2 py-1')}>{servers}</div>
+        )}
+        {context}
+        {onPermissions && (
+          <div className={cardSection}>
+            <ListRow
+              leading={<ShieldCheck />}
+              title="Allow rules"
+              mainProps={cardRowProps}
+              onClick={onPermissions}
+            />
+          </div>
+        )}
+      </PanelBody>
+    </SidePanel>
   );
 }

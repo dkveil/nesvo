@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { SquareTerminal, X } from 'lucide-react';
+import { SquareTerminal } from 'lucide-react';
 import type { Session } from '@/entities/session';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
-import { Panel, PanelAction, PanelBody, PanelHeader } from '@/shared/ui/panel';
+import { PanelBody } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 export function ClaudeTerminal({
@@ -23,19 +24,20 @@ export function ClaudeTerminal({
   }, [session.activities]);
   const live = session.status === 'running' || session.status === 'stopping';
   return (
-    <Panel
+    <SidePanel
+      kind="terminal"
+      resizeLabel="Resize Claude terminal"
       aria-label="Claude terminal"
-      className="w-full border-l min-[1200px]:w-[min(42%,36rem)]"
+      focusOnOpen
+      onEscape={onClose}
     >
-      <PanelHeader
+      <SidePanelHeader
         icon={SquareTerminal}
         title="Claude terminal"
         meta={connected ? (live ? 'Live · Read-only' : 'Read-only') : 'Offline'}
-      >
-        <PanelAction label="Close Claude terminal" onClick={onClose}>
-          <X />
-        </PanelAction>
-      </PanelHeader>
+        closeLabel="Close Claude terminal"
+        onClose={onClose}
+      />
       <PanelBody
         ref={viewport}
         onScroll={event => {
@@ -104,6 +106,6 @@ export function ClaudeTerminal({
           </div>
         ))}
       </PanelBody>
-    </Panel>
+    </SidePanel>
   );
 }

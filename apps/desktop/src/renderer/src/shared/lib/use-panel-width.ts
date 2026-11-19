@@ -8,6 +8,10 @@ const PANEL_KINDS = [
   'pull-request',
   'pull-request-review',
   'changes',
+  'inspector',
+  'details',
+  'context',
+  'terminal',
 ] as const;
 
 export type PanelKind = (typeof PANEL_KINDS)[number];

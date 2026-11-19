@@ -5,21 +5,14 @@ import type {
   SkillCatalog,
   SkillEntry,
 } from '@nesvo/contracts';
-import { BookOpen, RefreshCw, X } from 'lucide-react';
+import { BookOpen, RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
-import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { KeyValueList, type KeyValueEntry } from '@/shared/ui/key-value-list';
-import {
-  Panel,
-  PanelAction,
-  PanelHeader,
-  PanelSearch,
-} from '@/shared/ui/panel';
-import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelSurface } from '@/shared/ui/panel-styles';
+import { PanelAction, PanelSearch } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
@@ -231,8 +224,9 @@ function Catalog({
     ) ?? [];
   return (
     <>
-      <PanelHeader
-        titleBar
+      <SidePanelHeader
+        closeLabel="Close skills"
+        onClose={onClose}
         icon={BookOpen}
         title="Shared library"
         meta={session.provider}
@@ -244,10 +238,7 @@ function Catalog({
         >
           <RefreshCw className={cn(loading && 'animate-spin')} />
         </PanelAction>
-        <PanelAction label="Close skills" onClick={onClose}>
-          <X className="size-4" />
-        </PanelAction>
-      </PanelHeader>
+      </SidePanelHeader>
       <PanelSearch
         ref={search}
         aria-label="Search skills"
@@ -344,34 +335,20 @@ function Catalog({
   );
 }
 
-const WIDE_VIEWPORT_PX = 1600;
-const DEFAULT_WIDTH_PX = 380;
-const WIDE_DEFAULT_WIDTH_PX = 440;
-
-const defaultPanelWidth = (viewportWidth: number) =>
-  viewportWidth >= WIDE_VIEWPORT_PX ? WIDE_DEFAULT_WIDTH_PX : DEFAULT_WIDTH_PX;
-
 export default function SessionSkills(props: Props) {
   const [refresh, setRefresh] = useState(0);
-  const {
-    attach: attachPanel,
-    style: panelStyle,
-    resizer,
-  } = usePanelWidth('skills', defaultPanelWidth);
   return (
-    <Panel
+    <SidePanel
+      kind="skills"
+      resizeLabel="Resize skills panel"
       aria-label="Session skills"
       data-session-id={props.session.id}
-      ref={attachPanel}
-      style={panelStyle}
-      className={panelSurface}
     >
-      <PanelResizer label="Resize skills panel" {...resizer} />
       <Catalog
         key={`${props.session.id}:${refresh}`}
         {...props}
         onRefresh={() => setRefresh(value => value + 1)}
       />
-    </Panel>
+    </SidePanel>
   );
 }
