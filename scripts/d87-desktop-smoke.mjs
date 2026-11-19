@@ -142,6 +142,124 @@ const capture = async name => {
   }
 };
 
+async function verifyWorkflowLayout(flows) {
+  const workflows = env.NESVO_WORKFLOWS_HOME;
+  for (const folder of ['steps', 'workflows'])
+    await mkdir(join(workflows, folder), { recursive: true });
+  await writeFile(
+    join(workflows, 'steps', 'prepare.md'),
+    '---\nname: prepare\ntype: command\nphase: pre-done\n---\necho ok\n',
+  );
+  await writeFile(
+    join(workflows, 'steps', 'approve.md'),
+    '---\nname: approve\ntype: human\nphase: pre-done\n---\nApprove the release.\n',
+  );
+  await writeFile(
+    join(workflows, 'steps', 'publish.md'),
+    '---\nname: publish\ntype: command\nphase: pre-done\n---\necho ready\n',
+  );
+  await writeFile(
+    join(workflows, 'workflows', 'release-check.md'),
+    '---\nname: release-check\nsteps: [prepare, approve, publish]\n---\n',
+  );
+  const start = async (project, title, prompt) => {
+    const projectDir = join(directory, project);
+    await mkdir(join(projectDir, '.agents', 'tasks'), { recursive: true });
+    const specPath = join('.agents', 'tasks', title + '.md');
+    await writeFile(
+      join(projectDir, specPath),
+      `---\nworkflow: release-check\ntitle: ${title}\n---\n${prompt}\n`,
+    );
+    await page.evaluate(
+      input => window.nesvo.workflows.startTask('local', input),
+      {
+        specPath,
+        workflowName: 'release-check',
+        provider: 'Claude Code',
+        model: 'default',
+        mode: 'read-only',
+        directory: projectDir,
+        isolation: 'none',
+        gateProvider: 'Claude Code',
+        gateModel: 'default',
+      },
+    );
+  };
+  await start('Storefront', 'Validate receipts', 'fixture:hold-exit');
+  const storefront = flows.getByRole('region', {
+    name: 'Storefront',
+    exact: true,
+  });
+  const release = storefront.getByRole('region', {
+    name: 'release-check',
+    exact: true,
+  });
+  await release
+    .getByRole('button', { name: /Open Validate receipts, Interrupted/ })
+    .waitFor();
+  await start('Storefront', 'Review checkout', 'Check the checkout changes.');
+  await release
+    .locator('[data-flow-step="approve"]')
+    .getByRole('button', { name: /Open Review checkout, Waiting for you/ })
+    .waitFor();
+  await release.getByText(/Waiting for a decision in Inbox/).waitFor();
+  await start('Docs', 'Review release notes', 'Check the release notes.');
+  const docs = flows.getByRole('region', {
+    name: 'Docs',
+    exact: true,
+  });
+  await docs
+    .locator('[data-flow-step="approve"]')
+    .getByRole('button', { name: /Open Review release notes, Waiting for you/ })
+    .waitFor();
+  assert.equal(await release.count(), 1);
+  assert.equal(
+    await flows
+      .getByRole('region', { name: 'release-check', exact: true })
+      .count(),
+    2,
+  );
+
+  const between = release.getByText('Between steps', { exact: true });
+  const firstStep = release.locator('[data-flow-step="prepare"]');
+  await firstStep.getByText('Command', { exact: true }).waitFor();
+  assert.equal(await flows.getByText(/\b0 (sessions|agents)\b/).count(), 0);
+
+  const toolbar = flows.getByRole('toolbar', { name: 'Flows zoom controls' });
+  assert.equal(await toolbar.count(), 1);
+  const graphWidths = () =>
+    flows
+      .locator('[data-flow-step="prepare"]')
+      .evaluateAll(nodes =>
+        nodes.map(node => node.getBoundingClientRect().width),
+      );
+  const initial = await graphWidths();
+  await toolbar.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await waitFor(
+    'shared graph zoom',
+    graphWidths,
+    widths =>
+      widths.length === initial.length &&
+      widths.every((width, index) => width > initial[index]),
+  );
+  await toolbar
+    .getByRole('button', { name: 'Fit graphs', exact: true })
+    .click();
+  await waitFor(
+    'shared graph fit',
+    graphWidths,
+    widths =>
+      widths.length === initial.length &&
+      widths.every((width, index) => Math.abs(width - initial[index]) < 1),
+  );
+  const left = async locator => (await locator.boundingBox()).x;
+  assert.ok(Math.abs((await left(between)) - (await left(firstStep))) < 1);
+  await flows.locator('[data-slot="panel-body"]').evaluate(element => {
+    element.scrollTop = 0;
+  });
+  await capture('flows-layout');
+}
+
 try {
   await mkdir(cwd, { recursive: true });
   await mkdir(env.CODEX_HOME, { recursive: true });
@@ -473,6 +591,7 @@ try {
     .getByRole('button', { name: 'Open Verify examples, Running', exact: true })
     .waitFor();
   await capture('flows');
+  await verifyWorkflowLayout(nestedFlows);
   await application.close();
   application = null;
   const computerId = randomUUID();
@@ -525,7 +644,7 @@ try {
   await offlineTree.getByText('Continue required', { exact: true }).waitFor();
   assert.deepEqual(failures, []);
   console.log(
-    'D87 desktop fixture passed: ordinary, children, steering, wake, drawer, reload, restart and live and offline orchestration flows.',
+    'D87 desktop fixture passed: ordinary, children, steering, wake, drawer, reload, restart, orchestration flows and shared workflow layout.',
   );
 } finally {
   await application?.close().catch(() => undefined);

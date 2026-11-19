@@ -39,6 +39,14 @@ export type WorkflowFlow = {
   id: string;
   run: DesktopWorkflowRun;
   rows: Map<number | null, FlowRow[]>;
+  statuses: Set<DesktopWorkflowRun['status']>;
+};
+
+type FlowProject = {
+  id: string;
+  hostId: string;
+  directory: string;
+  workflows: Map<string, WorkflowFlow[]>;
 };
 
 const isLive = (run: DesktopWorkflowRun) =>
@@ -70,7 +78,32 @@ export function flowCounts(rows: FlowRow[]) {
   const agents = [...sessions.values()].filter(
     session => session.status === 'running' || session.status === 'stopping',
   ).length;
-  return `${sessions.size} ${sessions.size === 1 ? 'session' : 'sessions'} · ${agents} ${agents === 1 ? 'agent' : 'agents'}`;
+  return [
+    sessions.size &&
+      `${sessions.size} ${sessions.size === 1 ? 'session' : 'sessions'}`,
+    agents && `${agents} ${agents === 1 ? 'agent' : 'agents'}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+export function flowProjects(flows: WorkflowFlow[]) {
+  const projects = new Map<string, FlowProject>();
+  for (const flow of flows) {
+    const { hostId, projectRoot, workflow } = flow.run;
+    const id = JSON.stringify([hostId, projectRoot]);
+    const project = projects.get(id) ?? {
+      id,
+      hostId,
+      directory: projectRoot,
+      workflows: new Map<string, WorkflowFlow[]>(),
+    };
+    const graphs = project.workflows.get(workflow.name) ?? [];
+    graphs.push(flow);
+    project.workflows.set(workflow.name, graphs);
+    projects.set(id, project);
+  }
+  return [...projects.values()];
 }
 
 function flowRow(
@@ -194,7 +227,9 @@ export function workflowFlows(
       id,
       run,
       rows: new Map<number | null, FlowRow[]>(),
+      statuses: new Set<DesktopWorkflowRun['status']>(),
     };
+    flow.statuses.add(run.status);
     const indices = item.current.length > 0 ? item.current : [null];
     for (const index of indices) {
       const step = index === null ? null : (item.records.get(index) ?? null);

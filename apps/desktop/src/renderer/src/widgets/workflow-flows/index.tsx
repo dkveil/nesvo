@@ -1,5 +1,5 @@
 import '@xyflow/react/dist/base.css';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   MarkerType,
   ReactFlow,
@@ -25,7 +25,7 @@ import {
   edgeTones,
   editorEdge,
   NODE_HEIGHT_PX,
-  ROW_HEIGHT_PX,
+  stepTypeLabels,
   toneColor,
 } from '@/entities/workflow-graph';
 import { entityKey } from '@/shared/lib/host-key';
@@ -33,14 +33,11 @@ import { useNow } from '@/shared/lib/use-now';
 import { IconButton } from '@/shared/ui/icon-button';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { ListRow } from '@/shared/ui/list-row';
-import { Panel, PanelBody, PanelHeader } from '@/shared/ui/panel';
+import { Panel, PanelBody, PanelHeader, Toolbar } from '@/shared/ui/panel';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { Hint } from '@/shared/ui/tooltip';
-import { CanvasControls } from '@/widgets/workflow-graph-editor/canvas-controls';
-import {
-  edgeTypes,
-  fitViewOptions,
-} from '@/widgets/workflow-graph-editor/canvas-types';
+import { ZoomControls } from '@/shared/ui/zoom-controls';
+import { edgeTypes } from '@/widgets/workflow-graph-editor/canvas-types';
 import type { ConditionEdge } from '@/widgets/workflow-graph-editor/edges';
 import {
   StepNodeView,
@@ -48,6 +45,7 @@ import {
 } from '@/widgets/workflow-graph-editor/nodes';
 import {
   flowCounts,
+  flowProjects,
   workflowFlows,
   type FlowRow,
   type WorkflowFlow,
@@ -66,6 +64,13 @@ const NODE_WIDTH = 280;
 const ROW_HEIGHT = 28;
 const VISIBLE_ROWS = 5;
 const COLUMN_SPACING = 72;
+const GRAPH_GUTTER = 8;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 2;
+const ZOOM_STEP = 1.2;
+
+const clampZoom = (zoom: number) =>
+  Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
 
 const sessionRowsHeight = (count: number) =>
   count ? Math.min(VISIBLE_ROWS, count) * ROW_HEIGHT + 6 : 0;
@@ -222,13 +227,35 @@ function graphNodes(flow: WorkflowFlow) {
   });
 }
 
+function layoutGraph(flow: WorkflowFlow) {
+  const steps = graphNodes(flow);
+  return {
+    steps,
+    width: Math.max(0, ...steps.map(step => step.position.x + NODE_WIDTH)),
+    height: Math.max(
+      0,
+      ...steps.map(
+        (step, index) =>
+          step.position.y +
+          NODE_HEIGHT_PX +
+          sessionRowsHeight(flow.rows.get(index)?.length ?? 0),
+      ),
+    ),
+  };
+}
+
 function FlowGraph({
   flow,
+  layout,
+  zoom,
   onSession,
   orchestrationKeys,
-}: RowActions & { flow: WorkflowFlow }) {
-  const steps = useMemo(() => graphNodes(flow), [flow]);
-  const nodes: FlowStepNode[] = steps.map((editor, index) => {
+}: RowActions & {
+  flow: WorkflowFlow;
+  layout: ReturnType<typeof layoutGraph>;
+  zoom: number;
+}) {
+  const nodes: FlowStepNode[] = layout.steps.map((editor, index) => {
     const rows = flow.rows.get(index) ?? [];
     return {
       id: editor.id,
@@ -243,7 +270,7 @@ function FlowGraph({
         rows,
         onSession,
         orchestrationKeys,
-        summary: flowCounts(rows),
+        summary: flowCounts(rows) || stepTypeLabels[editor.step.type],
         width: NODE_WIDTH,
         issues: [],
         run: null,
@@ -272,43 +299,52 @@ function FlowGraph({
       })),
     [flow.run.workflow],
   );
-  const bottom = Math.max(
-    ...steps.map(
-      (step, index) =>
-        step.position.y +
-        NODE_HEIGHT_PX +
-        sessionRowsHeight(flow.rows.get(index)?.length ?? 0),
-    ),
-  );
+  const between = flow.rows.get(null);
   return (
-    <div
-      style={{
-        height: Math.min(560, Math.max(240, bottom + ROW_HEIGHT_PX + 20)),
-      }}
-    >
-      <ReactFlow<FlowStepNode, ConditionEdge>
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        nodesFocusable={false}
-        edgesFocusable={false}
-        elementsSelectable={false}
-        deleteKeyCode={null}
-        zoomOnScroll={false}
-        zoomOnDoubleClick={false}
-        fitView
-        fitViewOptions={fitViewOptions}
-        minZoom={0.1}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-        className="bg-background text-foreground"
-        aria-label={`${flow.run.workflow.name} flow graph`}
-      >
-        <CanvasControls />
-      </ReactFlow>
+    <div className="overflow-x-auto">
+      {between && (
+        <div className="ml-2 max-w-sm pb-1">
+          <p className="py-1 text-ui text-muted-foreground">Between steps</p>
+          <SessionRows
+            rows={between}
+            onSession={onSession}
+            orchestrationKeys={orchestrationKeys}
+          />
+        </div>
+      )}
+      {layout.steps.length > 0 && (
+        <div
+          style={{
+            minWidth: Math.ceil(layout.width * zoom) + 2 * GRAPH_GUTTER,
+            height: Math.ceil(layout.height * zoom) + 2 * GRAPH_GUTTER,
+          }}
+        >
+          <ReactFlow<FlowStepNode, ConditionEdge>
+            id={`flow-${flow.run.id}`}
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            nodesFocusable={false}
+            edgesFocusable={false}
+            elementsSelectable={false}
+            deleteKeyCode={null}
+            panOnDrag={false}
+            zoomOnScroll={false}
+            zoomOnPinch={false}
+            zoomOnDoubleClick={false}
+            preventScrolling={false}
+            viewport={{ x: GRAPH_GUTTER, y: GRAPH_GUTTER, zoom }}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            proOptions={{ hideAttribution: true }}
+            className="bg-background text-foreground"
+            aria-label={`${flow.run.workflow.name} flow graph`}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -330,6 +366,27 @@ export default function WorkflowFlows({
     () => workflowFlows(sessions, runs, steps),
     [sessions, runs, steps],
   );
+  const projects = useMemo(() => flowProjects(flows), [flows]);
+  const layouts = useMemo(
+    () => new Map(flows.map(flow => [flow.id, layoutGraph(flow)])),
+    [flows],
+  );
+  const [width, setWidth] = useState(0);
+  const [manualZoom, setManualZoom] = useState<number | null>(null);
+  const measureGraphs = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return;
+    const measure = () => setWidth(element.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const widest = Math.max(0, ...[...layouts.values()].map(item => item.width));
+  const fitZoom =
+    widest && width
+      ? clampZoom(Math.min(1, (width - 2 * GRAPH_GUTTER) / widest))
+      : 1;
+  const zoom = manualZoom ?? fitZoom;
   const workflowSessions = new Set(
     flows.flatMap(flow =>
       [...flow.rows.values()].flat().map(row => entityKey(row.session)),
@@ -352,10 +409,10 @@ export default function WorkflowFlows({
   trees.forEach(collect);
   const active = flows.length > 0 || trees.length > 0;
   return (
-    <Panel aria-label="Flows" className="flex-1">
+    <Panel aria-label="Flows" className="relative flex-1">
       <PanelBody>
         {active ? (
-          <div className="mx-auto max-w-6xl space-y-4 p-5 xl:ml-5">
+          <div className="mx-auto max-w-6xl space-y-4 px-5 pt-5 pb-14 xl:ml-5">
             {trees.length > 0 && (
               <OrchestrationTrees
                 computers={computers}
@@ -363,58 +420,91 @@ export default function WorkflowFlows({
                 actions={{ onSession, onInbox, onDecisionSession }}
               />
             )}
-            {flows.map(flow => {
-              const { run } = flow;
-              const rows = [...flow.rows.values()].flat();
-              const between = flow.rows.get(null);
-              const computer = computers.find(item => item.id === run.hostId);
-              return (
-                <Panel
-                  key={flow.id}
-                  aria-label={run.workflow.name}
-                  className="overflow-hidden border-b"
-                >
-                  <PanelHeader
-                    title={`${run.workflow.name} · ${directoryLabel(run.projectRoot)}`}
-                    meta={[
-                      run.status === 'awaiting-human'
-                        ? 'Waiting for a decision in Inbox'
-                        : run.status === 'implementing'
-                          ? 'Running'
-                          : undefined,
-                      computer?.name,
-                      flowCounts(rows),
-                      computer?.status !== 'connected' && 'Offline',
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    className="border-info-panel-divider"
-                  />
-                  {between && (
-                    <div className="border-b border-info-panel-divider px-2 py-1">
-                      <p className="px-2 py-1 text-ui text-muted-foreground">
-                        Between steps
-                      </p>
-                      <SessionRows
-                        rows={between}
-                        onSession={onSession}
-                        orchestrationKeys={orchestrationKeys}
-                      />
-                    </div>
-                  )}
-                  <FlowGraph
-                    flow={flow}
-                    onSession={onSession}
-                    orchestrationKeys={orchestrationKeys}
-                  />
-                </Panel>
-              );
-            })}
+            <div ref={measureGraphs} className="space-y-6">
+              {projects.map(project => {
+                const computer = computers.find(
+                  item => item.id === project.hostId,
+                );
+                return (
+                  <section
+                    key={project.id}
+                    aria-label={directoryLabel(project.directory)}
+                  >
+                    <h2
+                      title={project.directory}
+                      className="px-2 py-1 text-xs text-muted-foreground"
+                    >
+                      {[
+                        directoryLabel(project.directory),
+                        computer?.name,
+                        computer?.status !== 'connected' && 'Offline',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </h2>
+                    {[...project.workflows].map(([name, graphs]) => {
+                      const rows = graphs.flatMap(flow =>
+                        [...flow.rows.values()].flat(),
+                      );
+                      return (
+                        <section
+                          key={name}
+                          aria-label={name}
+                          className="border-b border-info-panel-divider pt-1 pb-3"
+                        >
+                          <PanelHeader
+                            title={name}
+                            meta={[
+                              graphs.some(flow =>
+                                flow.statuses.has('awaiting-human'),
+                              )
+                                ? 'Waiting for a decision in Inbox'
+                                : graphs.some(flow =>
+                                    flow.statuses.has('implementing'),
+                                  ) && 'Running',
+                              flowCounts(rows),
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                            className="h-8 border-b-0 pl-2"
+                          />
+                          {graphs.map(flow => (
+                            <FlowGraph
+                              key={flow.id}
+                              flow={flow}
+                              layout={layouts.get(flow.id)!}
+                              zoom={zoom}
+                              onSession={onSession}
+                              orchestrationKeys={orchestrationKeys}
+                            />
+                          ))}
+                        </section>
+                      );
+                    })}
+                  </section>
+                );
+              })}
+            </div>
           </div>
         ) : (
           <EmptyState icon={Workflow} title="No live flows" />
         )}
       </PanelBody>
+      {widest > 0 && (
+        <Toolbar
+          label="Flows zoom controls"
+          bordered={false}
+          className="absolute bottom-3 left-5 z-10 h-auto gap-0.5 rounded-surface border bg-background p-0.5 xl:left-10"
+        >
+          <ZoomControls
+            zoom={zoom}
+            onZoomOut={() => setManualZoom(clampZoom(zoom / ZOOM_STEP))}
+            onZoomIn={() => setManualZoom(clampZoom(zoom * ZOOM_STEP))}
+            onFit={() => setManualZoom(null)}
+            fitLabel="Fit graphs"
+          />
+        </Toolbar>
+      )}
     </Panel>
   );
 }
