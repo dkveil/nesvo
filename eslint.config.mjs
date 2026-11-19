@@ -77,8 +77,6 @@ export default tseslint.config(
   },
   {
     files: [
-      'apps/desktop/src/renderer/src/features/edit-automation/automation-editor.tsx',
-      'apps/desktop/src/renderer/src/features/new-workflow/new-workflow-drawer.tsx',
       'apps/desktop/src/renderer/src/widgets/workflow-assistant/index.tsx',
     ],
     rules: {

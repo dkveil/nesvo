@@ -1,4 +1,5 @@
 import { Button } from '@/shared/ui/button';
+import { DialogCancel } from '@/shared/ui/dialog';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { SKILL_PROMPT_MESSAGE } from './automation-form';
 import type { AutomationEditorState } from './use-automation-editor';
@@ -36,21 +37,25 @@ export function AutomationEditorButtons({
 }: {
   editor: AutomationEditorState;
 }) {
-  const { pending, blockedReason, stale, errors, close } = editor;
+  const { pending, blockedReason, stale, errors, close, editing } = editor;
   return (
     <>
-      <Button
-        type="button"
-        variant="ghost"
-        size="md"
-        disabled={pending}
-        onClick={close}
-      >
-        Cancel
-      </Button>
+      {editing ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="md"
+          disabled={pending}
+          onClick={close}
+        >
+          Cancel
+        </Button>
+      ) : (
+        <DialogCancel disabled={pending} onClick={close} />
+      )}
       <Button
         type="submit"
-        size="md"
+        size={editing ? 'md' : 'lg'}
         disabled={
           pending ||
           !!blockedReason ||
@@ -58,7 +63,13 @@ export function AutomationEditorButtons({
           errors.prompt === SKILL_PROMPT_MESSAGE
         }
       >
-        {pending ? 'Saving…' : 'Save'}
+        {editing
+          ? pending
+            ? 'Saving…'
+            : 'Save'
+          : pending
+            ? 'Creating…'
+            : 'Create'}
       </Button>
     </>
   );

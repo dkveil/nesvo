@@ -33,7 +33,6 @@ const defaultWidths: Record<PanelKind, (viewport: number) => number> = {
   terminal: viewport => Math.min(576, viewport * 0.42),
   automation: diffWidth,
   'automation-editor': wideWidth,
-  'workflow-editor': viewport => Math.min(536, viewport * 0.42),
   assistant: viewport => Math.min(536, viewport * 0.42),
 };
 

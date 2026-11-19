@@ -80,9 +80,9 @@ import type { EditorTarget } from '@/widgets/workflow-definitions';
 import type { AssistantContext } from '@/widgets/workflow-assistant';
 import type { AssistantChange } from '@nesvo/contracts';
 import {
-  NewWorkflowDrawer,
+  NewWorkflowDialog,
   type NewWorkflowDraft,
-} from '@/features/new-workflow/new-workflow-drawer';
+} from '@/features/new-workflow/new-workflow-dialog';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import {
   applyNewSessionDefaults,
@@ -1347,8 +1347,7 @@ export function Workspace({
       )
     : [];
   const visiblePanel =
-    editor ||
-    newWorkflow ||
+    !!editor?.jobKey ||
     (automation && automation !== 'list') ||
     (panel === 'diff' && !diffReview ? null : panel);
   const cardSession = !browsing && !creating && selected ? selected : null;
@@ -5763,7 +5762,7 @@ ${text}`
         }}
       />
       {newWorkflow && (
-        <NewWorkflowDrawer
+        <NewWorkflowDialog
           hostId={newWorkflow.hostId}
           directory={newWorkflow.directory}
           computers={store.computers}

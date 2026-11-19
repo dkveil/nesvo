@@ -4000,18 +4000,29 @@ try {
     .getByRole('button', { name: 'New workflow', exact: true })
     .first()
     .click();
-  const newWorkflowSheet = restartedPage.getByRole('dialog', {
+  const newWorkflowDialog = restartedPage.getByRole('dialog', {
     name: 'New workflow',
     exact: true,
   });
-  await newWorkflowSheet.waitFor();
-  await newWorkflowSheet
+  await newWorkflowDialog.waitFor();
+  assert.equal(
+    await newWorkflowDialog.getAttribute('data-placement'),
+    'center',
+  );
+  assert.equal(
+    await newWorkflowDialog
+      .getByRole('textbox', { name: 'Name', exact: true })
+      .getAttribute('aria-invalid'),
+    'false',
+  );
+  await newWorkflowDialog.getByRole('combobox', { name: 'Saved in' }).waitFor();
+  await newWorkflowDialog
     .getByRole('textbox', { name: 'Name', exact: true })
     .fill('smoke-graph');
-  await newWorkflowSheet
-    .getByRole('button', { name: 'Create and open', exact: true })
+  await newWorkflowDialog
+    .getByRole('button', { name: 'Create', exact: true })
     .click();
-  await newWorkflowSheet.waitFor({ state: 'hidden' });
+  await newWorkflowDialog.waitFor({ state: 'hidden' });
   const editor = restartedPage.getByRole('region', {
     name: 'Graph editor',
     exact: true,
@@ -4976,6 +4987,7 @@ try {
     .first()
     .click();
   const automationEditor = restartedPage.locator('[data-automation-editor]');
+  assert.equal(await automationEditor.getAttribute('data-placement'), 'center');
   const selectRitual = async name => {
     await automationEditor
       .getByRole('combobox', { name: 'Starter template' })
@@ -5052,7 +5064,9 @@ try {
   });
   await automationSkill.waitFor();
   assert.equal(
-    await automationEditor.getByRole('button', { name: 'Save' }).isDisabled(),
+    await automationEditor
+      .getByRole('button', { name: 'Create', exact: true })
+      .isDisabled(),
     true,
   );
   await automationSkill.click();
@@ -5066,7 +5080,9 @@ try {
   await automationEditor
     .getByLabel('Time', { exact: true })
     .fill(automationTime);
-  await automationEditor.getByRole('button', { name: 'Save' }).click();
+  await automationEditor
+    .getByRole('button', { name: 'Create', exact: true })
+    .click();
   await automationEditor.waitFor({ state: 'hidden' });
   await restartedPage
     .getByRole('region', { name: 'Automation: Smoke automation' })
@@ -5422,7 +5438,9 @@ try {
     .getByLabel('Check command')
     .fill(JSON.stringify([process.execPath, 'check.cjs']));
   await changeEditor.getByLabel('Daily run cap').fill('1');
-  await changeEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await changeEditor
+    .getByRole('button', { name: 'Create', exact: true })
+    .click();
   await changeEditor.waitFor({ state: 'hidden' });
   const changedJobId = await limitedPage.evaluate(
     async () =>

@@ -14,7 +14,6 @@ const PANEL_KINDS = [
   'terminal',
   'automation',
   'automation-editor',
-  'workflow-editor',
   'assistant',
 ] as const;
 

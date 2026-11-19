@@ -51,7 +51,7 @@ Discuss changes in Polish. Write code, repository documentation and commit messa
 
 ## Product and design
 
-Every right-side panel uses the shared drawer that matches the session file explorer; no other right panels or side modals.
+Creation of a new top-level object uses the shared dialog; every other right-side panel uses the shared drawer that matches the session file explorer.
 
 Use base shadcn components with neutral dark defaults. Black is the primary appearance, including native window chrome.
 Use the component library in shared/ui and docs/design-system.md; do not hand-roll controls.
