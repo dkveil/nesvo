@@ -382,7 +382,7 @@ export class CostStore {
     };
   }
 
-  private budgets(): CostBudget[] {
+  budgets(): CostBudget[] {
     return this.database
       .prepare('SELECT document FROM cost_budgets ORDER BY rowid')
       .all()
@@ -396,12 +396,15 @@ export class CostStore {
     };
   }
 
-  create(input: CreateCostBudgetInput): CostBudget | null {
+  create(
+    input: CreateCostBudgetInput,
+    id: string = randomUUID(),
+  ): CostBudget | null {
     const count = this.database
       .prepare('SELECT COUNT(*) AS count FROM cost_budgets')
       .get();
     if (Number(count?.count) >= 100) return null;
-    const budget = { ...input, id: randomUUID() };
+    const budget = { ...input, id };
     this.database
       .prepare('INSERT INTO cost_budgets (id, document) VALUES (?, ?)')
       .run(budget.id, JSON.stringify(budget));
@@ -413,6 +416,16 @@ export class CostStore {
       this.database
         .prepare('UPDATE cost_budgets SET document = ? WHERE id = ?')
         .run(JSON.stringify(budget), budget.id).changes !== 0
+    );
+  }
+
+  budgetRevision(id: string): number {
+    return Number(
+      this.database
+        .prepare(
+          'SELECT revision FROM cost_budgets_configuration_revisions WHERE id = ?',
+        )
+        .get(id)?.revision ?? 0,
     );
   }
 

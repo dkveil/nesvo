@@ -113,7 +113,16 @@ const CURSOR_PATTERN =
 export class ScheduledJobStore {
   constructor(private readonly database: DatabaseSync) {}
 
+  committed(apply: () => void): void {
+    afterConfigurationCommit(this.database, apply);
+  }
+
+  configurationRevision(id: string): number {
+    return Number(this.database.prepare('SELECT revision FROM scheduled_jobs_configuration_revisions WHERE id = ?').get(id)?.revision ?? 0);
+  }
+
   transact<T>(work: () => T): T {
+    if (this.database.isTransaction) return work();
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const result = work();
@@ -375,3 +384,4 @@ export class ScheduledJobStore {
       .run(at);
   }
 }
+import { afterConfigurationCommit } from '../workflows/assistant-change-store';

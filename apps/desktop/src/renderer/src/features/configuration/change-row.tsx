@@ -71,7 +71,12 @@ export function ConfigurationChangeRow({
   const [editPending, setEditPending] = useState(false);
   const { target, source } = change;
   const name =
-    'scope' in target ? target.name : (settingNames[target.key] ?? target.key);
+    change.label ??
+    ('scope' in target
+      ? target.name
+      : 'key' in target
+        ? (settingNames[target.key] ?? target.key)
+        : target.id);
   const scope =
     'scope' in target
       ? target.scope.kind === 'project'

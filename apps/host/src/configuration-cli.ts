@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import {
   configurationCommandSchema,
   configurationFileAreaSchema,
+  configurationRecordAreaSchema,
   configurationFrameLimit,
   configurationTargetSchema,
   type ConfigurationCommand,
@@ -105,7 +106,9 @@ export async function runConfigurationCli(args: string[]) {
                 ? { kind: 'project', root: values.project }
                 : { kind: 'global' },
             }
-          : { area, key: name },
+          : configurationRecordAreaSchema.safeParse(area).success
+            ? { area, id: name }
+            : { area, key: name },
       );
       command =
         operation === 'get'

@@ -142,6 +142,15 @@ function recordText(value: ConfigurationValue | null): string {
     : JSON.stringify(value.value, null, 2);
 }
 
+function resourceLabel(value: ConfigurationValue | null): string | undefined {
+  if (value?.kind === 'session-groups' || value?.kind === 'automations')
+    return configurationText(value.value.name).slice(0, 160);
+  if (value?.kind === 'budgets') {
+    const scope = value.value.scope;
+    return scope[0]!.toUpperCase() + scope.slice(1) + ' budget';
+  }
+}
+
 function preview(before: ConfigurationSnapshot, after: ConfigurationSnapshot) {
   const oldText = configurationText(
     before.document ?? recordText(before.value),
@@ -317,7 +326,7 @@ export class ConfigurationChanges {
       const withheld = configurationText(text) !== normalized;
       const operations: ConfigurationMutation['operation'][] = withheld
         ? []
-        : writer.kind === 'database'
+        : 'key' in target
           ? ['update']
           : value === null
             ? ['create']
@@ -510,7 +519,10 @@ export class ConfigurationChanges {
         );
         if (
           !same(before, record.before) ||
-          !same(after, record.after) ||
+          !same(
+            { ...after, state: undefined },
+            { ...record.after, state: undefined },
+          ) ||
           classification !== record.change.classification
         )
           conflict('The reviewed effect changed. Prepare a fresh proposal.');
@@ -690,6 +702,7 @@ export class ConfigurationChanges {
         revision: 1,
         source,
         target: mutation.target,
+        label: resourceLabel(after.value ?? before.value),
         operation: mutation.operation,
         baseVersion: before.version,
         classification,

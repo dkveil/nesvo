@@ -18,7 +18,21 @@ export type ConfigurationSnapshot = {
   identity: string;
   dependencies: string;
   document?: string;
+  state?: string;
 };
+
+type CommitAction = { apply: () => void; rollback?: () => void };
+const commitActions = new WeakMap<DatabaseSync, CommitAction[]>();
+
+export function afterConfigurationCommit(
+  database: DatabaseSync,
+  apply: () => void,
+  rollback?: () => void,
+) {
+  const actions = commitActions.get(database);
+  if (actions) actions.push({ apply, rollback });
+  else apply();
+}
 
 export type StoredConfigurationChange = {
   change: ConfigurationChange;
@@ -42,6 +56,29 @@ export type ConfigurationIntent = {
 };
 
 export function installConfigurationTables(database: DatabaseSync): void {
+  for (const table of ['cost_budgets', 'scheduled_jobs'] as const) {
+    const revisions = `${table}_configuration_revisions`;
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS ${revisions} (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+      INSERT OR IGNORE INTO ${revisions} (id, revision)
+      SELECT id, ${table === 'scheduled_jobs' ? 'revision' : '1'} FROM ${table};
+    `);
+    for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+      const changed =
+        operation === 'UPDATE' && table === 'scheduled_jobs'
+          ? 'WHEN NEW.revision <> OLD.revision'
+          : '';
+      database.exec(`
+        CREATE TRIGGER IF NOT EXISTS ${revisions}_${operation.toLowerCase()}
+        AFTER ${operation} ON ${table} ${changed}
+        BEGIN
+          INSERT INTO ${revisions} (id, revision)
+          VALUES (${operation === 'DELETE' ? 'OLD' : 'NEW'}.id, 1)
+          ON CONFLICT(id) DO UPDATE SET revision = ${revisions}.revision + 1;
+        END;
+      `);
+    }
+  }
   if (
     !database
       .prepare('PRAGMA table_info(metadata)')
@@ -117,14 +154,21 @@ export class ConfigurationChangeStore {
 
   transaction<T>(run: () => T): T {
     this.database.exec('BEGIN IMMEDIATE');
+    const actions: CommitAction[] = [];
+    commitActions.set(this.database, actions);
+    let result: T;
     try {
-      const result = run();
+      result = run();
       this.database.exec('COMMIT');
-      return result;
     } catch (error) {
       this.database.exec('ROLLBACK');
+      for (const action of actions.reverse()) action.rollback?.();
       throw error;
+    } finally {
+      commitActions.delete(this.database);
     }
+    for (const action of actions) action.apply();
+    return result;
   }
 
   get(id: string): StoredConfigurationChange | null {

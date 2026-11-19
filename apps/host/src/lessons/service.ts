@@ -91,7 +91,7 @@ type LessonSessions = Pick<
 
 type LessonChanges = Pick<
   AssistantChanges,
-  'applyRuleEntry' | 'undo' | 'latest'
+  'applyRuleEntry' | 'undo' | 'latest' | 'configuration'
 >;
 
 type LessonPorts = {

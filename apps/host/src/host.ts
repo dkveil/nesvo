@@ -88,6 +88,11 @@ import {
 } from './configuration-devices';
 import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
 import { DesktopConfigurationProfile } from './desktop-configuration-profile';
+import {
+  automationConfiguration,
+  budgetConfiguration,
+  groupConfiguration,
+} from './configuration-records';
 import { configurationDefinitions } from './workflows/configuration-definitions';
 import {
   globalWorkflowsRoot,
@@ -998,6 +1003,19 @@ export const serveHost = ({
           open: target => profile.slot(target),
         });
       configuration.register('inbox-rules', inboxRules.configurationRules());
+      configuration.register(
+        'session-groups',
+        groupConfiguration(housekeeping, sessions),
+      );
+      configuration.register(
+        'budgets',
+        budgetConfiguration(costs, sessions, housekeeping),
+      );
+      configuration.register(
+        'automations',
+        automationConfiguration(scheduledJobs, scheduledJobStore),
+      );
+      const recordAreas = ['session-groups', 'budgets', 'automations'] as const;
       const definitionAreas = [
         'workflows',
         'steps',
@@ -1056,8 +1074,15 @@ export const serveHost = ({
                 'defaults',
                 'appearance',
                 ...definitionAreas,
+                ...recordAreas,
               ]
-            : ['settings', 'inbox-rules', 'defaults', ...definitionAreas],
+            : [
+                'settings',
+                'inbox-rules',
+                'defaults',
+                ...definitionAreas,
+                ...recordAreas,
+              ],
           profile
             ? [
                 { area: 'appearance', key: 'color-scheme' },
@@ -1065,6 +1090,12 @@ export const serveHost = ({
               ]
             : [],
           async (area, project, signal) => {
+            if (area === 'session-groups')
+              return housekeeping.list().groups.map(({ id }) => ({ area, id }));
+            if (area === 'budgets')
+              return costs.budgets().map(({ id }) => ({ area, id }));
+            if (area === 'automations')
+              return scheduledJobs.list().map(({ id }) => ({ area, id }));
             const desktop = profile?.read();
             if (area === 'settings')
               return [

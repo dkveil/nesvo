@@ -254,6 +254,7 @@ export class ConfigurationDevices {
               directApply: this.directTargets.filter(target =>
                 hasGrant(device, 'apply', target.area, scopeFor(target)),
               ),
+              nameOnlyGroupRename: hasGrant(device, 'apply', 'session-groups'),
             },
           };
         case 'list':
@@ -333,7 +334,11 @@ export class ConfigurationDevices {
   ) {
     const catalog = await this.catalog(input.area, input.project, signal);
     const key = (target: ConfigurationTarget) =>
-      'scope' in target ? target.name : target.key;
+      'scope' in target
+        ? target.name
+        : 'key' in target
+          ? target.key
+          : target.id;
     const ordered = catalog
       .filter(target => key(target) > (input.cursor ?? ''))
       .sort((left, right) =>

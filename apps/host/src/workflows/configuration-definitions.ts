@@ -1,7 +1,6 @@
 import {
   ruleEntryLimits,
   serializeRuleEntry,
-  type ConfigurationTarget,
   type ConfigurationValue,
   type RuleEntryType,
 } from '@nesvo/contracts';

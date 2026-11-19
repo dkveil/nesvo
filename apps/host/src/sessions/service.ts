@@ -2891,8 +2891,20 @@ export class SessionService {
       );
       throw error;
     }
-    for (const session of targets) this.emitSession(session);
+    this.store.committed(
+      () => {
+        for (const session of targets) this.emitSession(session);
+      },
+      () =>
+        targets.forEach((session, index) =>
+          Object.assign(session, previous[index]),
+        ),
+    );
     return targets.map(session => structuredClone(session));
+  }
+
+  committed(apply: () => void): void {
+    this.store.committed(apply);
   }
 
   async withPullRequestCheckout(

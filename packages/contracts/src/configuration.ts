@@ -3,6 +3,9 @@ import { decisionRouteSchema } from './decision-route';
 import { colorSchemeSchema } from './appearance';
 import { providerSchema, sessionModeSchema } from './sessions';
 import { ruleEntrySchema } from './rule-entries';
+import { createCostBudgetSchema } from './costs';
+import { scheduledJobDefinitionSchema } from './scheduled-jobs';
+import { moveSessionGroupSchema, sessionGroupSchema } from './session-groups';
 import {
   externalInboxDeviceSchema,
   externalInboxTokenSchema,
@@ -18,11 +21,18 @@ export const configurationFileAreas = [
   'gate-rules',
 ] as const;
 export const configurationFileAreaSchema = z.enum(configurationFileAreas);
+export const configurationRecordAreas = [
+  'session-groups',
+  'budgets',
+  'automations',
+] as const;
+export const configurationRecordAreaSchema = z.enum(configurationRecordAreas);
 export const configurationAreaSchema = z.enum([
   'settings',
   'defaults',
   'appearance',
   ...configurationFileAreas,
+  ...configurationRecordAreas,
 ]);
 export const configurationVerbSchema = z.enum(['read', 'propose', 'apply']);
 export const configurationLimits = {
@@ -42,6 +52,7 @@ const fileScope = z.discriminatedUnion('kind', [
 ]);
 
 export const configurationTargetSchema = z.discriminatedUnion('area', [
+  z.strictObject({ area: configurationRecordAreaSchema, id: z.uuid() }),
   z.strictObject({
     area: z.literal('settings'),
     key: z.enum([
@@ -101,6 +112,17 @@ export type ConfigurationProfile = z.infer<typeof configurationProfileSchema>;
 
 export const configurationValueSchema = z.discriminatedUnion('kind', [
   z.strictObject({
+    kind: z.literal('session-groups'),
+    value: sessionGroupSchema
+      .pick({ name: true, parentId: true, defaults: true })
+      .extend({ position: moveSessionGroupSchema.shape.position }),
+  }),
+  z.strictObject({ kind: z.literal('budgets'), value: createCostBudgetSchema }),
+  z.strictObject({
+    kind: z.literal('automations'),
+    value: scheduledJobDefinitionSchema,
+  }),
+  z.strictObject({
     kind: z.literal('entry'),
     value: ruleEntrySchema.omit({ id: true, type: true, provenance: true }),
   }),
@@ -141,20 +163,22 @@ export const configurationMutationSchema = z
       issue('draft', 'Supply a draft for creation or update.');
     const target = input.target;
     const kind =
-      'scope' in target
-        ? target.area === 'lessons' || target.area === 'gate-rules'
-          ? 'entry'
-          : 'markdown'
-        : target.area === 'appearance'
-          ? 'color-scheme'
-          : target.area === 'defaults'
-            ? target.key
-            : target.key === 'inbox-routing'
-              ? 'route'
-              : 'enabled';
+      'id' in target
+        ? target.area
+        : 'scope' in target
+          ? target.area === 'lessons' || target.area === 'gate-rules'
+            ? 'entry'
+            : 'markdown'
+          : target.area === 'appearance'
+            ? 'color-scheme'
+            : target.area === 'defaults'
+              ? target.key
+              : target.key === 'inbox-routing'
+                ? 'route'
+                : 'enabled';
     if (input.draft && input.draft.kind !== kind)
       issue('draft', 'The value does not match the target.');
-    if (!('scope' in target) && input.operation !== 'update')
+    if ('key' in target && input.operation !== 'update')
       issue('operation', 'This setting supports updates.');
     if (
       input.baseVersion.type !== 'absent' &&
@@ -230,6 +254,7 @@ export const configurationChangeSchema = z.strictObject({
   id: z.uuid(),
   revision: z.number().int().positive(),
   target: configurationTargetSchema,
+  label: z.string().max(160).optional(),
   operation: configurationMutationSchema.shape.operation,
   baseVersion: configurationVersionSchema,
   resultingVersion: configurationVersionSchema.nullable(),
@@ -311,6 +336,7 @@ export const configurationCapabilitiesSchema = z.strictObject({
     .array(configurationGrantSchema)
     .max(configurationAreaSchema.options.length),
   directApply: z.array(configurationTargetSchema).max(10),
+  nameOnlyGroupRename: z.boolean(),
 });
 const configurationListSchema = z.strictObject({
   targets: z

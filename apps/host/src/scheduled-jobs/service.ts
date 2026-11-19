@@ -233,13 +233,15 @@ export class ScheduledJobService {
       );
     if (!this.store.delete(current.id, input.expectedRevision))
       throw staleRevision();
-    this.checks.get(current.id)?.abort();
-    this.emit({
-      type: 'scheduled-job-removed',
-      scheduledJobId: current.id,
-      revision: current.revision + 1,
+    this.store.committed(() => {
+      this.checks.get(current.id)?.abort();
+      this.emit({
+        type: 'scheduled-job-removed',
+        scheduledJobId: current.id,
+        revision: current.revision + 1,
+      });
+      this.arm();
     });
-    this.arm();
   }
 
   listRuns(input: ListScheduledJobRunsInput): ScheduledJobRunPage {
@@ -799,9 +801,11 @@ export class ScheduledJobService {
       if (resetCheck && expectedRevision !== null)
         this.store.saveCheckHash(job.id, null);
     });
-    this.checks.get(job.id)?.abort();
-    this.emitJob(job);
-    this.arm();
+    this.store.committed(() => {
+      this.checks.get(job.id)?.abort();
+      this.emitJob(job);
+      this.arm();
+    });
   }
 
   private emitJob(scheduledJob: ScheduledJob): void {

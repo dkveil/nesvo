@@ -47,6 +47,9 @@ const areas: Record<ConfigurationArea, string> = {
   steps: 'Workflow steps',
   lessons: 'Lessons',
   'gate-rules': 'Gate rules',
+  'session-groups': 'Session groups',
+  budgets: 'Budgets',
+  automations: 'Automations',
 };
 const isOnline = (computer?: Computer) =>
   computer?.status === 'connected' &&
@@ -486,8 +489,8 @@ export function ConfigurationDevicesSettings({
                   );
                 })}
                 <StatusMessage>
-                  Direct apply is limited to appearance and designated
-                  presentation settings on Local.
+                  Direct apply covers name-only group changes, appearance and
+                  designated presentation settings.
                 </StatusMessage>
                 {error && <StatusMessage tone="error">{error}</StatusMessage>}
               </form>

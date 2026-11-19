@@ -76,6 +76,12 @@ const renumber = <T extends { order: number }>(
     return true;
   });
 
+type GroupPlan = {
+  groups: SessionGroup[];
+  removed?: string[];
+  memberships?: { id: string; groupId: string | null }[];
+};
+
 export class SessionHousekeeping {
   constructor(
     private readonly sessions: SessionService,
@@ -88,11 +94,15 @@ export class SessionHousekeeping {
   }
 
   createGroup(input: CreateSessionGroupInput): SessionGroupList {
+    return this.applyGroupPlan(this.planCreateGroup(input));
+  }
+
+  planCreateGroup(input: CreateSessionGroupInput): GroupPlan {
     const { groups } = this.groups.list();
     const existing = groups.find(group => group.id === input.groupId);
     if (existing) {
       if (existing.name === input.name && existing.parentId === input.parentId)
-        return this.groups.list();
+        return { groups: [] };
       throw invalid('This group ID is already in use.');
     }
     if (groups.length >= SESSION_GROUP_LIMIT)
@@ -112,33 +122,47 @@ export class SessionHousekeeping {
           .filter(group => group.parentId === input.parentId)
           .map(group => group.order),
       ) + 1;
-    return this.commit([
-      {
-        id: input.groupId,
-        parentId: input.parentId,
-        name: input.name,
-        order,
-        defaults: input.defaults,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
+    return {
+      groups: [
+        {
+          id: input.groupId,
+          parentId: input.parentId,
+          name: input.name,
+          order,
+          defaults: input.defaults,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    };
   }
 
   updateGroup(input: UpdateSessionGroupInput): SessionGroupList {
+    return this.applyGroupPlan(this.planUpdateGroup(input));
+  }
+
+  planUpdateGroup(input: UpdateSessionGroupInput): GroupPlan {
     const group = this.group(input.groupId, this.groups.list().groups);
-    return this.commit([
-      {
-        ...group,
-        name: input.name ?? group.name,
-        defaults: input.defaults ?? group.defaults,
-        updatedAt: new Date().toISOString(),
-      },
-    ]);
+    return {
+      groups: [
+        {
+          ...group,
+          name: input.name ?? group.name,
+          defaults: input.defaults ?? group.defaults,
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    };
   }
 
   moveGroup(input: MoveSessionGroupInput): SessionGroupList {
-    const { groups } = this.groups.list();
+    return this.applyGroupPlan(this.planMoveGroup(input));
+  }
+
+  planMoveGroup(
+    input: MoveSessionGroupInput,
+    groups = this.groups.list().groups,
+  ): GroupPlan {
     const group = this.group(input.groupId, groups);
     if (input.parentId) {
       const parent = this.destination(input.parentId, groups);
@@ -167,10 +191,14 @@ export class SessionHousekeeping {
       item.order = order;
       item.updatedAt = now;
     });
-    return this.commit(changed);
+    return { groups: changed };
   }
 
   deleteGroup(input: DeleteSessionGroupInput): SessionGroupList {
+    return this.applyGroupPlan(this.planDeleteGroup(input));
+  }
+
+  planDeleteGroup(input: DeleteSessionGroupInput): GroupPlan {
     const { groups } = this.groups.list();
     const group = this.group(input.groupId, groups);
     const now = new Date().toISOString();
@@ -196,10 +224,33 @@ export class SessionHousekeeping {
     const members = this.sessions
       .list()
       .filter(session => session.groupId === group.id)
-      .map(session => session.id);
-    return this.commit([...changed.values()], [group.id], members, targets => {
-      for (const session of targets) session.groupId = group.parentId;
-    });
+      .map(session => ({ id: session.id, groupId: group.parentId }));
+    return {
+      groups: [...changed.values()],
+      removed: [group.id],
+      memberships: members,
+    };
+  }
+
+  applyGroupPlan(plan: GroupPlan): SessionGroupList {
+    if (
+      !plan.groups.length &&
+      !plan.removed?.length &&
+      !plan.memberships?.length
+    )
+      return this.groups.list();
+    const memberships = new Map(
+      plan.memberships?.map(member => [member.id, member.groupId]),
+    );
+    return this.commit(
+      plan.groups,
+      plan.removed,
+      [...memberships.keys()],
+      targets => {
+        for (const session of targets)
+          session.groupId = memberships.get(session.id) ?? null;
+      },
+    );
   }
 
   moveSession(input: MoveSessionInput): Session {
@@ -281,7 +332,9 @@ export class SessionHousekeeping {
       this.groups.write(changed, removed),
     );
     const list = this.groups.list();
-    this.emit({ type: 'session-groups-changed', list });
+    this.sessions.committed(() =>
+      this.emit({ type: 'session-groups-changed', list }),
+    );
     return list;
   }
 

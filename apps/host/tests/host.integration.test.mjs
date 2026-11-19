@@ -713,6 +713,184 @@ test('configuration reviews bind to live versions and recover completed files', 
   }
 });
 
+test('configuration groups, budgets and paused automations retain durable state', async () => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-config-records-')),
+  );
+  const host = launch(directory, join(directory, 'provider'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
+  });
+  const request = async (method, input) => {
+    const response = await host.request(method, input);
+    assert.equal(
+      response.type,
+      'configuration-result',
+      JSON.stringify(response),
+    );
+    return response.result;
+  };
+  const accept = (proposal, confirmAuthority = false) =>
+    request('decide-config-proposal', {
+      id: proposal.receipt.id,
+      revision: proposal.receipt.revision,
+      actionId: randomUUID(),
+      decision: 'accept',
+      confirmAuthority,
+    });
+  const undo = receipt =>
+    request('undo-config-change', {
+      id: receipt.id,
+      revision: receipt.revision,
+      actionId: randomUUID(),
+    });
+  const propose = (
+    target,
+    draft,
+    operation = 'create',
+    baseVersion = { type: 'absent' },
+  ) =>
+    request('propose-config-change', {
+      target,
+      operation,
+      baseVersion,
+      actionId: randomUUID(),
+      draft,
+    });
+  try {
+    const parent = randomUUID();
+    const child = randomUUID();
+    await host.request('create-session-group', {
+      groupId: parent,
+      name: 'Reviews',
+    });
+    await host.request('create-session-group', {
+      groupId: child,
+      parentId: parent,
+      name: 'Release',
+    });
+    const session = (
+      await host.request('create-session', {
+        directory,
+        title: 'Release report',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode: 'read-only',
+        groupId: child,
+      })
+    ).session;
+    assert.equal(session.groupId, child);
+    const target = { area: 'session-groups', id: child };
+    const group = (await request('read-config-target', target)).target;
+    const deleted = await propose(target, null, 'delete', group.version);
+    assert.equal(deleted.receipt.status, 'pending');
+    assert.match(deleted.change.diff.text, /-"?\s*"sessions": 1/);
+    const applied = (await accept(deleted)).receipt;
+    assert.equal(applied.status, 'applied');
+    const sessionFrom = () =>
+      host
+        .request('get-session', { sessionId: session.id })
+        .then(response => response.session);
+    assert.equal((await sessionFrom()).groupId, parent);
+    assert.equal((await undo(applied)).receipt.status, 'undone');
+    assert.equal((await sessionFrom()).groupId, child);
+
+    const device = (
+      await host.request('enroll-config-device', {
+        name: 'Group rename fixture',
+        grants: [
+          {
+            area: 'session-groups',
+            verbs: ['apply'],
+            global: true,
+            projects: [],
+          },
+        ],
+      })
+    ).enrollment;
+    const current = (await request('read-config-target', target)).target;
+    const renamed = await request('configuration', {
+      token: device.token,
+      command: {
+        operation: 'apply',
+        mutation: {
+          target,
+          operation: 'update',
+          baseVersion: current.version,
+          actionId: randomUUID(),
+          draft: {
+            ...current.value,
+            value: { ...current.value.value, name: 'Release reviews' },
+          },
+        },
+      },
+    });
+    assert.equal(renamed.receipt.status, 'applied');
+    await host.request('update-session-group', {
+      groupId: child,
+      name: 'Later edit',
+    });
+    assert.equal((await undo(renamed.receipt)).code, 'conflict');
+
+    const budget = await propose(
+      { area: 'budgets', id: randomUUID() },
+      {
+        kind: 'budgets',
+        value: {
+          scope: 'computer',
+          period: 'day',
+          limitUsd: 20,
+          action: 'refuse-new-turns',
+        },
+      },
+    );
+    assert.equal(budget.change.classification, 'authority');
+    assert.equal((await accept(budget)).code, 'review-required');
+    assert.equal((await accept(budget, true)).receipt.status, 'applied');
+
+    const automationId = randomUUID();
+    const automation = await propose(
+      { area: 'automations', id: automationId },
+      {
+        kind: 'automations',
+        value: {
+          name: 'Daily review',
+          directory,
+          prompt: 'Read the release report.',
+          provider: 'codex',
+          model: 'fixture-codex',
+          effort: null,
+          mode: 'read-only',
+          schedule: { kind: 'daily', time: '08:00' },
+          timeZone: 'UTC',
+          active: false,
+        },
+      },
+    );
+    assert.equal(automation.ok, true, JSON.stringify(automation));
+    const configured = (await accept(automation)).receipt;
+    assert.equal(configured.status, 'applied');
+    assert.equal(
+      (await host.request('list-scheduled-jobs', {})).list.scheduledJobs.find(
+        job => job.id === automationId,
+      ).active,
+      false,
+    );
+    assert.deepEqual(
+      (
+        await host.request('list-scheduled-job-runs', {
+          scheduledJobId: automationId,
+        })
+      ).page.runs,
+      [],
+    );
+    assert.equal((await undo(configured)).receipt.status, 'undone');
+  } finally {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test(
   'external Inbox CLI and MCP share durable decisions and device limits',
   { timeout: 60000 },

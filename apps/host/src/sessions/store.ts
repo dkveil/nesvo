@@ -1,3 +1,4 @@
+import { afterConfigurationCommit } from '../workflows/assistant-change-store';
 import { hostDiagnostic } from '../log-redaction';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
@@ -458,7 +459,8 @@ export class SessionStore {
         updatedAt: touch ? now : session.updatedAt,
       }),
     );
-    this.database.exec('BEGIN IMMEDIATE');
+    const ownsTransaction = !this.database.isTransaction;
+    if (ownsTransaction) this.database.exec('BEGIN IMMEDIATE');
     try {
       const statement = this.database.prepare(
         'INSERT INTO sessions (id, document, updated_at, profile_id, workflow_run_id, workflow_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, ?, (SELECT id FROM workflow_runs WHERE id = ?), (SELECT id FROM workflow_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, profile_id = excluded.profile_id, workflow_run_id = excluded.workflow_run_id, workflow_step_id = excluded.workflow_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
@@ -476,12 +478,18 @@ export class SessionStore {
         );
       }
       writeRelated?.();
-      this.database.exec('COMMIT');
+      if (ownsTransaction) this.database.exec('COMMIT');
     } catch (error) {
-      this.database.exec('ROLLBACK');
+      if (ownsTransaction) this.database.exec('ROLLBACK');
       throw error;
     }
-    sessions.forEach((session, index) => Object.assign(session, next[index]));
+    this.committed(() =>
+      sessions.forEach((session, index) => Object.assign(session, next[index])),
+    );
+  }
+
+  committed(apply: () => void, rollback?: () => void): void {
+    afterConfigurationCommit(this.database, apply, rollback);
   }
 
   worker(

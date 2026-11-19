@@ -247,6 +247,19 @@ async function smokeConfigurationProfile(app, page) {
           { area: 'steps', verbs: ['propose'], global: true, projects: [] },
           { area: 'lessons', verbs: ['propose'], global: true, projects: [] },
           {
+            area: 'session-groups',
+            verbs: ['read', 'apply'],
+            global: true,
+            projects: [],
+          },
+          { area: 'budgets', verbs: ['propose'], global: true, projects: [] },
+          {
+            area: 'automations',
+            verbs: ['propose'],
+            global: true,
+            projects: [],
+          },
+          {
             area: 'appearance',
             verbs: ['read', 'apply'],
             projects: [],
@@ -440,6 +453,118 @@ async function smokeConfigurationProfile(app, page) {
     }, id);
     assert.equal(undone.receipt.status, 'undone');
   }
+  const groupId = randomUUID();
+  await page.evaluate(
+    id =>
+      window.nesvo.createSessionGroup(
+        { groupId: id, name: 'Release' },
+        'local',
+      ),
+    groupId,
+  );
+  const group = (await cli(['get', 'session-groups', groupId])).target;
+  await writeFile(
+    input,
+    JSON.stringify({
+      ...group.value,
+      value: { ...group.value.value, name: 'Release reviews' },
+    }),
+  );
+  const renamed = await cli([
+    'apply',
+    'session-groups',
+    groupId,
+    '--op',
+    'update',
+    '--action-id',
+    randomUUID(),
+    '--base',
+    String(group.version.revision),
+    '--input-file',
+    input,
+  ]);
+  assert.equal(renamed.receipt.status, 'applied');
+  const jobId = randomUUID();
+  for (const definition of [
+    {
+      area: 'budgets',
+      id: randomUUID(),
+      name: 'Computer budget',
+      draft: {
+        kind: 'budgets',
+        value: {
+          scope: 'computer',
+          period: 'day',
+          limitUsd: 1000000,
+          action: 'refuse-new-turns',
+        },
+      },
+    },
+    {
+      area: 'automations',
+      id: jobId,
+      name: 'Daily release review',
+      draft: {
+        kind: 'automations',
+        value: {
+          name: 'Daily release review',
+          directory,
+          prompt: 'Read the release report.',
+          provider: 'codex',
+          model: 'fixture-codex',
+          effort: null,
+          mode: 'read-only',
+          active: false,
+          schedule: { kind: 'daily', time: '09:00' },
+          timeZone: 'UTC',
+        },
+      },
+    },
+  ]) {
+    await writeFile(input, JSON.stringify(definition.draft));
+    const requested = await cli([
+      'propose',
+      definition.area,
+      definition.id,
+      '--op',
+      'create',
+      '--action-id',
+      randomUUID(),
+      '--base',
+      'absent',
+      '--input-file',
+      input,
+    ]);
+    assert.equal(requested.receipt.status, 'pending');
+    const change = inbox.getByRole('article', {
+      name: `Configuration change ${definition.name}`,
+    });
+    await change
+      .getByRole('button', { name: `Review diff for ${definition.name}` })
+      .click();
+    await change.getByRole('button', { name: 'Accept', exact: true }).click();
+    if (definition.area === 'budgets') {
+      const confirmation = page.getByRole('alertdialog', {
+        name: 'Confirm configuration change',
+      });
+      await confirmation.waitFor();
+      await configurationShot(app, page, 'stage-5-budget-review');
+      await confirmation
+        .getByRole('button', { name: 'Confirm and accept' })
+        .click();
+    }
+    await change.waitFor({ state: 'hidden' });
+  }
+  assert.equal(
+    await page.evaluate(async id => {
+      const job = (await window.nesvo.scheduledJobs.list('local')).find(
+        item => item.id === id,
+      );
+      const page = await window.nesvo.scheduledJobs.listRuns('local', id, null);
+      return !!job && !job.active && page.runs.length === 0;
+    }, jobId),
+    true,
+  );
   await page.evaluate(
     id => window.nesvo.configuration.revoke(id, 'local'),
     enrollment.device.id,
