@@ -6,6 +6,17 @@ The desktop renderer has one component library in `apps/desktop/src/renderer/src
 
 The development build lists **Settings → Development → Components**, a catalog of every component with its variants, sizes and states in the dark and light appearance. Packaged builds exclude it.
 
+## Review before presenting UI
+
+- [ ] Use one type scale for page titles, section labels, row titles, row descriptions and helper text. Avoid ad-hoc sizes and keep labels no larger than their controls.
+- [ ] Use `shared/ui` components and design tokens for controls and styling.
+- [ ] Keep section spacing consistent and layout anchors stable when moving between steps or pages.
+- [ ] Use one button variant per role and the same label for the same action.
+- [ ] Use pickers for known choices and keep prompt fields non-resizable.
+- [ ] Size and align icons consistently.
+- [ ] Describe only features that exist. Explain how to enable disabled controls.
+- [ ] Review screenshots at 1280 × 800 and 1920 × 1080 against this checklist before presenting the change.
+
 ## Tokens
 
 All colours are CSS variables defined for light on `:root` and for dark on `:root.dark`; components use the Tailwind names in the first column.
