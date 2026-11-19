@@ -299,8 +299,8 @@ export const toGraphEdge = (edge: EditorEdge): GraphEdge => ({
 });
 
 export const editorEdge = (edge: GraphEdge): EditorEdge => ({
-  id: edgeId(edge),
   ...edge,
+  id: edgeId(edge),
 });
 
 const graphStep = (step: StepDefinition): GraphStep => ({
