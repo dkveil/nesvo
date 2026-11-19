@@ -27,6 +27,7 @@ import { smokeManagerImport } from './manager-import-smoke.mjs';
 import { EXPIRED_SHARE_ID, startShareServer } from './share-server-fixture.mjs';
 
 await smokeManagerImport();
+await import('./d87-desktop-smoke.mjs');
 
 const directory = await realpath(
   await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
@@ -5667,6 +5668,7 @@ async function smokeDesktop() {
     '[data-slot="side-panel"][data-assistant-dock]',
   );
   await assistantDock.waitFor();
+  assert.equal(await assistantDock.getAttribute('data-slot'), 'side-panel');
   await assistantDock.getByText(/^Describe a change to smoke\./).waitFor();
   await bothShots('empty');
   await assistantDock
@@ -5809,7 +5811,7 @@ async function smokeDesktop() {
     .getByRole('button', { name: 'Edit smoke', exact: true })
     .click();
   await editor.waitFor();
-  await openAssistant.click();
+  if (!(await assistantDock.isVisible())) await openAssistant.click();
   await assistantDock
     .getByRole('button', { name: 'Open session', exact: true })
     .click();
