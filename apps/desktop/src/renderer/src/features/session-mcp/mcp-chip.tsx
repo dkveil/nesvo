@@ -86,8 +86,9 @@ export function McpChip({
             data-session-mcp=""
             icon={<Plug aria-hidden="true" />}
             size="sm"
-            className="relative w-6 justify-center px-0"
+            className="relative justify-center pr-2"
           >
+            <span>MCP</span>
             {attentionTone && (
               <StatusDot
                 tone={attentionTone}

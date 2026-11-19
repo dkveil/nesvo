@@ -161,7 +161,12 @@ export const MessageArticle = memo(function MessageArticle({
     <>
       {compacted && <Separator label="Conversation compacted" />}
       {threadStart && <Separator label="Session restarted" />}
-      {selectionChange && <Separator label={selectionChange} />}
+      {selectionChange && (
+        <Separator
+          label={selectionChange}
+          className="text-xs font-medium text-foreground"
+        />
+      )}
       <article
         ref={article}
         id={`message-${message.id}`}
@@ -178,11 +183,6 @@ export const MessageArticle = memo(function MessageArticle({
         {visibleContent ? (
           <>
             <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
-              {message.origin === 'imported' && (
-                <Chip interactive={false} size="sm">
-                  Imported
-                </Chip>
-              )}
               {message.author === 'operator' &&
                 (message.skill || message.skillId) && (
                   <Chip
@@ -240,7 +240,9 @@ export const MessageArticle = memo(function MessageArticle({
               <MessageAttachments attachments={stripAttachments} />
             )}
             {!suppressBody &&
-              (message.body || !live) &&
+              (message.body ||
+                (message.author === 'operator' &&
+                  stripAttachments.length > 0)) &&
               (message.author === 'operator' ? (
                 isLongPrompt(message.body) ? (
                   <ClampedPrompt>
@@ -253,7 +255,7 @@ export const MessageArticle = memo(function MessageArticle({
                   </ClampedPrompt>
                 ) : (
                   <MessageBody
-                    body={message.body || 'No response text.'}
+                    body={message.body}
                     attachments={message.attachments}
                     renderAttachment={renderInlineAttachment}
                     className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
@@ -261,7 +263,7 @@ export const MessageArticle = memo(function MessageArticle({
                 )
               ) : (
                 <MessageBody
-                  body={message.body || 'No response text.'}
+                  body={message.body}
                   streaming={live}
                   className="w-full text-ui leading-relaxed"
                 />

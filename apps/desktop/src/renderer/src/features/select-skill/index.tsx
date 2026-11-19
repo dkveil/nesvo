@@ -24,7 +24,6 @@ import { listboxOptionId } from '@/shared/ui/listbox-option-id';
 import { Popover, PopoverAnchor, PopoverContent } from '@/shared/ui/popover';
 import { SearchField } from '@/shared/ui/search-field';
 import { StatusMessage } from '@/shared/ui/status-message';
-import { Hint } from '@/shared/ui/tooltip';
 import {
   findNativeCommand,
   menuEntries,
@@ -486,7 +485,9 @@ export function SelectSkill({
                 label: `/${skillCommand(skill)}`,
                 ariaLabel: skill.name,
                 description:
-                  reason || skill.description || 'No description provided.',
+                  reason && /ENOENT|EACCES|EPERM|not a directory/i.test(reason)
+                    ? 'Skill file is unavailable. Open Skills for details.'
+                    : reason || skill.description || 'No description provided.',
                 trailing: [
                   skill.origins?.join(', '),
                   sourceLabels[skill.source],
@@ -513,23 +514,14 @@ export function SelectSkill({
             className="min-h-0 flex-1"
           />
         )}
-        {commandsEnabled && commandIssue && (
+        {((commandsEnabled && commandIssue) ||
+          (catalog && (catalog.truncated || catalog.issues.length > 0))) && (
           <StatusMessage
             tone="warning"
             className="shrink-0 border-t px-3 py-1.5"
           >
-            {`Claude Code commands are unavailable. ${commandIssue}`}
+            Some skills or commands are unavailable. Open Skills for details.
           </StatusMessage>
-        )}
-        {catalog && (catalog.truncated || catalog.issues.length > 0) && (
-          <Hint label={catalog.issues.map(issue => issue.message).join(' · ')}>
-            <StatusMessage
-              tone="warning"
-              className="shrink-0 border-t px-3 py-1.5"
-            >
-              Some sources could not be included. Open Skills for details.
-            </StatusMessage>
-          </Hint>
         )}
       </PopoverContent>
     </Popover>

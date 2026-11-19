@@ -142,7 +142,7 @@ export function SessionWorkflowChip({
       >
         <div className="flex items-center justify-between gap-2 px-1">
           <p className="text-xs font-medium text-muted-foreground">
-            Applies to the next run
+            Workflow for the next run
           </p>
           <IconButton
             label="Refresh"
@@ -190,22 +190,24 @@ export function SessionWorkflowChip({
             No project or global workflows yet.
           </StatusMessage>
         )}
-        <div className="border-t pt-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className="w-full justify-start"
-            disabled={!assigned}
-            onClick={() => {
-              if (!assigned) return;
-              setOpen(false);
-              onOpenEditor(assigned.name, assigned.root);
-            }}
-          >
-            <ExternalLink aria-hidden="true" />
-            Open in editor
-          </Button>
-        </div>
+        {assigned && (
+          <div className="border-t pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full justify-start"
+              disabled={!assigned}
+              onClick={() => {
+                if (!assigned) return;
+                setOpen(false);
+                onOpenEditor(assigned.name, assigned.root);
+              }}
+            >
+              <ExternalLink aria-hidden="true" />
+              Open in editor
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );

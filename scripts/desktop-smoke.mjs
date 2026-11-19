@@ -2081,7 +2081,7 @@ try {
     name: 'Filter sessions by status',
     exact: true,
   });
-  const needsMeFilter = statusFilter.getByRole('radio', { name: /^Needs me/ });
+  const needsMeFilter = statusFilter.getByRole('radio', { name: /^Needs you/ });
   await needsMeFilter.click();
   assert.equal(await needsMeFilter.getAttribute('aria-checked'), 'true');
   await navigation.getByRole('button', { name: /^Supervised Codex/ }).waitFor();
@@ -3440,7 +3440,7 @@ try {
     .getByText('Interrupted when Nesvo closed', { exact: true })
     .waitFor();
   await interruptedNotice
-    .getByRole('button', { name: 'Continue conversation', exact: true })
+    .getByRole('button', { name: 'Write a follow-up', exact: true })
     .click();
   assert.equal(
     await restartedPage

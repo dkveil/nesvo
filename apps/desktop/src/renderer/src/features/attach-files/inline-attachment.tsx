@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { X } from 'lucide-react';
+import { IconButton } from '@/shared/ui/icon-button';
 import { attachmentKind, type MessageAttachment } from '@nesvo/contracts';
 import { AttachmentToken } from '@/shared/ui/attachment-token';
 import { ImageLightbox } from './image-lightbox';
@@ -14,23 +16,37 @@ const tokenKind = (kind: ComposerAttachment['kind']) =>
 
 export function ComposerAttachmentToken({
   item,
+  onRemove,
 }: {
   item: ComposerAttachment;
+  onRemove?: () => void;
 }) {
   const preview = useAttachmentPreview(
     item.kind === 'image' ? item.attachment : null,
     item.previewUrl,
   );
   return (
-    <AttachmentToken
-      name={item.name}
-      kind={tokenKind(item.kind)}
-      detail={
-        item.status === 'failed' ? 'Not attached' : formatBytes(item.size)
-      }
-      src={preview.src}
-      status={item.status}
-    />
+    <span className="inline-flex items-center gap-0.5 align-middle">
+      <AttachmentToken
+        name={item.name}
+        kind={tokenKind(item.kind)}
+        detail={
+          item.status === 'failed' ? 'Not attached' : formatBytes(item.size)
+        }
+        src={preview.src}
+        status={item.status}
+      />
+      {onRemove && (
+        <IconButton
+          label={`Remove ${item.name}`}
+          size={20}
+          onClick={onRemove}
+          onKeyDown={event => event.stopPropagation()}
+        >
+          <X />
+        </IconButton>
+      )}
+    </span>
   );
 }
 

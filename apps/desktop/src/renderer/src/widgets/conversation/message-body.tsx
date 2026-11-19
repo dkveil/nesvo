@@ -191,7 +191,9 @@ const components: Components = {
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="mt-4 text-title font-semibold first:mt-0">{children}</h3>
+    <h3 className="mt-6 mb-2 text-title font-semibold first:mt-0">
+      {children}
+    </h3>
   ),
   h4: ({ children }) => (
     <h4 className="mt-4 leading-6 font-semibold first:mt-0">{children}</h4>

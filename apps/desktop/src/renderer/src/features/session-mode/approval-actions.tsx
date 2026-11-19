@@ -120,46 +120,48 @@ export function ApprovalActions({
 
   return (
     <div className="min-w-0 space-y-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button
-          type="button"
-          disabled={!enabled}
-          onClick={() => onDecide({ decision: 'accept' })}
-        >
-          Allow once
-        </Button>
-        {approval.allowPattern && fingerprint && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" disabled={!enabled}>
-                Always allow…
-                <ChevronDown />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem onSelect={() => setEditor('session')}>
-                In this session
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setEditor('project')}>
-                In this project
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={!enabled}
-          aria-expanded={fingerprint ? editor === 'deny' : undefined}
-          onClick={() =>
-            fingerprint
-              ? setEditor(editor === 'deny' ? null : 'deny')
-              : onDecide({ decision: 'decline' })
-          }
-        >
-          Deny
-        </Button>
-      </div>
+      {!editor && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            type="button"
+            disabled={!enabled}
+            onClick={() => onDecide({ decision: 'accept' })}
+          >
+            Allow once
+          </Button>
+          {approval.allowPattern && fingerprint && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" disabled={!enabled}>
+                  Always allow…
+                  <ChevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onSelect={() => setEditor('session')}>
+                  Save a rule for this session
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setEditor('project')}>
+                  Save a rule for this project
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!enabled}
+            aria-expanded={fingerprint ? editor === 'deny' : undefined}
+            onClick={() =>
+              fingerprint
+                ? setEditor(editor === 'deny' ? null : 'deny')
+                : onDecide({ decision: 'decline' })
+            }
+          >
+            Deny
+          </Button>
+        </div>
+      )}
       {approval.allowRuleReason && (
         <p className="text-2xs text-muted-foreground">
           Always allow unavailable. {approval.allowRuleReason}
@@ -178,7 +180,7 @@ export function ApprovalActions({
               });
           }}
         >
-          <Label htmlFor={fieldId}>
+          <Label htmlFor={fieldId} className="text-xs font-medium">
             {scope === 'session' ? 'Session pattern' : 'Project pattern'}
           </Label>
           <Input
@@ -186,7 +188,7 @@ export function ApprovalActions({
             value={pattern}
             maxLength={4200}
             spellCheck={false}
-            className="font-mono"
+            className="font-mono text-xs"
             disabled={!enabled}
             aria-invalid={validation?.error ? true : undefined}
             aria-describedby={fieldId + '-validation'}
@@ -198,6 +200,7 @@ export function ApprovalActions({
           <StatusMessage
             id={fieldId + '-validation'}
             tone={validation?.error ? 'error' : 'info'}
+            className="text-xs"
           >
             {validation?.error ??
               (validation
@@ -208,14 +211,14 @@ export function ApprovalActions({
           </StatusMessage>
           <div className="flex items-center gap-1.5">
             <Button
-              size="xs"
+              size="sm"
               type="submit"
               disabled={!enabled || validation?.error !== null}
             >
               Save rule and allow
             </Button>
             <Button
-              size="xs"
+              size="sm"
               type="button"
               variant="ghost"
               onClick={() => setEditor(null)}
@@ -227,7 +230,7 @@ export function ApprovalActions({
       )}
       {editor === 'deny' && (
         <form
-          className="flex flex-wrap items-center gap-1.5"
+          className="space-y-2"
           onSubmit={event => {
             event.preventDefault();
             if (enabled)
@@ -243,15 +246,27 @@ export function ApprovalActions({
             maxLength={2000}
             disabled={!enabled}
             value={message}
-            className="min-w-32 flex-1"
+            className="w-full"
             onChange={event => setMessage(event.target.value)}
           />
-          <Button type="submit" variant="outline" disabled={!enabled}>
-            Confirm denial
-          </Button>
-          <Button type="button" variant="ghost" onClick={() => setEditor(null)}>
-            Cancel
-          </Button>
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              disabled={!enabled}
+            >
+              Confirm denial
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditor(null)}
+            >
+              Cancel
+            </Button>
+          </div>
         </form>
       )}
     </div>

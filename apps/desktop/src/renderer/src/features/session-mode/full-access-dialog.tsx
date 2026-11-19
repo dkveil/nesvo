@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { directoryLabel } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -50,13 +51,15 @@ export function FullAccessDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Allow Full access in this session?</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-ui leading-relaxed">
             From the next turn, {provider} can run commands and change files
             without approval, including outside this folder. It can access the
             network and sensitive data available to your account.
           </DialogDescription>
         </DialogHeader>
-        <p className="break-all font-mono text-xs">{directory}</p>
+        <p className="truncate text-ui text-muted-foreground" title={directory}>
+          Session folder · {directoryLabel(directory)}
+        </p>
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
         <DialogFooter>
           <DialogCancel disabled={pending} onClick={onClose} autoFocus />

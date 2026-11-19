@@ -96,7 +96,7 @@ export function ClaudeTerminal({
               </div>
             )}
             {item.output && (
-              <pre className="overflow-x-auto rounded-surface border bg-background p-2">
+              <pre className="rounded-surface border bg-background p-2 whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {item.kind === 'file-change'
                   ? item.output.split('\n').map((line, index) => (
                       <span

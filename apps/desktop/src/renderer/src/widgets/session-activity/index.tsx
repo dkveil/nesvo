@@ -52,8 +52,14 @@ function ActivityItem({ item }: { item: Activity }) {
       data-activity-status={item.status}
       triggerLabel={`Activity: ${item.title}`}
       icon={<Icon className={failed ? 'text-error-foreground' : undefined} />}
-      title={item.title}
-      meta={activityStatusLabels[item.status]}
+      title={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">{item.title}</span>
+          <span className="shrink-0 text-2xs text-muted-foreground">
+            {activityStatusLabels[item.status]}
+          </span>
+        </span>
+      }
       contentClassName="ml-3.5 space-y-2 border-l pt-1 pb-3 pl-3"
     >
       <ActivityDetails item={item} />
@@ -64,17 +70,11 @@ function ActivityItem({ item }: { item: Activity }) {
 function ActivityDetails({ item }: { item: Activity }) {
   return (
     <>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-2xs">
-        <time dateTime={item.startedAt}>
-          Started {new Date(item.startedAt).toLocaleTimeString('en')}
+      {item.completedAt && (
+        <time dateTime={item.completedAt} className="text-2xs">
+          {elapsedLabel(item.startedAt, item.completedAt, 0)}
         </time>
-        {item.completedAt && (
-          <time dateTime={item.completedAt}>
-            Finished {new Date(item.completedAt).toLocaleTimeString('en')} ·{' '}
-            {elapsedLabel(item.startedAt, item.completedAt, 0)}
-          </time>
-        )}
-      </div>
+      )}
       {item.paths.length > 0 && (
         <ul className="space-y-1">
           {[...new Set(item.paths)].filter(Boolean).map(path => (
@@ -92,14 +92,16 @@ function ActivityDetails({ item }: { item: Activity }) {
           {item.detail}
         </p>
       )}
-      {item.detail && item.kind !== 'thinking' && (
-        <CodeBlock
-          aria-label="Activity details"
-          code={item.detail}
-          wrap
-          maxHeightClassName="max-h-48"
-        />
-      )}
+      {item.detail &&
+        item.kind !== 'thinking' &&
+        !item.paths.includes(item.detail) && (
+          <CodeBlock
+            aria-label="Activity details"
+            code={item.detail}
+            wrap
+            maxHeightClassName="max-h-48"
+          />
+        )}
       {item.output && (
         <CodeBlock
           aria-label="Command output"
@@ -185,7 +187,12 @@ export function SessionActivity({
         triggerLabel="Toggle activity"
         className="-mx-2"
         title={
-          <span className="text-muted-foreground">
+          <span className={live ? 'text-foreground' : 'text-muted-foreground'}>
+            {summary && (
+              <span className="mr-2 font-medium text-foreground">
+                Activity · {summary}
+              </span>
+            )}
             <span
               className="activity-shimmer tabular-nums"
               data-animate={live && visible}
@@ -205,7 +212,6 @@ export function SessionActivity({
                 · {running.title}
               </span>
             )}
-            {summary && <span className="ml-2 text-xs">{summary}</span>}
             {failures > 0 && (
               <span className="ml-2 text-2xs text-error-foreground">
                 {failures} failed

@@ -371,17 +371,17 @@ export function NewThread({
           />
         ) : (
           <header className="space-y-1 text-center">
-            <h2 className="text-display font-normal tracking-tight text-foreground sm:text-display-lg">
-              What should we build?
-            </h2>
-            <Hint label={setup.directory.trim() || 'Isolated folder'}>
-              <p
-                data-thread-project
-                className="truncate text-ui font-semibold text-foreground"
-              >
-                {project || 'No project'}
-              </p>
-            </Hint>
+            <h2 className="text-title font-semibold">What should we build?</h2>
+            {project && (
+              <Hint label={setup.directory.trim()}>
+                <p
+                  data-thread-project
+                  className="truncate text-xs text-muted-foreground"
+                >
+                  {project}
+                </p>
+              </Hint>
+            )}
           </header>
         )}
         <SelectSkill

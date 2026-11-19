@@ -62,13 +62,18 @@ export function ModeSwitch({
             className="min-w-0"
           >
             {chosen === 'full-access' ? (
-              <Badge size="xs" tone="warning">
+              <Badge size="sm" tone="warning" className="text-xs">
                 {label}
               </Badge>
             ) : (
               <span>{label}</span>
             )}
-            {pending && <StatusDot tone="info" label="Applies next turn" />}
+            {pending && (
+              <span className="inline-flex shrink-0 items-center gap-1 text-info-foreground">
+                <StatusDot tone="info" label="Applies next turn" />
+                <span className="text-2xs">Next turn</span>
+              </span>
+            )}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>
@@ -101,6 +106,7 @@ export function ModeSwitch({
             label="Permission mode"
             size="md"
             fullWidth
+            className="[&_[role=radio]]:text-foreground [&_[role=radio][aria-checked=true]]:font-semibold"
             disabled={!!readOnlyReason}
             describedBy={descriptionId}
             value={chosen}
@@ -117,8 +123,10 @@ export function ModeSwitch({
           id={descriptionId}
           className="space-y-1 text-xs text-muted-foreground"
         >
-          <p>{modeDescription(provider, chosen)}</p>
-          <p role={readOnlyReason ? 'note' : undefined}>
+          <p className="text-ui text-foreground">
+            {modeDescription(provider, chosen)}
+          </p>
+          <p className="text-2xs" role={readOnlyReason ? 'note' : undefined}>
             {readOnlyReason
               ? `${readOnlyReason}.`
               : 'Applies from the next turn. Shift+Tab cycles modes.'}

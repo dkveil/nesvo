@@ -67,7 +67,7 @@ export function ReasoningColumn({
         <span className="text-xs font-medium text-muted-foreground">
           Reasoning
         </span>
-        <span className="min-w-0 truncate text-2xs text-muted-foreground">
+        <span className="min-w-0 truncate text-xs font-medium text-foreground">
           {modelLabel}
         </span>
       </div>
@@ -88,6 +88,7 @@ export function ReasoningColumn({
               >
                 <ListRow
                   selected={isSelected}
+                  className={isSelected ? 'font-medium' : undefined}
                   title={option.id ? effortLabel(option.id) : 'Default'}
                   trailing={
                     <>

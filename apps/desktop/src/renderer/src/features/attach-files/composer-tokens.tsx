@@ -4,6 +4,7 @@ import type { ComposerAttachment } from './use-composer-attachments';
 
 export const composerTokens = (
   items: readonly ComposerAttachment[],
+  onRemove: (id: string) => void,
 ): ComposerEditorToken[] =>
   items.flatMap(item =>
     item.offset == null
@@ -12,7 +13,16 @@ export const composerTokens = (
           {
             id: item.localId,
             offset: item.offset,
-            content: <ComposerAttachmentToken item={item} />,
+            content: (
+              <ComposerAttachmentToken
+                item={item}
+                onRemove={
+                  item.kind === 'image'
+                    ? undefined
+                    : () => onRemove(item.localId)
+                }
+              />
+            ),
           },
         ],
   );

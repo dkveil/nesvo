@@ -31,7 +31,7 @@ const TEXT_LIMIT = 4000;
 
 export function PlanDecision({ session, actions, compact = false }: Props) {
   const plan = session.plan;
-  const [panel, setPanel] = useState<Panel>(compact ? null : 'approve');
+  const [panel, setPanel] = useState<Panel>(null);
   const [mode, setMode] = useState<SessionMode | null>(null);
   const [resolutions, setResolutions] = useState('');
   const [correction, setCorrection] = useState('');
@@ -46,7 +46,7 @@ export function PlanDecision({ session, actions, compact = false }: Props) {
   const chosen = mode ?? plan.targetMode;
   const fullWidth = compact && 'col-span-full';
   const toggle = (next: Exclude<Panel, null>) =>
-    setPanel(current => (current === next ? (compact ? null : current) : next));
+    setPanel(current => (current === next ? null : next));
   return (
     <div className={compact ? 'contents' : 'space-y-2'}>
       <div

@@ -25,7 +25,7 @@ import {
   effortLabel,
   modeLabel,
   modelLabel,
-  sessionProjectLabel,
+  directoryLabel,
   statusLabels,
   type Provider,
   type ProviderStates,
@@ -614,7 +614,9 @@ export function Conversation({
               )}
             >
               <AttachmentTray
-                items={attachments.items}
+                items={attachments.items.filter(
+                  item => item.kind === 'image' || item.offset == null,
+                )}
                 onRemove={attachments.onRemove}
               />
               {selectedSkill && (
@@ -732,7 +734,7 @@ export function Conversation({
                 }
                 value={draft}
                 tokens={[
-                  ...composerTokens(attachments.items),
+                  ...composerTokens(attachments.items, attachments.onRemove),
                   ...codeCommentTokens(codeComments, draft.length),
                 ]}
                 onChange={({ value, offsets, removed }) => {
@@ -780,7 +782,9 @@ export function Conversation({
                                 ? 'Worker approval needed'
                                 : session.pendingApprovals.length > 0
                                   ? 'Approval needed'
-                                  : modeNotice}
+                                  : running && !groupRun && !draft.trim()
+                                    ? 'Response in progress'
+                                    : modeNotice}
                     </span>
                   </>
                 }
@@ -963,7 +967,7 @@ export function Conversation({
       <section
         aria-label="Conversation"
         data-host-id={session.hostId}
-        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        className="flex min-h-0 min-w-0 flex-1 flex-col min-[1600px]:[--composer-max-width:44rem]"
       >
         <p key={session.id} role="status" className="sr-only">
           {announcement}
@@ -975,7 +979,7 @@ export function Conversation({
         >
           <div
             ref={feed}
-            className="mx-auto w-full max-w-[calc(var(--composer-max-width)+2.5rem)] space-y-8 px-5 py-10"
+            className="mx-auto w-full max-w-[calc(var(--composer-max-width)+2.5rem)] space-y-6 px-5 py-6"
           >
             {earlierAvailable && (
               <div
@@ -1011,9 +1015,16 @@ export function Conversation({
                 aria-live="polite"
                 aria-relevant="additions"
                 aria-label="Messages"
-                className="space-y-8"
+                className="space-y-6"
               >
                 {stageItems(stagesBefore)}
+                {session.messages[0]?.origin === 'imported' &&
+                  firstIndex === 0 && (
+                    <Separator
+                      label="Imported conversation · read-only at import"
+                      className="text-xs"
+                    />
+                  )}
                 {session.messages.map((message, index) => {
                   const live =
                     message.author === 'agent' &&
@@ -1088,16 +1099,15 @@ export function Conversation({
                 <section aria-label="Failed run" className="space-y-2">
                   <StatusMessage
                     tone="error"
-                    variant="notice"
-                    className="whitespace-pre-wrap"
+                    className="whitespace-pre-wrap text-ui"
                   >
                     {session.error}
                   </StatusMessage>
                   {canResend && (
                     <Button
                       type="button"
-                      size="xs"
-                      variant="outline"
+                      size="sm"
+                      variant="secondary"
                       disabled={!canSend || sending}
                       onClick={onResend}
                     >
@@ -1114,8 +1124,10 @@ export function Conversation({
                       ? interruptionLabels[session.interruption.reason]
                       : 'This run was interrupted'}
                   </span>
-                  {session.error ||
-                    'The last outcome is unconfirmed. Review the current state before continuing.'}
+                  {session.interruption?.reason === 'provider-disconnected'
+                    ? 'The provider disconnected before confirming the outcome. Review the workspace before continuing.'
+                    : session.error ||
+                      'The last outcome is unconfirmed. Review the current state before continuing.'}
                 </StatusMessage>
                 <div className="flex flex-wrap gap-2">
                   {canResend && (
@@ -1136,7 +1148,7 @@ export function Conversation({
                     disabled={!canSend || sending}
                     onClick={() => messageInput.current?.focus()}
                   >
-                    Continue conversation
+                    Write a follow-up
                   </Button>
                 </div>
               </section>
@@ -1204,11 +1216,19 @@ export function Conversation({
               </section>
             )}
             {session.pendingApprovals.map(approval => {
-              const label =
-                approval.label ??
-                (approval.kind === 'command'
-                  ? approval.detail.split('\n')[0] || approval.title
-                  : approval.title);
+              const target =
+                approval.kind === 'file-change'
+                  ? approval.allowPattern?.pattern.replace(
+                      /^[^(]+\((.*)\)$/,
+                      '$1',
+                    )
+                  : undefined;
+              const label = target
+                ? `${approval.title} · ${directoryLabel(target)}`
+                : (approval.label ??
+                  (approval.kind === 'command'
+                    ? approval.detail.split('\n')[0] || approval.title
+                    : approval.title));
               const pending =
                 !!approvalPending[
                   `${entityKey(session)}/${session.runId}/${approval.id}`
@@ -1223,20 +1243,21 @@ export function Conversation({
                   key={`${session.runId}/${approval.id}`}
                   id={`approval-${approval.id}`}
                   aria-label="Operation approval"
-                  className="min-w-0 space-y-1.5 rounded-surface border p-2"
+                  className="min-w-0 space-y-2 border-y py-2"
                 >
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         title={label}
-                        className="w-full justify-between bg-background px-2 dark:bg-background"
+                        className="w-full justify-between border-0 px-0"
+                        size="sm"
                         aria-label={`Review operation details: ${label}`}
                       >
-                        <code className="min-w-0 truncate font-mono text-xs">
+                        <span className="min-w-0 truncate text-ui">
                           {label}
-                        </code>
+                        </span>
                         <ChevronDown className="text-muted-foreground" />
                       </Button>
                     </PopoverTrigger>
@@ -1247,6 +1268,9 @@ export function Conversation({
                       padding="sm"
                       aria-label={approval.title}
                     >
+                      <p className="px-2 py-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                        {approval.directory ?? session.directory}
+                      </p>
                       <CodeBlock
                         code={approval.detail}
                         wrap
@@ -1254,12 +1278,6 @@ export function Conversation({
                       />
                     </PopoverContent>
                   </Popover>
-                  <p
-                    className="truncate px-0.5 text-2xs text-muted-foreground"
-                    title={approval.directory ?? session.directory}
-                  >
-                    {approval.directory ?? session.directory}
-                  </p>
                   <ApprovalActions
                     approval={approval}
                     sessionId={session.id}
@@ -1294,13 +1312,10 @@ export function Conversation({
           </div>
         </ScrollArea>
         {empty && !finishedWorktree && (
-          <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) space-y-1 px-5 pt-10 pb-5 text-center">
-            <h2 className="text-display font-normal tracking-tight sm:text-display-lg">
+          <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) px-5 pt-10 pb-5 text-center">
+            <h2 className="text-title font-semibold">
               What would you like to work on?
             </h2>
-            <p className="truncate text-ui font-semibold">
-              {sessionProjectLabel(session)}
-            </p>
           </div>
         )}
         <div
