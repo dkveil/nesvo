@@ -2409,6 +2409,20 @@ export class SessionService {
     return this.resolveDirectory(workspaces);
   }
 
+  recordChildMessage(sessionId: string, runId: string, childId: string): void {
+    const session = this.active.get(sessionId)?.session;
+    if (!session || session.runId !== runId) return;
+    const history = session.turnChildren ?? [];
+    const children =
+      history.find(turn => turn.runId === runId)?.sessionIds ?? [];
+    if (children.includes(childId) || children.length >= 8) return;
+    session.turnChildren = [
+      ...history.filter(turn => turn.runId !== runId),
+      { runId, sessionIds: [...children, childId] },
+    ].slice(-200);
+    this.publish(session);
+  }
+
   recordCoordinatorWait(
     sessionId: string,
     runId: string,

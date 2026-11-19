@@ -1000,6 +1000,11 @@ export class SessionControl {
         ...(input.effort === undefined ? {} : { effort: input.effort }),
         ...(input.mode ? { mode: input.mode } : {}),
       });
+      this.params.sessions.recordChildMessage(
+        coordinator.id,
+        coordinator.runId!,
+        child.id,
+      );
       return success({
         sessionId: child.id,
         messageId,

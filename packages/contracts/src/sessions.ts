@@ -580,6 +580,12 @@ export const sessionSchema = z.strictObject({
   parentRunId: z.uuid().nullable().default(null),
   scope: z.string().max(1000).nullable().default(null),
   delegationEnabled: z.boolean().default(false),
+  turnChildren: z
+    .array(
+      z.strictObject({ runId: z.uuid(), sessionIds: z.array(z.uuid()).max(8) }),
+    )
+    .max(200)
+    .optional(),
   coordinatorWait: z
     .strictObject({
       runId: z.uuid(),

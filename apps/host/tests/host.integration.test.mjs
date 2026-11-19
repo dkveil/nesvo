@@ -27546,6 +27546,12 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
     );
     assert.equal(blocked[0].result.events[0].detail, 'Keep the change small.');
     assert.equal(blocked[1].result.status, 'started');
+    const steered = (await host.request('list-sessions')).sessions.find(
+      item => item.id === coordinator.id,
+    );
+    assert.deepEqual(steered.turnChildren, [
+      { runId: steered.runId, sessionIds: [childA] },
+    ]);
     assert.deepEqual(
       blocked[2].result.events.map(event => [event.sessionId, event.type]),
       [[childA, 'finished']],
