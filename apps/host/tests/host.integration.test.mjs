@@ -31,6 +31,9 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
+const currentDatabaseVersion = 35;
+const newerDatabaseVersion = currentDatabaseVersion + 1;
+
 test(
   'D88 watchers require a fresh explicit start and reap their child before host close',
   { timeout: 45_000 },
@@ -5723,6 +5726,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
+      currentDatabaseVersion,
       37,
     );
     migrated.close();
@@ -8131,7 +8135,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 38');
+    database.exec(`PRAGMA user_version = ${newerDatabaseVersion}`);
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -8148,7 +8152,10 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 38);
+      assert.equal(
+        check.prepare('PRAGMA user_version').get().user_version,
+        newerDatabaseVersion,
+      );
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -11228,7 +11235,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            37,
+            currentDatabaseVersion,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -11315,7 +11322,7 @@ test(
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 38');
+      newer.exec(`PRAGMA user_version = ${newerDatabaseVersion}`);
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -11327,7 +11334,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          38,
+          newerDatabaseVersion,
         );
       } finally {
         check.close();
@@ -14368,7 +14375,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        37,
+        currentDatabaseVersion,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -14419,7 +14426,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        37,
+        currentDatabaseVersion,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -23984,7 +23991,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      37,
+      currentDatabaseVersion,
     );
     database
       .prepare(
@@ -24347,7 +24354,10 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 37);
+      assert.equal(
+        check.prepare('PRAGMA user_version').get().user_version,
+        currentDatabaseVersion,
+      );
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -24362,7 +24372,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        37,
+        currentDatabaseVersion,
       );
       assert.deepEqual(
         migrated
@@ -24542,7 +24552,10 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 37);
+      assert.equal(
+        check.prepare('PRAGMA user_version').get().user_version,
+        currentDatabaseVersion,
+      );
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
