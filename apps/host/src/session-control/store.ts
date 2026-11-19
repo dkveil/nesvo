@@ -545,6 +545,20 @@ export class SessionControlStore {
     return { acknowledged, alreadyHandled };
   }
 
+  acknowledgeWorkerResult(parentId: string, childId: string, runId: string) {
+    this.database
+      .prepare(
+        `
+      UPDATE coordinator_wake_events SET handled = 1
+      WHERE parent_id = ? AND handled = 0 AND batch_id IS NULL
+        AND json_extract(document, '$.sessionId') = ?
+        AND json_extract(document, '$.runId') = ?
+        AND json_extract(document, '$.type') IN ('finished', 'failed')
+    `,
+      )
+      .run(parentId, childId, runId);
+  }
+
   suppress(parentId: string, seq: number) {
     this.database
       .prepare(

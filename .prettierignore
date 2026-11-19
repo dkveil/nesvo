@@ -29,7 +29,9 @@
 !apps/host/src/providers/
 !apps/host/src/providers/**
 !apps/host/src/session-control/
-!apps/host/src/session-control/router.ts
+!apps/host/src/session-control/**
+!apps/host/src/inbox-rules/store.ts
+!apps/host/src/inbox-rules/turn-gate.ts
 !apps/host/src/sessions/
 !apps/host/src/sessions/**
 !apps/host/src/workflows/
@@ -61,6 +63,7 @@
 !scripts/
 !scripts/desktop-smoke.mjs
 !scripts/manager-import-smoke.mjs
+!scripts/d87-desktop-smoke.mjs
 !scripts/gate-rule-flow-smoke.mjs
 !scripts/g3-workers-smoke.mjs
 !scripts/desktop-package-smoke.mjs

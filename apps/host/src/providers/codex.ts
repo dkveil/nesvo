@@ -59,6 +59,7 @@ import {
 import { recordProviderProcess } from '../process/provider-processes';
 import type {
   LiveSteerOutcome,
+  SessionControlReply,
   SessionControlHandler,
   SessionControlToolDefinition,
 } from '../session-control/types';
@@ -1718,6 +1719,7 @@ export function startCodex(options: CodexRunOptions): {
   const seenCalls = new Set<string>();
   const delegationController = new AbortController();
   const pendingControls = new Map<RpcId, AbortController>();
+  const acceptedControls = new Map<string, () => void>();
   const queued: RecordValue[] = [];
   const messages = new Map<string, string>();
   const items = new Map<string, RecordValue>();
@@ -1984,7 +1986,10 @@ export function startCodex(options: CodexRunOptions): {
             { tool, input: params.arguments ?? {}, callId },
             controller.signal,
           )
-          .catch(() => ({ text: 'The Nesvo tool failed.', ok: false }))
+          .catch((): SessionControlReply => ({
+            text: 'The Nesvo tool failed.',
+            ok: false,
+          }))
           .then(result => {
             delegationController.signal.removeEventListener('abort', abort);
             if (pendingControls.get(rpcId) !== controller) return;
@@ -2013,6 +2018,8 @@ export function startCodex(options: CodexRunOptions): {
               }),
             );
             try {
+              if (result.onAccepted && text === result.text)
+                acceptedControls.set(callId, result.onAccepted);
               peer.send({
                 id: rpcId,
                 result: {
@@ -2342,6 +2349,18 @@ export function startCodex(options: CodexRunOptions): {
       const item = object(params.item);
       if (!item || typeof item.id !== 'string' || typeof item.type !== 'string')
         throw new Error('Codex returned an invalid turn item.');
+      if (
+        message.method === 'item/completed' &&
+        item.type === 'dynamicToolCall'
+      ) {
+        const accepted = acceptedControls.get(item.id);
+        acceptedControls.delete(item.id);
+        if (accepted && item.status === 'completed' && item.success !== false) {
+          try {
+            accepted();
+          } catch {}
+        }
+      }
       if (item.type === 'contextCompaction') {
         if (message.method === 'item/completed') compacted = true;
         else emit({ type: 'activity', text: 'Compacting conversation…' });

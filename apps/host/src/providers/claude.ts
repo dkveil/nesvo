@@ -2408,6 +2408,7 @@ export function startClaude(options: {
               typeof block.tool_use_id !== 'string'
             )
               continue;
+            if (block.is_error !== true) control?.accepted(block.tool_use_id);
             const previous = toolActivities.get(block.tool_use_id);
             if (!previous || previous.status !== 'running') continue;
             const failed = block.is_error === true;

@@ -1006,6 +1006,13 @@ export class InboxRules {
     );
     if (fileRules.length && finished)
       await this.filesChanged(session, runId, fileRules);
+    this.stageRecorded(
+      session,
+      session.stageRecords.filter(
+        record => record.kind === 'report' && record.source === 'answer' && record.runId === runId,
+      ),
+      false,
+    );
     return held || !!this.heldReason(session.id);
   }
 
@@ -1029,19 +1036,17 @@ export class InboxRules {
         matchesPathGlob(entry.rule.glob ?? '', path),
       );
       if (!matched.length) continue;
-      const item = this.create(entry, session, {
+      this.create(entry, session, {
         trigger: 'files-changed',
         subject: `${matched.length} matching ${matched.length === 1 ? 'file' : 'files'} changed`,
         binding: { kind: 'session', runId },
         dedupe: `files-changed:${runId}:${entry.scope}:${entry.rule.name}`,
         values: { files: matched.slice(0, 20).join(', ') },
       });
-      if (item && entry.rule.action === 'hold')
-        this.ports.sessions.holdQueue(session.id);
     }
   }
 
-  stageRecorded(session: Session, records: readonly SessionStageRecord[]) {
+  stageRecorded(session: Session, records: readonly SessionStageRecord[], holdQueue = true) {
     const turn = this.turns.get(session.id);
     if (!turn) return;
     for (const record of records) {
@@ -1067,7 +1072,7 @@ export class InboxRules {
             question: record.kind === 'question' ? record.question.question : '',
           },
         });
-        if (item && entry.rule.action === 'hold')
+        if (holdQueue && item && entry.rule.action === 'hold')
           this.ports.sessions.holdQueue(session.id);
       }
     }

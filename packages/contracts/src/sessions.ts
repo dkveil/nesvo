@@ -603,12 +603,6 @@ export const sessionSchema = z.strictObject({
   parentRunId: z.uuid().nullable().default(null),
   scope: z.string().max(1000).nullable().default(null),
   delegationEnabled: z.boolean().default(false),
-  turnChildren: z
-    .array(
-      z.strictObject({ runId: z.uuid(), sessionIds: z.array(z.uuid()).max(8) }),
-    )
-    .max(200)
-    .optional(),
   orchestrationTools: z.boolean().optional(),
   steeringRequests: z
     .array(
@@ -622,6 +616,19 @@ export const sessionSchema = z.strictObject({
       }),
     )
     .max(3)
+    .optional(),
+  turnChildren: z
+    .array(
+      z.strictObject({
+        runId: z.uuid(),
+        sessionIds: z.array(z.uuid()).max(8),
+        childRuns: z
+          .array(z.strictObject({ sessionId: z.uuid(), runId: z.uuid() }))
+          .max(8)
+          .optional(),
+      }),
+    )
+    .max(200)
     .optional(),
   coordinatorWait: z
     .strictObject({

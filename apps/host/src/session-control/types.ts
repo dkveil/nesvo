@@ -18,7 +18,11 @@ export type SessionControlCall = {
   callId: string;
 };
 
-export type SessionControlReply = { text: string; ok: boolean };
+export type SessionControlReply = {
+  text: string;
+  ok: boolean;
+  onAccepted?: () => void;
+};
 
 export type SessionControlHandler = (
   call: SessionControlCall,

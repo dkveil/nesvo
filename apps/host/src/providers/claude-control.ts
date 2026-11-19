@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SESSION_CONTROL_NAMESPACE } from '@nesvo/contracts';
 import type {
+  SessionControlReply,
   SessionControlHandler,
   SessionControlToolDefinition,
 } from '../session-control/types';
@@ -96,6 +97,7 @@ export const createClaudeControlChannel = ({
 }) => {
   const pending = new Map<string, AbortController>();
   let closed = false;
+  const acceptedCalls = new Map<string, () => void>();
   const reply = (requestId: string, mcpResponse: Record<string, unknown>) => {
     if (closed) return;
     try {
@@ -154,11 +156,15 @@ export const createClaudeControlChannel = ({
       { tool: parsed.data.name, input: parsed.data.arguments ?? {}, callId },
       controller.signal,
     )
-      .catch(() => ({ text: 'The Nesvo tool failed.', ok: false }))
+      .catch((): SessionControlReply => ({
+        text: 'The Nesvo tool failed.',
+        ok: false,
+      }))
       .then(result => {
         if (pending.get(requestId) !== controller) return;
         pending.delete(requestId);
         if (controller.signal.aborted) return;
+        if (result.onAccepted) acceptedCalls.set(callId, result.onAccepted);
         reply(requestId, {
           jsonrpc: '2.0',
           id,
@@ -171,6 +177,13 @@ export const createClaudeControlChannel = ({
   };
   return {
     pending: () => pending.size,
+    accepted: (callId: string) => {
+      const accepted = acceptedCalls.get(callId);
+      acceptedCalls.delete(callId);
+      try {
+        accepted?.();
+      } catch {}
+    },
     handle: (value: Record<string, unknown>) => {
       const parsed = mcpMessageSchema.safeParse(value);
       if (!parsed.success) {

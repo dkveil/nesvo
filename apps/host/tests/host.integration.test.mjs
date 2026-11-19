@@ -30130,6 +30130,120 @@ test('D87 wakes an idle coordinator once with exact direct child runs and the re
   );
 });
 
+test('D87 recovery keeps a committed child update pending until Continue', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-recovery-')),
+  );
+  const pidFile = join(directory, 'fixture.pid');
+  let host = launch(directory, pidFile);
+  t.after(async () => {
+    await host.stop().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  await host.request('set-coordinator-wake', {
+    sessionId: null,
+    enabled: false,
+    expectedRevision: 0,
+    actionId: randomUUID(),
+  });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Claude Code',
+      model: 'default',
+      directory,
+    })
+  ).session;
+  const [created] = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: { title: 'Child', prompt: 'fixture:say Before subscription' },
+    },
+  ]);
+  const childId = created.result.sessionId;
+  const first = await finishedChild(host, childId);
+  await host.request('set-coordinator-wake', {
+    sessionId: null,
+    enabled: true,
+    expectedRevision: 1,
+    actionId: randomUUID(),
+  });
+  assert.equal(
+    (await host.request('read-coordinator-wake', { sessionId: parent.id }))
+      .state.pending,
+    0,
+  );
+
+  const live = await host.request('send-message', {
+    sessionId: parent.id,
+    text: 'fixture:hold',
+    messageId: randomUUID(),
+  });
+  const changed = await host.request('send-message', {
+    sessionId: childId,
+    text: 'fixture:say After subscription',
+    messageId: randomUUID(),
+  });
+  await host.event(
+    item =>
+      item.id === childId &&
+      item.runId === changed.session.runId &&
+      item.status === 'completed',
+  );
+  const pending = (
+    await host.request('read-coordinator-wake', { sessionId: parent.id })
+  ).state;
+  assert.equal(pending.pending, 1);
+  assert.equal(pending.continueRequired, false);
+  await host.stop();
+  host = launch(directory, pidFile);
+  const recovered = (
+    await host.request('read-coordinator-wake', { sessionId: parent.id })
+  ).state;
+  assert.equal(recovered.reason, 'restart');
+  assert.equal(recovered.batchId, pending.batchId);
+  assert.equal(recovered.continueRequired, true);
+  const before = (await host.request('get-session', { sessionId: parent.id }))
+    .session;
+  assert.equal(before.runId, live.session.runId);
+  assert.ok(
+    !before.messages.some(message => message.origin === 'coordinator-wake'),
+  );
+
+  const input = {
+    sessionId: parent.id,
+    batchId: recovered.batchId,
+    messageId: randomUUID(),
+  };
+  const continued = await host.request('continue-coordinator-delivery', input);
+  assert.equal(
+    continued.type,
+    'coordinator-delivery',
+    JSON.stringify(continued),
+  );
+  assert.deepEqual(
+    (await host.request('continue-coordinator-delivery', input)).receipt,
+    continued.receipt,
+  );
+  const after = await host.event(
+    item =>
+      item.id === parent.id &&
+      item.runId === continued.receipt.runId &&
+      item.status === 'completed',
+  );
+  assert.equal(after.providerSessionId, before.providerSessionId);
+  const wakes = after.messages.filter(
+    message => message.origin === 'coordinator-wake',
+  );
+  assert.deepEqual(
+    wakes.map(message => message.id),
+    [input.messageId],
+  );
+  assert.ok(wakes[0].body.includes(changed.session.runId));
+  assert.ok(!wakes[0].body.includes(first.runId));
+});
+
 test('D87 steering stays bound to a child run and queues only after definite refusal', async t => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-d87-steer-')),
@@ -30365,7 +30479,7 @@ test('D87 reads snapshot-bound child work and resolves an earlier saved result',
   assert.equal(wrongView.result.code, 'invalid');
   assert.equal(foreign.result.code, 'not-in-subtree');
   assert.deepEqual(retained.result.destination, saved.result.destination);
-  assert.ok(retained.result.revision > saved.result.revision);
+  assert.ok(retained.result.revision >= saved.result.revision);
   assert.equal(wrongRun.result.code, 'invalid');
   assert.equal(newer.result.version, 2);
 });

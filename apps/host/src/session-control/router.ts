@@ -3,12 +3,14 @@ import { realpathSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import {
   createSessionSchema,
+  d87SessionControlTools,
   isProviderSessionMode,
   isWritableSessionMode,
   isSessionControlToolName,
   isStageToolName,
   latestStageReport,
   pendingStageQuestion,
+  pendingTurnQuestion,
   sessionControlLimits,
   sessionControlTools,
   stageTools,
@@ -206,6 +208,13 @@ export class SessionControl {
     this.history = new ChildHistory(hostId, secret, params.reviews);
     this.wake = new CoordinatorWake({
       ...params,
+      resultRef: (sessionId, runId) => {
+        const result = params.reviews.forRun(sessionId, runId);
+        return result ? { id: result.id, version: result.version } : null;
+      },
+      canConfigure: session =>
+        isCoordinatorCandidate(session) ||
+        this.eligible(session, this.policy()),
       eligible: session => {
         const policy = this.policy();
         return (
@@ -280,6 +289,15 @@ export class SessionControl {
     if (!isStageToolName(tool) && !sessionControlTools[tool].mutation)
       return this.execute(caller, tool, call.input, '', signal);
     const coordinator = this.params.sessions.liveControlCaller(caller);
+    if (
+      coordinator?.provider === 'Codex' &&
+      d87SessionControlTools.has(tool) &&
+      !coordinator.orchestrationTools
+    )
+      return refusal(
+        'unsupported',
+        'This Codex conversation does not have the requested tool in its recorded tool set.',
+      );
     if (signal.aborted || !coordinator)
       return refusal(
         'unsupported',
@@ -334,7 +352,11 @@ export class SessionControl {
       );
     if (stored)
       return stored.tool === tool && stored.inputHash === inputHash
-        ? (JSON.parse(stored.result) as SessionControlReply)
+        ? this.acceptance(
+            caller,
+            tool,
+            JSON.parse(stored.result) as SessionControlReply,
+          )
         : conflict();
     const running = this.inFlight.get(actionId);
     const bound = tool + ':' + inputHash;
@@ -360,7 +382,7 @@ export class SessionControl {
           JSON.stringify(recorded),
           inputHash,
         );
-        return recorded;
+        return this.acceptance(caller, tool, recorded);
       })
       .finally(() => {
         this.inFlight.delete(actionId);
@@ -368,6 +390,39 @@ export class SessionControl {
       });
     this.inFlight.set(actionId, execution);
     return execution;
+  }
+
+  private acceptance(
+    caller: SessionControlCaller,
+    tool: string,
+    reply: SessionControlReply,
+  ): SessionControlReply {
+    if (!reply.ok || tool !== 'session_delegate') return reply;
+    const { results } = JSON.parse(reply.text) as {
+      results?: { childSessionId: string | null; childRunId?: string }[];
+    };
+    if (!results?.length) return reply;
+    return {
+      ...reply,
+      onAccepted: () => {
+        const live = this.params.sessions.liveControlCaller(caller);
+        if (!live) return;
+        this.params.store.transaction(() => {
+          for (const { childSessionId, childRunId } of results)
+            if (
+              childSessionId &&
+              childRunId &&
+              this.params.sessions.snapshot(childSessionId)?.parentId ===
+                live.id
+            )
+              this.params.store.acknowledgeWorkerResult(
+                live.id,
+                childSessionId,
+                childRunId,
+              );
+        });
+      },
+    };
   }
 
   continueWorker(input: ContinueWorkerInput): Session {
@@ -393,6 +448,15 @@ export class SessionControl {
   }
 
   continue(input: ContinueCoordinatorInput): Session {
+    const already = this.params.sessions.snapshot(input.sessionId);
+    if (
+      already?.messages.some(
+        message =>
+          message.id === input.messageId &&
+          message.origin === 'coordinator-wake',
+      )
+    )
+      return already;
     const wake = this.wake.state(input.sessionId);
     if (wake.batchId) {
       this.wake.continue(
@@ -475,6 +539,7 @@ export class SessionControl {
     child: Session,
     type: 'finished' | 'failed' | 'plan-ready' | 'question',
     decisionRecordId?: string,
+    enqueue = true,
   ) {
     if (
       !child.parentId ||
@@ -485,14 +550,17 @@ export class SessionControl {
       return;
     const parent = this.params.sessions.snapshot(child.parentId);
     if (!parent) return;
+    const question = type === 'question' ? pendingStageQuestion(child) : null;
     const summary =
-      type === 'question'
-        ? 'A child asked a question.'
-        : type === 'plan-ready'
-          ? 'A child returned a plan.'
-          : type === 'finished'
-            ? 'A child finished its turn.'
-            : 'A child run failed.';
+      question && question.id === decisionRecordId
+        ? `${child.title} asks a ${question.question.kind} question.${question.question.kind === 'technical' ? ' Answer it with session_answer.' : ' The owner answers it.'}`
+        : type === 'question'
+          ? 'A child asked a question.'
+          : type === 'plan-ready'
+            ? 'A child returned a plan.'
+            : type === 'finished'
+              ? 'A child finished its turn.'
+              : 'A child run failed.';
     this.params.store.appendEvent(
       {
         parentId: parent.id,
@@ -502,12 +570,13 @@ export class SessionControl {
         status: child.status,
         summary,
         decisionRecordId,
+        detail: question?.question.question,
       },
       {
         key: [parent.id, child.id, child.runId, type, decisionRecordId].join(
           ':',
         ),
-        enabled: this.wake.enabled(parent),
+        enabled: enqueue && this.wake.enabled(parent),
         now: Date.now(),
       },
     );
@@ -521,7 +590,15 @@ export class SessionControl {
   captureTerminal(child: Session) {
     if (child.status !== 'completed' && child.status !== 'failed') return;
     const question = pendingStageQuestion(child);
-    if (child.status === 'completed' && question?.runId === child.runId) return;
+    if (child.status === 'completed' && question?.runId === child.runId) {
+      this.capture(child, 'finished', undefined, false);
+      return;
+    }
+    const turnQuestion = pendingTurnQuestion(child);
+    if (child.status === 'completed' && turnQuestion?.runId === child.runId) {
+      this.capture(child, 'question', turnQuestion.messageId);
+      return;
+    }
     if (
       child.status === 'completed' &&
       child.plan?.status === 'plan-ready' &&
@@ -988,6 +1065,17 @@ export class SessionControl {
     });
   }
 
+  private requireVisibleRun(sessionId: string, runId: string) {
+    const gate = this.params.gate(sessionId, runId);
+    if (gate)
+      throw new ChildRefusal(
+        gate === 'hold' ? 'busy' : 'forbidden-by-policy',
+        gate === 'hold'
+          ? 'The child outcome is waiting for an Inbox decision.'
+          : 'An Inbox decision declined delivery of this outcome.',
+      );
+  }
+
   private staleDecision(
     coordinator: Session,
     input: { expectedRunId?: string; decisionRecordId?: string },
@@ -1000,7 +1088,10 @@ export class SessionControl {
         message.origin === 'coordinator-wake',
     );
     return (
-      (wake || !!input.expectedRunId || !!input.decisionRecordId) &&
+      ((wake &&
+        (coordinator.provider !== 'Codex' || coordinator.orchestrationTools)) ||
+        !!input.expectedRunId ||
+        !!input.decisionRecordId) &&
       (!recordId ||
         !runId ||
         input.decisionRecordId !== recordId ||
@@ -1169,6 +1260,17 @@ export class SessionControl {
             ),
           },
         );
+        if (
+          signal.aborted ||
+          !this.params.sessions.liveControlCaller({
+            sessionId: coordinator.id,
+            runId: coordinator.runId!,
+          })
+        )
+          return refusal(
+            'unsupported',
+            'The sending turn ended before the child message could start.',
+          );
         if (!this.params.store.child(child.id))
           this.params.store.saveChild({
             sessionId: child.id,
@@ -1179,13 +1281,19 @@ export class SessionControl {
             plan: null,
           });
         const messageId = derivedId(actionId, 'message');
-        this.params.sessions.queue({
+        const queued = this.params.sessions.queue({
           sessionId: child.id,
           messageId,
           text: workerBase
             ? `${input.prompt}\n\nSave your result as commits on ${child.worktree?.branch}. The operator reviews the diff and decides whether to merge.`
             : input.prompt,
         });
+        this.params.sessions.recordChildMessage(
+          coordinator.id,
+          coordinator.runId!,
+          child.id,
+          queued.messages.find(message => message.id === messageId)?.runId,
+        );
         return success({
           sessionId: child.id,
           messageId,
@@ -1231,7 +1339,7 @@ export class SessionControl {
           );
       }
       const messageId = derivedId(actionId, 'message');
-      this.params.sessions.queue({
+      const queued = this.params.sessions.queue({
         sessionId: child.id,
         messageId,
         text: input.text,
@@ -1243,6 +1351,7 @@ export class SessionControl {
         coordinator.id,
         coordinator.runId!,
         child.id,
+        queued.messages.find(message => message.id === messageId)?.runId,
       );
       return success({
         sessionId: child.id,
@@ -1254,7 +1363,8 @@ export class SessionControl {
       const child = this.child(coordinator, input.sessionId);
       if (
         !policy.providers.includes(child.provider) ||
-        !policy.childModes.includes(child.mode)
+        !policy.childModes.includes(child.mode) ||
+        (policy.models.length > 0 && !policy.models.includes(child.model))
       )
         return refusal(
           'forbidden-by-policy',
@@ -1267,11 +1377,30 @@ export class SessionControl {
     session_read: ({ coordinator, input }) => {
       const child = this.child(coordinator, input.sessionId);
       this.history.checkRate(coordinator.id);
-      return success(this.history.read(coordinator.id, child, input));
+      if (input.runId) this.requireVisibleRun(child.id, input.runId);
+      const unreadable = new Set(
+        [...new Set(child.messages.map(message => message.runId))].filter(
+          runId => this.params.gate(child.id, runId),
+        ),
+      );
+      const snapshot = !unreadable.size
+        ? child
+        : {
+            ...child,
+            messages: child.messages.filter(
+              item => !unreadable.has(item.runId),
+            ),
+            activities: child.activities.filter(
+              item => !unreadable.has(item.runId),
+            ),
+          };
+      const page = this.history.read(coordinator.id, snapshot, input);
+      return success({ ...page, omitted: page.omitted || !!unreadable.size });
     },
     session_result: ({ coordinator, input }) => {
       const child = this.child(coordinator, input.sessionId);
       this.history.checkRate(coordinator.id);
+      this.requireVisibleRun(child.id, input.runId);
       return success(this.history.result(child, input));
     },
     session_status: ({ coordinator, input }) => {
