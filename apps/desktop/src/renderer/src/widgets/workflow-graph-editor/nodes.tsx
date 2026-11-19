@@ -68,15 +68,14 @@ export type EditorCanvasNode = StepNode | StartNode | PlaceholderNode;
 const handleClass =
   '!size-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground transition-colors duration-fast ease-out';
 
-const card =
-  'group/node relative flex items-center gap-2.5 rounded-overlay border bg-card pr-3 pl-2 text-left shadow-xs transition-[border-color,box-shadow] duration-fast ease-out';
+const nodeClass =
+  'group/node relative flex items-center rounded-overlay border border-transparent border-b-border bg-background px-3 text-left transition-[border-color,box-shadow] duration-fast ease-out';
 
 const stepNodeSize = { width: NODE_WIDTH_PX, height: NODE_HEIGHT_PX };
 
 const startNodeSize = { width: START_NODE_WIDTH_PX, height: NODE_HEIGHT_PX };
 
-const tile =
-  'flex size-10 shrink-0 items-center justify-center rounded-surface bg-accent text-muted-foreground';
+const glyph = 'flex size-5 shrink-0 items-center justify-center';
 
 const stepDetail = (step: EditorNode['step']) => {
   if (step.type === 'human') return 'Waits for your decision';
@@ -185,7 +184,7 @@ export function StepNodeView({
             aria-label={`Actions for ${step.name}`}
             onMouseEnter={enter}
             onMouseLeave={leave}
-            className="flex items-center gap-0.5 rounded-surface border bg-card p-0.5 shadow-(--popover-shadow)"
+            className="flex items-center gap-0.5 rounded-surface border bg-popover p-0.5 shadow-(--popover-shadow)"
           >
             <IconButton
               size={24}
@@ -227,18 +226,24 @@ export function StepNodeView({
         }
         style={{ ...stepNodeSize, width: data.width ?? stepNodeSize.width }}
         className={cn(
-          card,
+          nodeClass,
           selected && 'border-ring shadow-[0_0_0_1px_var(--ring)]',
           editable && !selected && hovered && 'border-foreground/25',
           !selected && errors > 0 && 'border-error-foreground/60',
         )}
       >
-        <span className={cn(tile, typeTileTone[step.type])}>
-          <StepGlyph type={step.type} className="size-4.5 text-current" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="min-w-0 truncate text-ui font-medium">
+        <div className="min-w-0 flex-1 self-start pt-1.5">
+          <div className="flex h-6 items-center gap-2">
+            <span
+              data-node-glyph
+              className={cn(glyph, typeTileTone[step.type])}
+            >
+              <StepGlyph type={step.type} className="size-4.5 text-current" />
+            </span>
+            <span
+              data-node-title
+              className="min-w-0 truncate text-ui font-medium"
+            >
               {step.name}
             </span>
             {isDraftStep(step) && (
@@ -249,53 +254,58 @@ export function StepNodeView({
             {addedByAssistant && !isDraftStep(step) && (
               <AddedByAssistantBadge />
             )}
+            <div
+              data-node-status
+              className="ml-auto flex shrink-0 items-center"
+            >
+              {run ? (
+                <span
+                  className="flex items-center gap-1 text-2xs tabular-nums"
+                  aria-label={`${stepStateLabels[run.state]}${run.attempts > 1 ? `, attempt ${run.attempts}` : ''}`}
+                >
+                  {run.attempts > 1 && (
+                    <span className="text-muted-foreground">
+                      ×{run.attempts}
+                    </span>
+                  )}
+                  <StepStateIcon state={run.state} className="size-4" />
+                </span>
+              ) : errors > 0 || warnings > 0 ? (
+                <span className="flex items-center gap-1.5 text-2xs tabular-nums">
+                  {errors > 0 && (
+                    <span
+                      role="img"
+                      aria-label={`${errors} ${errors === 1 ? 'error' : 'errors'}`}
+                      className="inline-flex items-center gap-0.5 text-error-foreground"
+                    >
+                      <StatusIcon status="error" />
+                      {errors}
+                    </span>
+                  )}
+                  {warnings > 0 && (
+                    <span
+                      role="img"
+                      aria-label={`${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`}
+                      className="inline-flex items-center gap-0.5 text-warning-foreground"
+                    >
+                      <StatusIcon status="warning" />
+                      {warnings}
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <StatusDot size="md" tone={dotTones[tone]} />
+              )}
+            </div>
           </div>
           <div
             className={cn(
-              'line-clamp-2 text-muted-foreground [overflow-wrap:anywhere]',
-              editable ? 'text-2xs leading-4' : 'text-ui',
+              'line-clamp-2 pl-7 leading-4 text-muted-foreground [overflow-wrap:anywhere]',
+              editable ? 'text-2xs' : 'text-xs',
             )}
           >
             {subtitle}
           </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1 self-start pt-2.5">
-          {run ? (
-            <span
-              className="flex items-center gap-1 text-2xs tabular-nums"
-              aria-label={`${stepStateLabels[run.state]}${run.attempts > 1 ? `, attempt ${run.attempts}` : ''}`}
-            >
-              {run.attempts > 1 && (
-                <span className="text-muted-foreground">×{run.attempts}</span>
-              )}
-              <StepStateIcon state={run.state} className="size-4" />
-            </span>
-          ) : errors > 0 || warnings > 0 ? (
-            <span className="flex items-center gap-1.5 text-2xs tabular-nums">
-              {errors > 0 && (
-                <span
-                  role="img"
-                  aria-label={`${errors} ${errors === 1 ? 'error' : 'errors'}`}
-                  className="inline-flex items-center gap-0.5 text-error-foreground"
-                >
-                  <StatusIcon status="error" />
-                  {errors}
-                </span>
-              )}
-              {warnings > 0 && (
-                <span
-                  role="img"
-                  aria-label={`${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`}
-                  className="inline-flex items-center gap-0.5 text-warning-foreground"
-                >
-                  <StatusIcon status="warning" />
-                  {warnings}
-                </span>
-              )}
-            </span>
-          ) : (
-            <StatusDot size="md" tone={dotTones[tone]} />
-          )}
         </div>
         <Handle
           id="in"
@@ -380,17 +390,21 @@ export function StartNodeView({ data, selected }: NodeProps<StartNode>) {
       onMouseLeave={leave}
       style={startNodeSize}
       className={cn(
-        'group/node relative flex items-center gap-2.5 rounded-l-composer rounded-r-overlay border bg-card pr-3 pl-2 shadow-xs transition-[border-color,box-shadow] duration-fast ease-out',
+        nodeClass,
         selected && 'border-ring shadow-[0_0_0_1px_var(--ring)]',
         !selected && hovered && 'border-foreground/25',
       )}
     >
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/12 text-primary">
-        <Zap aria-hidden="true" className="size-4.5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-ui font-medium">Start</div>
-        <div className="truncate text-2xs leading-4 text-muted-foreground">
+      <div className="min-w-0 flex-1 self-start pt-1.5">
+        <div className="flex h-6 items-center gap-2">
+          <span data-node-glyph className={cn(glyph, 'text-primary')}>
+            <Zap aria-hidden="true" className="size-4.5" />
+          </span>
+          <span data-node-title className="text-ui font-medium">
+            Start
+          </span>
+        </div>
+        <div className="truncate pl-7 text-2xs leading-4 text-muted-foreground">
           {triggers}
         </div>
       </div>

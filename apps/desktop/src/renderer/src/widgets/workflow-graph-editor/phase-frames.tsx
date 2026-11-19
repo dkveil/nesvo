@@ -32,14 +32,14 @@ export function PhaseFrames({ nodes }: Props) {
           key={frame.phase}
           aria-hidden="true"
           data-phase-frame={frame.phase}
-          className="pointer-events-none absolute rounded-composer border border-dashed border-foreground/15"
+          className="pointer-events-none absolute border-t border-border"
           style={{
             transform: `translate(${frame.x}px, ${frame.y}px)`,
             width: frame.width,
             height: frame.height,
           }}
         >
-          <span className="absolute top-1.5 left-3 flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+          <span className="absolute top-2 left-3 flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
             <StatusDot tone={dotTones[phaseTones[frame.phase]]} />
             {phaseLabels[frame.phase]}
           </span>

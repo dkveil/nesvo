@@ -95,6 +95,9 @@ function PhaseWarning({
   );
 }
 
+const inlineFieldClass =
+  'grid-cols-[7rem_minmax(0,1fr)] [&_label]:text-ui [&_label]:leading-5';
+
 export function StepInspectorForm({
   step,
   mode,
@@ -185,7 +188,7 @@ export function StepInspectorForm({
         if (!blocked && !pendingPhase) onSave();
       }}
     >
-      <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         <div className="flex items-center gap-1.5">
           <Badge appearance="outline">{scopeLabels[step.scope]}</Badge>
           {mode === 'create' && <Badge>New step</Badge>}
@@ -226,7 +229,13 @@ export function StepInspectorForm({
             )}
           />
         </Field>
-        <Field id={fieldId('type')} label="Type" messages={notesOf('type')}>
+        <Field
+          id={fieldId('type')}
+          layout="inline"
+          className={inlineFieldClass}
+          label="Type"
+          messages={notesOf('type')}
+        >
           <Select
             value={step.type}
             onValueChange={type =>
@@ -250,7 +259,13 @@ export function StepInspectorForm({
             </SelectContent>
           </Select>
         </Field>
-        <Field id={fieldId('phase')} label="Phase" messages={notesOf('phase')}>
+        <Field
+          id={fieldId('phase')}
+          layout="inline"
+          className={inlineFieldClass}
+          label="Phase"
+          messages={notesOf('phase')}
+        >
           <Select
             value={pendingPhase ?? step.phase}
             onValueChange={value => choosePhase(value as StepPhase)}
@@ -432,7 +447,12 @@ export function StepInspectorForm({
           </>
         )}
         {step.type === 'agent' && (
-          <Field id={fieldId('skill-provider')} label="Skill provider">
+          <Field
+            id={fieldId('skill-provider')}
+            layout="inline"
+            className={inlineFieldClass}
+            label="Skill provider"
+          >
             <Select
               value={provider}
               onValueChange={value =>
@@ -588,6 +608,7 @@ export function StepInspectorForm({
           >
             <SegmentedControl
               fullWidth
+              className="[&_[role=radio]]:text-ui [&_[role=radio]]:leading-5"
               label="On failure"
               value={step.on_fail}
               disabled={human}

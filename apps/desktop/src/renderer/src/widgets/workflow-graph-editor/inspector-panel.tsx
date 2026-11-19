@@ -27,7 +27,6 @@ import {
   type NodeIssue,
 } from '@/entities/workflow-graph';
 import type { ProviderStates } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
 import { IconButton } from '@/shared/ui/icon-button';
 import { PanelHeader } from '@/shared/ui/panel';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
@@ -120,9 +119,14 @@ export function InspectorPanel({
     <aside
       aria-label="Inspector"
       data-editor-inspector={selection.kind}
-      className="flex w-76 shrink-0 flex-col border-l bg-background xl:w-80"
+      className="flex w-76 shrink-0 flex-col border-l bg-popover xl:w-80"
     >
-      <PanelHeader icon={header.icon} title={header.title} meta={header.meta}>
+      <PanelHeader
+        className="[&>span]:text-ui"
+        icon={header.icon}
+        title={header.title}
+        meta={header.meta}
+      >
         <IconButton
           label="Close inspector"
           onClick={() => state.select({ kind: 'none' })}
@@ -164,7 +168,7 @@ export function InspectorPanel({
               <span className="min-w-0 flex-1 truncate font-medium">
                 {node.id}
               </span>
-              <span className="shrink-0 text-2xs text-muted-foreground">
+              <span className="shrink-0 text-ui text-muted-foreground">
                 {phaseLabels[node.step.phase]}
                 {runStep.attempts > 1 ? ` · attempt ${runStep.attempts}` : ''}
               </span>
@@ -177,15 +181,6 @@ export function InspectorPanel({
               onInbox={onInbox}
               onSession={onSession}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="text-muted-foreground"
-              onClick={() => state.select({ kind: 'none' })}
-            >
-              Close
-            </Button>
           </div>
         )}
         {node && !showResult && (

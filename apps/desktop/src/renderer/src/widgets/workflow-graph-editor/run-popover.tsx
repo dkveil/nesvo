@@ -123,6 +123,7 @@ export function RunPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent
+        surface="solid"
         align="end"
         size="md"
         className="space-y-3"
