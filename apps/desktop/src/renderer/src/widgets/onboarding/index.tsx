@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
-import { managerImportSources } from '@nesvo/contracts';
+import {
+  managerImportSources,
+  type ManagerImportSource,
+} from '@nesvo/contracts';
 import type { Provider } from '@/entities/session';
 import { useDefaultSessionFolders } from '@/features/default-session-folder';
 import {
   ManagerImportPicker,
   type DetectedImports,
 } from '@/features/import-manager';
+import { managerImportSummary } from '@/features/import-manager/summary';
 import { Button } from '@/shared/ui/button';
 import { Progress } from '@/shared/ui/progress';
 import { SectionLabel } from '@/shared/ui/section-label';
@@ -35,7 +39,7 @@ const steps = [
   {
     id: 'import',
     title: 'Import sessions',
-    description: 'Bring existing conversations and their groups into Nesvo.',
+    description: 'Select the sessions and groups to bring into Nesvo.',
   },
   {
     id: 'computers',
@@ -66,6 +70,7 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   const [stepId, setStepId] = useState<(typeof steps)[number]['id']>('welcome');
   const [editingComputer, setEditingComputer] = useState(false);
   const [detected, setDetected] = useState<DetectedImports>();
+  const [importSource, setImportSource] = useState<ManagerImportSource>();
   const [checkingImports, setCheckingImports] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importCompleted, setImportCompleted] = useState(false);
@@ -78,6 +83,20 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   );
   const index = visibleSteps.findIndex(step => step.id === stepId);
   const step = visibleSteps[index] ?? steps[0];
+  const foundSource =
+    importSource && detected?.[importSource]
+      ? importSource
+      : managerImportSources.find(source => detected?.[source]);
+  const found = foundSource && detected?.[foundSource];
+  const heading =
+    step.id === 'import' &&
+    foundSource &&
+    found &&
+    (found.groupCount || found.sessionCount)
+      ? { ...step, title: managerImportSummary(foundSource, found, true) }
+      : 'title' in step
+        ? step
+        : undefined;
   const last = step.id === 'finish';
   const folder = defaultFolders.folders.local ?? null;
   useEffect(() => {
@@ -140,11 +159,7 @@ export function Onboarding({ onStartSession, onClose }: Props) {
             value={((index + 1) / visibleSteps.length) * 100}
           />
         </header>
-        <OnboardingStepLayout
-          key={step.id}
-          step={step.id}
-          heading={'title' in step ? step : undefined}
-        >
+        <OnboardingStepLayout key={step.id} step={step.id} heading={heading}>
           {step.id === 'welcome' && <WelcomeStep />}
           {step.id === 'providers' && (
             <ProvidersStep
@@ -158,8 +173,10 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               api={api}
               computer={local}
               detected={detected}
+              initialSource={foundSource}
               onBusyChange={setImporting}
               onImported={() => setImportCompleted(true)}
+              onSourceChange={setImportSource}
             />
           )}
           {step.id === 'computers' && (

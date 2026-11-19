@@ -106,15 +106,32 @@ export async function smokeManagerImport() {
       .click();
     await guide.getByRole('button', { name: 'Continue', exact: true }).click();
     await guide
-      .getByRole('heading', { name: 'Import sessions', exact: true })
+      .getByRole('heading', {
+        name: 'We found T3 Code with 1 project and 6 sessions',
+        exact: true,
+      })
       .waitFor();
-    await guide.getByText('1 project · 5 sessions', { exact: true }).waitFor();
+    await guide
+      .getByRole('button', { name: 'Skip import', exact: true })
+      .waitFor();
+    const source = guide.getByRole('combobox', { name: 'Source' });
+    await source.click();
+    await page.getByRole('option', { name: 'Agent Deck', exact: true }).click();
+    const deckHeading = guide.getByRole('heading', {
+      name: /^We found Agent Deck with /,
+    });
+    await deckHeading.waitFor();
+    await guide.getByRole('button', { name: 'Back', exact: true }).click();
+    await guide.getByRole('button', { name: 'Continue', exact: true }).click();
+    await deckHeading.waitFor();
+    assert.equal(await source.innerText(), 'Agent Deck');
+    await source.click();
+    await page.getByRole('option', { name: 'T3 Code', exact: true }).click();
     if (screenshotDirectory) {
       const response = await fetch('http://127.0.0.1:9246/json/version');
       assert.ok(response.ok);
     }
     await shot('onboarding');
-    await guide.getByRole('button', { name: 'Choose what to import' }).click();
     await guide
       .getByRole('button', { name: 'Expand Release workspace' })
       .click();
@@ -129,8 +146,25 @@ export async function smokeManagerImport() {
         .isDisabled(),
     );
     await guide
-      .getByText('The provider transcript is missing.', { exact: true })
+      .getByText('Worktree removed, resumes in the project folder.', {
+        exact: true,
+      })
       .waitFor();
+    const project = guide.getByRole('checkbox', {
+      name: 'Select Release workspace',
+      exact: true,
+    });
+    await project.check();
+    assert.equal(
+      await guide
+        .getByRole('checkbox', {
+          name: 'Select Removed worktree with history and resume in the project folder',
+          exact: true,
+        })
+        .isChecked(),
+      false,
+    );
+    await project.uncheck();
     await guide
       .getByRole('checkbox', { name: 'Select Release notes', exact: true })
       .check();

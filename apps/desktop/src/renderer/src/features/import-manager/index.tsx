@@ -26,11 +26,8 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { managerImportSummary, managerLabels } from './summary';
 
-const labels: Record<ManagerImportSource, string> = {
-  't3-code': 'T3 Code',
-  'agent-deck': 'Agent Deck',
-};
 export type DetectedImports = Partial<
   Record<ManagerImportSource, ManagerImportCatalog>
 >;
@@ -40,23 +37,16 @@ type Props = {
   api: Api;
   computer: Computer | undefined;
   detected?: DetectedImports;
+  initialSource?: ManagerImportSource;
   onBusyChange?: (busy: boolean) => void;
   onImported?: () => void;
+  onSourceChange?: (source: ManagerImportSource) => void;
 };
 
 const available = (row: ManagerImportRow) =>
   row.kind === 'group' || row.disposition !== 'blocked';
 
-const quantity = (count: number, noun: string) =>
-  `${count} ${noun}${count === 1 ? '' : 's'}`;
-
-function summary(source: ManagerImportSource, catalog: ManagerImportCatalog) {
-  const organization =
-    source === 't3-code'
-      ? quantity(catalog.groupCount, 'project')
-      : `${quantity(catalog.profileCount, 'profile')}, ${quantity(catalog.groupCount, 'group')}`;
-  return `${organization} · ${quantity(catalog.sessionCount, 'session')}`;
-}
+const fallbackNote = 'Worktree removed, resumes in the project folder.';
 
 function Result({
   result,
@@ -97,15 +87,19 @@ export function ManagerImportPicker({
   api,
   computer,
   detected,
+  initialSource,
   onBusyChange,
   onImported,
+  onSourceChange,
 }: Props) {
   const sourceId = useId();
   const rootId = useId();
   const sources = detected
     ? managerImportSources.filter(source => detected[source])
     : managerImportSources;
-  const [source, setSource] = useState(sources[0] ?? 't3-code');
+  const [source, setSource] = useState(
+    initialSource ?? sources[0] ?? 't3-code',
+  );
   const [root, setRoot] = useState<string>();
   const [customRoot, setCustomRoot] = useState(false);
   const [path, setPath] = useState('');
@@ -133,6 +127,7 @@ export function ManagerImportPicker({
             disabled={busy}
             onValueChange={value => {
               setSource(value as ManagerImportSource);
+              onSourceChange?.(value as ManagerImportSource);
               setRoot(undefined);
               setPath('');
               setCustomRoot(false);
@@ -144,7 +139,7 @@ export function ManagerImportPicker({
             <SelectContent>
               {sources.map(value => (
                 <SelectItem key={value} value={value}>
-                  {labels[value]}
+                  {managerLabels[value]}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -212,7 +207,7 @@ export function ManagerImportPicker({
         root={root}
         initial={root ? undefined : detected?.[active]}
         onboarding={!!detected}
-        showSourceLabel={sources.length === 1}
+        showSourceLabel={!detected && sources.length === 1}
         onRoot={setRoot}
         onImported={onImported}
         onBusy={value => {
@@ -248,7 +243,6 @@ function ImportRows({
   onImported?: () => void;
 }) {
   const [catalog, setCatalog] = useState(initial);
-  const [showList, setShowList] = useState(!onboarding);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [result, setResult] = useState<ManagerImportResult>();
@@ -290,7 +284,10 @@ function ImportRows({
   }
 
   const subtree = (row: ManagerImportRow): ManagerImportRow[] =>
-    [row, ...(tree.get(row.key) ?? []).flatMap(subtree)].filter(available);
+    [row, ...(tree.get(row.key) ?? []).flatMap(subtree)].filter(
+      item =>
+        available(item) && (item.kind === 'group' || !item.workspaceFallback),
+    );
 
   const toggle = (items: ManagerImportRow[], checked: boolean) => {
     const next = new Set(selected);
@@ -358,7 +355,13 @@ function ImportRows({
           requestId: crypto.randomUUID(),
           selected: rows
             .filter(row => selected.has(row.key))
-            .map(({ key, revision }) => ({ key, revision })),
+            .map(row => ({
+              key: row.key,
+              revision: row.revision,
+              ...(row.kind === 'session' && row.workspaceFallback
+                ? { useProjectFolder: true as const }
+                : {}),
+            })),
         },
         hostId,
       );
@@ -372,7 +375,12 @@ function ImportRows({
           ...catalog,
           rows: rows.map(row =>
             row.kind === 'session' && adopted.has(row.key)
-              ? { ...row, disposition: 'existing', reason: null }
+              ? {
+                  ...row,
+                  disposition: 'existing',
+                  reason: null,
+                  workspaceFallback: undefined,
+                }
               : row,
           ),
         });
@@ -396,6 +404,11 @@ function ImportRows({
       const open = expanded.has(row.key);
       const children = tree.get(row.key);
       const reasonId = `${rowPrefix}-${row.key}`;
+      const fallback = row.kind === 'session' && row.workspaceFallback;
+      const reason =
+        row.kind === 'session'
+          ? (row.reason ?? (fallback ? fallbackNote : null))
+          : null;
       const details = [
         row.profile,
         row.kind === 'session' ? row.provider : null,
@@ -412,20 +425,12 @@ function ImportRows({
             density="two-line"
             level={level}
             title={row.title}
-            description={
-              row.kind === 'session' && row.reason ? (
-                <span id={reasonId}>{row.reason}</span>
-              ) : (
-                details
-              )
-            }
+            description={reason ? <span id={reasonId}>{reason}</span> : details}
             meta={isGroup && children ? String(children.length) : undefined}
             leading={
               <Checkbox
-                aria-label={`Select ${row.title}${row.profile ? ` in ${row.profile}` : ''}`}
-                aria-describedby={
-                  row.kind === 'session' && row.reason ? reasonId : undefined
-                }
+                aria-label={`Select ${row.title}${row.profile ? ` in ${row.profile}` : ''}${fallback ? ' and resume in the project folder' : ''}`}
+                aria-describedby={reason ? reasonId : undefined}
                 checked={
                   checked === items.length
                     ? true
@@ -473,36 +478,26 @@ function ImportRows({
         <div className="space-y-1">
           {showSourceLabel && (
             <SectionLabel as="h2" className="px-0">
-              {labels[source]}
+              {managerLabels[source]}
             </SectionLabel>
           )}
-          {hasItems && (
+          {hasItems && !onboarding && (
             <p className="text-ui text-muted-foreground">
-              {summary(source, catalog)}
+              {managerImportSummary(source, catalog)}
             </p>
           )}
         </div>
-        {onboarding && hasItems && !showList ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setShowList(true)}
-          >
-            Choose what to import
-          </Button>
-        ) : (
-          <IconButton
-            label="Refresh import sources"
-            disabled={loading || importing || appending}
-            onClick={() => void read()}
-          >
-            <RefreshCw />
-          </IconButton>
-        )}
+        <IconButton
+          label="Refresh import sources"
+          disabled={loading || importing || appending}
+          onClick={() => void read()}
+        >
+          <RefreshCw />
+        </IconButton>
       </div>
       {loading && (
         <StatusMessage tone="loading">
-          Checking this computer for {labels[source]} sessions…
+          Checking this computer for {managerLabels[source]} sessions…
         </StatusMessage>
       )}
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
@@ -536,7 +531,7 @@ function ImportRows({
         </StatusMessage>
       )}
       {result && <Result result={result} rows={rows} />}
-      {showList && hasItems && !loading && (
+      {hasItems && !loading && (
         <>
           <div className="border-y" aria-label="Import selection">
             {renderRows(null)}
