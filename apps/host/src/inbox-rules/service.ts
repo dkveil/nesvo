@@ -97,7 +97,6 @@ export type InboxRulesPorts = {
   changes: (sessionId: string, signal: AbortSignal) => Promise<SessionChanges>;
   group: (groupId: string) => SessionGroup | undefined;
   workflowRun: (runId: string) => WorkflowRun | undefined;
-  runCost: (runId: string) => number | null;
   actOnPullRequest: (
     input: z.output<typeof actOnPullRequestSchema>,
   ) => Promise<PullRequestActionResult>;
@@ -624,7 +623,10 @@ export class InboxRules {
     const planReady =
       session.plan?.status === 'plan-ready' && session.plan.runId === runId;
     const finished = session.status === 'completed' || session.status === 'failed';
-    const cost = this.ports.runCost(runId);
+    const usage = session.messages.findLast(
+      message => message.runId === runId && message.author === 'agent',
+    )?.usage;
+    const cost = usage?.source === 'provider-report' ? usage.costUsd : null;
     for (const entry of turn.rules) {
       const { rule } = entry;
       if (rule.trigger === 'plan-ready' && planReady)

@@ -556,14 +556,6 @@ export const serveHost = ({
               sessionChanges.read({ sessionId }, signal),
             group: groupId => groupStore.get(groupId),
             workflowRun: runId => workflowRunStore.getRun(runId),
-            runCost: runId => {
-              const row = database
-                .prepare(
-                  'SELECT SUM(cost_usd) AS cost FROM cost_turns WHERE run_id = ?',
-                )
-                .get(runId);
-              return typeof row?.cost === 'number' ? row.cost : null;
-            },
             actOnPullRequest: input => pullRequests.act(input),
             ciStatus: async (session, signal) => {
               const reference = session.pullRequest;

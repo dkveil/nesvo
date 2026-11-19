@@ -28740,6 +28740,27 @@ providers: [Claude Code]
   );
   assert.equal(agent(untouched).body, 'Fixture bash ran without asking.');
 
+  await saveInboxRule(
+    host,
+    `---
+name: report-costly-turn
+trigger: run-cost
+above_usd: 0.03
+action: notify
+providers: [Claude Code]
+---
+{{ session.title }} reached a cost of {{ cost }} USD.
+`,
+  );
+  await settled(await send(claude, 'fixture:stream'));
+  const costlyTurn = await inboxItem(
+    host,
+    candidate =>
+      candidate.sessionId === claude.id && candidate.trigger === 'run-cost',
+  );
+  assert.equal(costlyTurn.action, 'notify');
+  assert.equal(costlyTurn.subject, 'Run cost $0.04');
+
   const codex = await create('Codex', 'supervised', 'Codex pusher');
   const codexRun = await send(codex, 'fixture:run git push --force origin');
   const codexHold = await held(codexRun);
