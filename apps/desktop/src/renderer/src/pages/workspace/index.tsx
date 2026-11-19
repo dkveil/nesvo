@@ -4312,6 +4312,18 @@ ${text}`
                 {sessionAttention || sessionStatusLabel(selected)}
               </span>
             )}
+          {!browsing && !creating && selected?.coordinatorWait && (
+            <CoordinatorWait
+              key={selectedKey}
+              session={selected}
+              sessions={workers}
+              enabled={
+                store.hostReady(selectedHostId) &&
+                !!selectedComputer?.capabilities.includes('coordinator-workers')
+              }
+              onContinue={() => continueCoordinator(selected)}
+            />
+          )}
           {finishingWorktree && headerWorktree && selected && window.nesvo && (
             <FinishWorktreeDialog
               key={selectedKey}
@@ -5196,22 +5208,6 @@ ${text}`
                   <Delegations
                     session={selected}
                     children={workers}
-                    coordinatorWait={
-                      selected.coordinatorWait && (
-                        <CoordinatorWait
-                          key={selectedKey}
-                          session={selected}
-                          sessions={workers}
-                          enabled={
-                            store.hostReady(selectedHostId) &&
-                            !!selectedComputer?.capabilities.includes(
-                              'coordinator-workers',
-                            )
-                          }
-                          onContinue={() => continueCoordinator(selected)}
-                        />
-                      )
-                    }
                     enabled={operationEnabled}
                     worktreeActions={selectedComputer?.capabilities.includes(
                       'coordinator-workers',

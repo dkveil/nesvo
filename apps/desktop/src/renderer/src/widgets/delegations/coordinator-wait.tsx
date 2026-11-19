@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { errorDetail, type Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 
 type Props = {
   session: Session;
@@ -62,29 +63,31 @@ export function CoordinatorWait({
       setPending(false);
     }
   };
+  const waitingLabel = waiting
+    ? `Waiting on ${waiting} ${waiting === 1 ? 'worker' : 'workers'}`
+    : 'Coordinator paused';
+  const summary = finished
+    ? `${waitingLabel} · ${finished} finished while you were away`
+    : waitingLabel;
   return (
     <div
-      className="flex min-w-0 flex-wrap items-center gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground"
+      className="flex min-w-0 shrink-0 items-center gap-2 text-xs whitespace-nowrap text-muted-foreground"
       data-coordinator-wait
     >
-      <span>
-        {waiting
-          ? `Waiting on ${waiting} ${waiting === 1 ? 'worker' : 'workers'}`
-          : 'Coordinator paused'}
-        {finished > 0 && ` · ${finished} finished while you were away`}
-      </span>
-      <Button
-        size="xs"
-        disabled={
-          !enabled ||
-          pending ||
-          session.status === 'running' ||
-          session.status === 'stopping'
-        }
-        onClick={() => void resume()}
-      >
-        Continue coordinator
-      </Button>
+      <Hint label={summary}>
+        <Button
+          size="xs"
+          disabled={
+            !enabled ||
+            pending ||
+            session.status === 'running' ||
+            session.status === 'stopping'
+          }
+          onClick={() => void resume()}
+        >
+          Continue coordinator
+        </Button>
+      </Hint>
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
     </div>
   );

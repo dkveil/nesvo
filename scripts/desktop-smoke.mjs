@@ -3646,13 +3646,17 @@ try {
     .getByText('Interrupted when Nesvo closed', { exact: true })
     .waitFor();
   await interruptedNotice
-    .getByText('Use Continue in the session header to resume this group.', {
-      exact: true,
-    })
+    .getByText(
+      'Use Continue coordinator in the session header. Resume interrupted workers from their rows.',
+      {
+        exact: true,
+      },
+    )
     .waitFor();
   await restartedPage
     .locator('header [data-coordinator-wait]')
-    .getByRole('button', { name: 'Continue', exact: true })
+    .getByRole('button', { name: 'Continue coordinator', exact: true })
+    .first()
     .waitFor();
   await restartedPage
     .getByRole('textbox', { name: 'Message', exact: true })

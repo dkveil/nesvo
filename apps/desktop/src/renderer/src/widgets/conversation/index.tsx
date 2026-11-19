@@ -1135,7 +1135,8 @@ export function Conversation({
                 </StatusMessage>
                 {session.coordinatorWait ? (
                   <p className="text-xs text-muted-foreground">
-                    Use Continue in the session header to resume this group.
+                    Use Continue coordinator in the session header. Resume
+                    interrupted workers from their rows.
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
