@@ -1982,7 +1982,7 @@ export function startClaude(options: {
           }
         }
         const recheckRule =
-          options.permissionRules && !readOnly
+          options.permissionRules && (!readOnly || !options.readonlyMcpGrant)
             ? () =>
                 claudeAllowCandidate(
                   options.directory,

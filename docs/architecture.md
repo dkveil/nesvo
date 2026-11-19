@@ -458,7 +458,7 @@ SQLite records the rule, reviewed definition digests and operator action in one 
 
 The D88 Claude path can supply reviewed HTTP and SSE definitions to strict MCP configuration without using the native project settings source. This permits an unchanged approved server to remain available while another server is withheld. Native project settings, hooks and command-based servers remain isolated until their selective loading and executable identity can be verified. Settings › Permissions lists active rules and the owning host's decision history. Revocation removes the reviewed approval set from future admissions. A process that has already consumed a snapshot keeps that snapshot.
 
-The host lazily migrates a legacy trusted checkout into an exact repository rule when the recorded checkout matches the verified Git identity, the complete old definition set still matches and there is no competing rule. The decision history identifies the host migration. A changed, revoked or ambiguous approval stays outside this process. No legacy decision creates a remote pattern grant.
+The host lazily migrates a legacy trusted checkout into an exact repository rule when the recorded checkout matches the verified Git identity, the complete old definition set still matches and there is no competing rule. The decision history identifies the host migration. The exact checkout can keep its prior native loading while its complete stored digest and migration decision still match. Other checkouts use the filtered snapshot. Revocation or review under the current trust rules supersedes this compatibility path. No legacy decision creates a remote pattern grant.
 
 ### Read-only integration grants
 

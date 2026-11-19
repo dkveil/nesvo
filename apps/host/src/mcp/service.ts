@@ -340,12 +340,24 @@ export class McpPolicy {
         );
     }
     const identityPolicy = this.repositoryTrust.resolve(identity, provider);
+    const exactRule =
+      identityPolicy.state === 'eligible' &&
+      identityPolicy.rule.kind === 'repository'
+        ? identityPolicy.rule
+        : null;
+    const legacyMigration = exactRule
+      ? this.repositoryTrust.legacyMigration(exactRule.id, provider)
+      : null;
+    const legacyCompatible =
+      !!exactRule &&
+      this.repositoryTrust.legacyCompatible(exactRule.id, provider);
     const approved =
       identityPolicy.state === 'eligible'
         ? identityPolicy.definitions
         : new Map<string, string>();
     const managed = marker && identityPolicy.state !== 'none';
-    const trustedLegacySource = legacyTrusted && !managed;
+    const trustedLegacySource =
+      legacyTrusted && (!managed || legacyMigration === fingerprint);
     const hasApproval = (definition: Definition) =>
       approved.get(definition.id) === definition.hash;
     const isAdvisory = (definition: Definition) =>
@@ -353,6 +365,7 @@ export class McpPolicy {
     const trusted =
       trustedLegacySource ||
       (identityPolicy.state === 'eligible' &&
+        !(stored && legacyMigration) &&
         !projectIssues.length &&
         definitions.every(
           definition => isAdvisory(definition) || hasApproval(definition),
@@ -479,6 +492,7 @@ export class McpPolicy {
       fingerprint,
       legacyFingerprint,
       managed,
+      legacyCompatible,
       identity,
       userFingerprint,
       policy,
@@ -492,7 +506,7 @@ export class McpPolicy {
     signal?: AbortSignal,
   ) {
     const snapshot = await this.inspect(provider, directory, signal);
-    return snapshot.managed
+    return snapshot.managed && !snapshot.policy.projectSettings
       ? 'needs-trust'
       : (snapshot.list.repository?.status ?? 'empty');
   }
@@ -648,7 +662,7 @@ export class McpPolicy {
         },
         decision,
       );
-    } else if (!snapshot.managed)
+    } else if (!snapshot.managed || snapshot.legacyCompatible) {
       this.database
         .prepare(
           'INSERT INTO mcp_repository_trust (provider, repository, fingerprint, definitions, trusted) VALUES (?, ?, ?, ?, 1) ON CONFLICT(provider, repository) DO UPDATE SET fingerprint = excluded.fingerprint, definitions = excluded.definitions, trusted = 1',
@@ -659,7 +673,20 @@ export class McpPolicy {
           snapshot.legacyFingerprint,
           JSON.stringify(snapshot.definitions),
         );
-    else
+      if (snapshot.legacyCompatible)
+        this.repositoryTrust.migrate(
+          {
+            identity: snapshot.identity,
+            sessionId,
+            provider,
+            fingerprint,
+            definitions: snapshot.definitions.map(({ id, hash }) => [id, hash]),
+          },
+          snapshot.repository,
+          snapshot.definitions,
+          true,
+        );
+    } else
       throw new SessionError(
         'invalid-request',
         'Review this repository using the current repository trust rules.',

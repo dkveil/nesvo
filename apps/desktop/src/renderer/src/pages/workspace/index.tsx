@@ -5384,6 +5384,7 @@ ${text}`
                 }
                 mcpChip={
                   <McpChip
+                    key={selectedKey}
                     configuration={mcpConfiguration}
                     connections={mcpConnections}
                     provider={selected.provider}
@@ -5394,6 +5395,23 @@ ${text}`
                     disabled={connection !== 'ready'}
                     unsupported={!supportsMcp(selectedHostId)}
                     supportsTrust={supportsMcpTrust}
+                    readEnabledPlanHooks={
+                      selected.provider === 'Claude Code' &&
+                      selectedComputer?.capabilities.includes(
+                        'readonly-integration-grants',
+                      )
+                        ? async () => {
+                            const reply =
+                              await window.nesvo.readonlyIntegrationGrants(
+                                { action: 'read', sessionId: selected.id },
+                                selected.hostId,
+                              );
+                            return reply.action === 'read'
+                              ? reply.hooks.filter(hook => hook.enabled).length
+                              : 0;
+                          }
+                        : undefined
+                    }
                     onReadOnlySettings={
                       selectedComputer?.capabilities.includes(
                         'readonly-integration-grants',

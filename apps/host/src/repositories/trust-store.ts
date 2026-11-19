@@ -274,12 +274,18 @@ export class RepositoryTrustStore {
     review: Review,
     checkout: string,
     previous: readonly { id: string; hash: string }[],
+    renew = false,
   ) {
+    const current = this.resolve(review.identity, review.provider);
+    const legacy =
+      current.state === 'eligible' &&
+      current.rule.kind === 'repository' &&
+      this.legacyCompatible(current.rule.id, review.provider) &&
+      (renew || !this.legacyMigration(current.rule.id, review.provider));
     if (
       !this.target(review.identity) ||
       directoryKey(review.identity.root) !== checkout ||
-      this.rules().length >= 256 ||
-      this.resolve(review.identity, review.provider).state !== 'none' ||
+      (current.state === 'none' ? this.rules().length >= 256 : !legacy) ||
       previous.length !== review.definitions.length ||
       previous.some(
         (entry, index) =>
@@ -294,6 +300,29 @@ export class RepositoryTrustStore {
       'host',
     );
     return true;
+  }
+
+  private lastApproval(ruleId: string, provider?: Provider) {
+    const action = this.database
+      .prepare(
+        "SELECT document FROM repository_trust_actions WHERE json_extract(document, '$.ruleId') = ? AND (? IS NULL OR json_extract(document, '$.provider') = ?) AND json_extract(document, '$.action') IN ('migrate', 'approve') ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(ruleId, provider ?? null, provider ?? null);
+    return action
+      ? repositoryTrustDecisionSchema.parse(JSON.parse(String(action.document)))
+      : null;
+  }
+
+  legacyMigration(ruleId: string, provider: Provider) {
+    const decision = this.lastApproval(ruleId, provider);
+    return decision?.action === 'migrate' ? decision.fingerprint : null;
+  }
+
+  legacyCompatible(ruleId: string, provider: Provider) {
+    return (
+      (this.lastApproval(ruleId, provider) ?? this.lastApproval(ruleId))
+        ?.action === 'migrate'
+    );
   }
 
   private matchingPatterns(remote: string) {

@@ -1,4 +1,5 @@
 import { Plug, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
 import { modeLabel, type Provider } from '@/entities/session';
 import { ComposerChip } from '@/features/new-thread/composer-chip';
 import { Button } from '@/shared/ui/button';
@@ -31,6 +32,7 @@ type Props = {
   unsupported: boolean;
   supportsTrust: boolean;
   onReadOnlySettings?: () => void;
+  readEnabledPlanHooks?: () => Promise<number>;
 };
 
 export function McpChip({
@@ -43,7 +45,9 @@ export function McpChip({
   unsupported,
   supportsTrust,
   onReadOnlySettings,
+  readEnabledPlanHooks,
 }: Props) {
+  const [enabledPlanHooks, setEnabledPlanHooks] = useState(0);
   const hint = unsupported
     ? 'Update the host to view MCP configuration'
     : 'MCP servers and hooks';
@@ -72,6 +76,10 @@ export function McpChip({
   const refresh = () => {
     void configuration.refresh();
     void connections.refresh();
+    if (readOnly && !isolated && provider === 'Claude Code')
+      void readEnabledPlanHooks?.().then(setEnabledPlanHooks, () =>
+        setEnabledPlanHooks(0),
+      );
   };
   return (
     <Popover
@@ -146,7 +154,7 @@ export function McpChip({
             {readOnlyIsolation
               ? `MCP is isolated in ${modeLabel(provider, 'read-only')} because a one-time tool approval channel is unavailable.`
               : provider === 'Claude Code'
-                ? 'Plan asks for MCP tool approval unless a saved allow rule matches.'
+                ? 'Plan checks saved MCP grants and matching allow rules before asking for a one-time approval.'
                 : onReadOnlySettings
                   ? 'Read-only checks saved MCP grants before asking for one-time approval.'
                   : 'Each MCP tool call in Read-only requires a one-time approval.'}
@@ -188,6 +196,13 @@ export function McpChip({
                 isolated || readOnly ? 'Disabled' : 'Follow provider settings'
               }
             />
+            {readOnly && !isolated && enabledPlanHooks > 0 && (
+              <ListRow
+                size="sm"
+                title="Reviewed SessionStart hooks"
+                trailing={`${enabledPlanHooks} enabled for Plan`}
+              />
+            )}
             {onReadOnlySettings && (
               <Button
                 type="button"
