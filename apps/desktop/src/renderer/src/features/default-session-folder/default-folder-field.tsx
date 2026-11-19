@@ -4,8 +4,9 @@ import { FolderOpen } from 'lucide-react';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { Field, FieldLabel } from '@/shared/ui/field';
+import { FieldLabel, FieldMessages } from '@/shared/ui/field';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
+import { SettingsRow } from '@/shared/ui/settings-section';
 
 type Props = {
   id: string;
@@ -106,12 +107,20 @@ export function DefaultFolderField({
       </div>
     );
   return (
-    <Field
-      id={id}
-      label={label}
+    <SettingsRow
+      title={<label htmlFor={id}>{label}</label>}
       className={className}
-      hint={blocker || 'Enter or change the path to save a default folder.'}
-      messages={error ? [{ severity: 'error', message: error }] : []}
+      description={
+        <div className="space-y-1">
+          <p id={`${id}-hint`}>
+            {blocker || 'Enter or change the path to save a default folder.'}
+          </p>
+          <FieldMessages
+            id={`${id}-messages`}
+            messages={error ? [{ severity: 'error', message: error }] : []}
+          />
+        </div>
+      }
     >
       <form
         className="flex items-center gap-2"
@@ -123,7 +132,7 @@ export function DefaultFolderField({
         <PathInput
           id={id}
           size="md"
-          containerClassName="flex-1"
+          containerClassName="w-[min(24rem,30vw)]"
           className="font-mono"
           placeholder={`Absolute path on ${computerName}`}
           spellCheck={false}
@@ -159,6 +168,6 @@ export function DefaultFolderField({
           </Button>
         )}
       </form>
-    </Field>
+    </SettingsRow>
   );
 }

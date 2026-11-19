@@ -28,7 +28,7 @@ import {
 } from '@/shared/ui/dialog';
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
 import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-settings';
-import { SettingsRow } from '@/shared/ui/settings-section';
+import { SettingsRow, SettingsRows } from '@/shared/ui/settings-section';
 import { StatusMessage } from '@/shared/ui/status-message';
 import {
   morningSummaryJob,
@@ -79,7 +79,6 @@ function RoutineRow({
 
   return (
     <SettingsRow
-      className="gap-3 py-3"
       title={
         <span className="flex items-center gap-2">
           <Icon
@@ -293,7 +292,7 @@ export function RoutinesStep({
 
   return (
     <div className="space-y-3">
-      <div className="divide-y">
+      <SettingsRows>
         <RoutineRow
           title="Morning summary"
           icon={Sunrise}
@@ -330,7 +329,7 @@ export function RoutinesStep({
           outcome={outcomes.workflow}
           action={workflowAction}
         />
-      </div>
+      </SettingsRows>
       <p className="text-xs leading-5 text-muted-foreground">
         Everything is optional and editable. Automations are added paused and
         workflows run only after you choose to use them.

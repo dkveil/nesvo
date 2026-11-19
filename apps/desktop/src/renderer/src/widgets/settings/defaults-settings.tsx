@@ -210,17 +210,15 @@ export function DefaultsSettings({
           />
         </SettingsRow>
         {defaultFolderSupported ? (
-          <div className="px-3 py-2.5">
-            <DefaultFolderField
-              key={`${hostId}:${defaultFolder ?? ''}`}
-              id="defaults-directory"
-              label="Folder"
-              computerName={computerName}
-              value={defaultFolder}
-              supported
-              onSave={onSaveDefaultFolder}
-            />
-          </div>
+          <DefaultFolderField
+            key={`${hostId}:${defaultFolder ?? ''}`}
+            id="defaults-directory"
+            label="Folder"
+            computerName={computerName}
+            value={defaultFolder}
+            supported
+            onSave={onSaveDefaultFolder}
+          />
         ) : (
           <SettingsRow
             title={<label htmlFor="defaults-directory">Folder</label>}

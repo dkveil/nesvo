@@ -16,17 +16,29 @@ export function SettingsSection({
   className,
 }: SectionProps) {
   return (
-    <section aria-label={title} className="space-y-1.5">
+    <section aria-label={title} className="space-y-2">
       <SectionLabel as="h2" emphasis action={action} className="px-3">
         {title}
       </SectionLabel>
-      <div
-        data-slot="settings-section-rows"
-        className={cn('divide-y divide-border', className)}
-      >
-        {children}
-      </div>
+      <SettingsRows className={className}>{children}</SettingsRows>
     </section>
+  );
+}
+
+export function SettingsRows({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      data-slot="settings-section-rows"
+      className={cn('[&>*+*]:shadow-[inset_0_1px_0_var(--border)]', className)}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -45,23 +57,29 @@ export function SettingsRow({
 }: RowProps) {
   return (
     <div
+      data-slot="settings-row"
       className={cn(
-        'flex min-h-12 items-center justify-between gap-4 px-3 py-2',
+        'grid min-h-12 grid-cols-[minmax(0,1fr)_auto] content-center items-center gap-x-4 gap-y-1 px-3 py-2',
         className,
       )}
     >
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="text-ui font-medium [overflow-wrap:anywhere]">
-          {title}
-        </div>
-        {description && (
-          <div className="text-xs leading-4 text-subtle-foreground [overflow-wrap:anywhere]">
-            {description}
-          </div>
+      <div
+        className={cn(
+          'col-start-1 row-start-1 min-w-0 text-ui font-medium [overflow-wrap:anywhere]',
+          !children && 'col-span-2',
         )}
+      >
+        {title}
       </div>
       {children && (
-        <div className="flex shrink-0 items-center gap-1.5">{children}</div>
+        <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-1.5">
+          {children}
+        </div>
+      )}
+      {description && (
+        <div className="col-span-2 row-start-2 text-xs leading-4 text-subtle-foreground [overflow-wrap:anywhere]">
+          {description}
+        </div>
       )}
     </div>
   );

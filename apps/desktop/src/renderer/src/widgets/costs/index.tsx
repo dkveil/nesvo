@@ -130,15 +130,17 @@ function CostTable({
                   row.label
                 )}
               </td>
-              <td className="w-48 py-1.5 px-2 text-right whitespace-nowrap">
+              <td className="w-48 px-2 text-right whitespace-nowrap">
+                {row.costUsd !== null && costCoverage(row) && (
+                  <span className="mr-2 text-2xs text-muted-foreground">
+                    {costCoverage(row)}
+                  </span>
+                )}
                 {row.costUsd === null && row.unknownCostTurns ? (
                   <span className="text-muted-foreground">Unpriced</span>
                 ) : (
                   <CostAmount cost={row.costUsd} />
                 )}
-                <div className="text-2xs text-muted-foreground">
-                  {row.costUsd !== null ? costCoverage(row) : null}
-                </div>
               </td>
               <td className="w-20 px-2 text-right text-muted-foreground">
                 <TokenCount count={row.inputTokens} />
@@ -417,7 +419,7 @@ function ComputerCosts({
         )}
       </section>
       {report && report.topSessions.length > 0 && (
-        <section aria-label="Top sessions" className="space-y-1">
+        <section aria-label="Top sessions" className="space-y-2">
           <SectionLabel as="h2" className="px-0">
             Top sessions
           </SectionLabel>
@@ -454,7 +456,7 @@ function ComputerCosts({
         <section
           ref={budgetSection}
           aria-label="Budgets"
-          className="space-y-1 border-t pt-4"
+          className="space-y-2 border-t pt-4"
         >
           <SectionLabel
             as="h2"
@@ -504,7 +506,7 @@ function ComputerCosts({
                   spend === null ? null : Math.min(100, (spend / limit) * 100);
                 return (
                   <li key={budget.id} className="space-y-2 py-3">
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <p
@@ -524,19 +526,15 @@ function ComputerCosts({
                             {actionLabels[budget.action]}
                           </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {scopeLabels[budget.scope]} ·{' '}
-                          {periodLabels[budget.period]}
-                        </p>
                       </div>
-                      <span className="pt-0.5 text-xs whitespace-nowrap">
+                      <span className="text-xs whitespace-nowrap">
                         <CostAmount cost={spend} />
                         <span className="text-muted-foreground">
                           {' / '}
                           <CostAmount cost={limit} />
                         </span>
                       </span>
-                      <div className="-mr-2 flex shrink-0 items-center gap-0.5">
+                      <div className="flex shrink-0 items-center gap-1">
                         <Button
                           size="xs"
                           variant="ghost"
@@ -555,6 +553,10 @@ function ComputerCosts({
                         </Button>
                       </div>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      {scopeLabels[budget.scope]} ·{' '}
+                      {periodLabels[budget.period]}
+                    </p>
                     <Meter
                       label={label}
                       value={percent}
