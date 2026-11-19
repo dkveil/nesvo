@@ -289,6 +289,20 @@ Edges stay inside one phase, so in this example all six steps declare `phase: pr
 - **Without `edges`** the workflow is a chain: inside each phase, each step follows the one before it in `steps` order and runs on its own, one step at a time. Every workflow written before graphs keeps its meaning without an edit.
 - **With `edges`**, even `edges: []`, the graph is explicit: a step with no incoming edge starts as soon as its phase begins, and a step with several incoming edges waits for all of them.
 
+### Conditional routes
+
+Append `when` to an edge to compare the pinned `stack` or an upstream output against a JSON string using `==` or `!=`. Quote the complete YAML edge when its condition contains YAML punctuation.
+
+```yaml
+edges:
+  - 'inspect -> js-check when stack == "typescript"'
+  - 'inspect -> kotlin-check when stack == "kotlin"'
+  - js-check -> results
+  - kotlin-check -> results
+```
+
+Use `join: reached` on `results` to omit routes disabled by a false condition. It waits for all active inputs and requires at least one. A failed active input still has to satisfy its outcome. A missing condition input needs attention. Use `required: true` to require a step to pass even on conditional graphs. Human and CI gates are required on these graphs.
+
 ## Validation in plain words
 
 Errors make the workflow invalid: the catalog lists it only through its issues, and a save is refused.

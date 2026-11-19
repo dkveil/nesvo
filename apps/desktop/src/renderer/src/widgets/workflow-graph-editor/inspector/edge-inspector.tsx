@@ -6,6 +6,7 @@ import { Button } from '@/shared/ui/button';
 import { PanelBody } from '@/shared/ui/panel';
 import { SidePanelFooter } from '@/shared/ui/side-panel';
 import { notesId } from './field-notes';
+import { Input } from '@/shared/ui/input';
 import { Field } from '@/shared/ui/field';
 import {
   SegmentedControl,
@@ -46,6 +47,7 @@ export function EdgeInspectorForm({
   edge,
   sourceType,
   onChange,
+  onPredicate,
   onDelete,
 }: EdgeInspectorProps) {
   const fieldId = `${useId()}when`;
@@ -77,7 +79,7 @@ export function EdgeInspectorForm({
         </p>
         <Field
           id={fieldId}
-          label="Runs on"
+          label="Outcome"
           as="span"
           messages={notes}
           hint={
@@ -95,6 +97,20 @@ export function EdgeInspectorForm({
             invalid={notes.length > 0}
             describedBy={notes.length ? notesId(fieldId) : undefined}
             onChange={onChange}
+          />
+        </Field>
+        <Field
+          id={`${fieldId}-predicate`}
+          label="When"
+          hint='For example, stack == "typescript".'
+        >
+          <Input
+            id={`${fieldId}-predicate`}
+            defaultValue={edge.predicate}
+            maxLength={160}
+            onBlur={event =>
+              onPredicate(event.target.value.trim() || undefined)
+            }
           />
         </Field>
       </PanelBody>

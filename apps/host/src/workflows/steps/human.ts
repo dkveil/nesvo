@@ -4,7 +4,11 @@ import {
   type Review,
   type StepResult,
 } from '@nesvo/contracts';
-import type { StepExecution, StepExecutor } from '../runner';
+import {
+  conditionalGraph,
+  type StepExecution,
+  type StepExecutor,
+} from '../runner';
 
 export const MANUAL_GATE_SKIP_REASON =
   'Runs without a task session do not wait for a human decision';
@@ -25,7 +29,10 @@ export const definitionChanges = (review: Review | undefined): string[] =>
     .map(file => file.path.replaceAll('\\', '/'))
     .filter(path =>
       DEFINITION_ROOTS.some(root =>
-        path.replace(/^(\.\/)+/, '').toLowerCase().startsWith(root),
+        path
+          .replace(/^(\.\/)+/, '')
+          .toLowerCase()
+          .startsWith(root),
       ),
     )
     .slice(0, workflowLimits.definitionChanges);
@@ -63,7 +70,7 @@ export const createHumanExecutor =
     const at = now().toISOString();
     if (!run.sessionId || run.manual)
       return Promise.resolve(
-        precedesExternalStep(execution)
+        conditionalGraph(run) || precedesExternalStep(execution)
           ? blocked(step, MANUAL_EXTERNAL_GATE_BLOCK, at)
           : { kind: 'skipped', reason: MANUAL_GATE_SKIP_REASON },
       );

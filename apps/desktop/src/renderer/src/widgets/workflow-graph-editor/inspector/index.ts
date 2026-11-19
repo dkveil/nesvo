@@ -59,6 +59,7 @@ export type EdgeInspectorProps = {
   edge: EditorEdge;
   sourceType: StepType;
   onChange: (when: EdgeWhen) => void;
+  onPredicate: (predicate: string | undefined) => void;
   onDelete: () => void;
 };
 

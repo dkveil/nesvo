@@ -48,6 +48,7 @@ export type EditorEdge = {
   from: string;
   to: string;
   when: EdgeCondition;
+  predicate?: string | undefined;
 };
 
 export type EditorDocument = {
@@ -231,6 +232,8 @@ export const stepDefinitionOf = (
   idempotent: step.idempotent,
   pr: step.pr,
   poll_interval: step.poll_interval,
+  join: step.join,
+  required: step.required,
   repeat: step.repeat?.map(name => name.trim()),
   condition: step.condition,
   max_iterations: step.max_iterations,
@@ -287,6 +290,7 @@ export const toGraphEdge = (edge: EditorEdge): GraphEdge => ({
   from: edge.from,
   to: edge.to,
   when: edge.when,
+  ...(edge.predicate ? { predicate: edge.predicate } : {}),
 });
 
 export const editorEdge = (edge: GraphEdge): EditorEdge => ({
@@ -295,6 +299,8 @@ export const editorEdge = (edge: GraphEdge): EditorEdge => ({
 });
 
 const graphStep = (step: StepDefinition): GraphStep => ({
+  join: step.join,
+  required: step.required,
   pr: step.pr,
   repeat: step.repeat,
   condition: step.condition,
@@ -528,7 +534,9 @@ export const toFileText = (document: EditorDocument): string => {
   lines.push(`steps: [${names.map(yamlName).join(', ')}]`);
   lines.push('edges:');
   for (const edge of document.edges)
-    lines.push(`  - ${formatEdge(toGraphEdge(edge))}`);
+    lines.push(
+      `  - ${edge.predicate ? JSON.stringify(formatEdge(toGraphEdge(edge))) : formatEdge(toGraphEdge(edge))}`,
+    );
   if (document.edges.length === 0) lines[lines.length - 1] = 'edges: []';
   lines.push('layout:');
   for (const name of names) {
@@ -556,6 +564,8 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.idempotent) lines.push('idempotent: true');
   if (step.pr) lines.push(`pr: ${yamlText(step.pr)}`);
   if (step.poll_interval) lines.push(`poll_interval: ${step.poll_interval}`);
+  if (step.join === 'reached') lines.push('join: reached');
+  if (step.required) lines.push('required: true');
   if (step.repeat)
     lines.push(`repeat: [${step.repeat.map(yamlName).join(', ')}]`);
   if (step.condition) lines.push(`condition: ${yamlText(step.condition)}`);

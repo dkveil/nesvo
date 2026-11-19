@@ -191,6 +191,7 @@ export function EditorCanvas({
         type: 'condition',
         data: {
           when: edge.when,
+          predicate: edge.predicate,
           hovered: hoveredEdge === edge.id,
           onHover: hovering => hoverEdge(hovering ? edge.id : null),
           onInsert: event => onRequestAdd({ kind: 'edge', id: edge.id }, event),

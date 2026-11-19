@@ -284,6 +284,72 @@ export async function smokePortableCheck({
     );
     results.push(await run(python, 'passed'));
   }
+  if (demo && shots) {
+    const names = [
+      'inspect-stack',
+      'typescript-tests',
+      'kotlin-tests',
+      'shared-review',
+    ];
+    for (const name of names)
+      await write(
+        home,
+        `steps/${name}.md`,
+        `---\nname: ${name}\ntype: command\nphase: pre-done\n${name === 'shared-review' ? 'join: reached\n' : ''}---\necho ${name}\n`,
+      );
+    await write(
+      home,
+      'workflows/conditional-smoke.md',
+      [
+        '---',
+        'name: conditional-smoke',
+        `steps: [${names.join(', ')}]`,
+        'edges:',
+        `  - 'inspect-stack -> typescript-tests when stack == "typescript"'`,
+        `  - 'inspect-stack -> kotlin-tests when stack == "kotlin"'`,
+        '  - typescript-tests -> shared-review',
+        '  - kotlin-tests -> shared-review',
+        '---',
+        '',
+      ].join('\n'),
+    );
+    await write(
+      typescript,
+      'nesvo-task.md',
+      '---\nworkflow: conditional-smoke\n---\nVerify the conditional graph.\n',
+    );
+    const started = await start(typescript);
+    const data = await page.waitForFunction(async runId => {
+      const detail = await window.nesvo.workflows.getRun('local', runId);
+      return !['pending', 'checking'].includes(detail.run.status)
+        ? detail
+        : undefined;
+    }, started.id);
+    const observed = await data.jsonValue();
+    assert.equal(observed.run.status, 'passed', JSON.stringify(observed.steps));
+    assert.equal(
+      observed.steps.find(item => item.name === 'kotlin-tests').state,
+      'unreached',
+    );
+    assert.equal(
+      observed.steps.find(item => item.name === 'shared-review').state,
+      'passed',
+    );
+    await list.getByRole('button', { name: 'Read', exact: true }).click();
+    await list
+      .getByRole('button', { name: 'Edit conditional-smoke', exact: true })
+      .click();
+    if ((await lastRun.getAttribute('aria-pressed')) !== 'true')
+      await lastRun.click();
+    await editor
+      .locator('[data-editor-node="kotlin-tests"][data-run-state="unreached"]')
+      .click();
+    await editor.getByText(/Not reached: a condition/).waitFor();
+    await editor
+      .getByRole('button', { name: 'Fit graph', exact: true })
+      .click();
+    await screenshots('d83-2-conditional-route');
+  }
   for (const detail of results) {
     const result = detail.steps[0].result;
     console.log(

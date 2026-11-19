@@ -18,6 +18,7 @@ import {
 
 export type ConditionEdgeData = {
   when: EdgeCondition;
+  predicate?: string | undefined;
   hovered?: boolean;
   onHover?: (hovering: boolean) => void;
   onInsert?: (event: ReactMouseEvent) => void;
@@ -108,13 +109,15 @@ export function ConditionEdgeView({
               </IconButton>
             </div>
           )}
-          {when !== 'success' && (
+          {(when !== 'success' || data?.predicate) && (
             <span
               data-editor-edge-label={id}
               className="pointer-events-none rounded-full border bg-card px-1.5 text-2xs leading-4 font-medium whitespace-nowrap"
               style={{ color, borderColor: color }}
             >
-              {edgeWhenLabels[when]}
+              {data?.predicate
+                ? `When ${data.predicate}`
+                : edgeWhenLabels[when]}
             </span>
           )}
         </div>

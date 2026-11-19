@@ -17,7 +17,7 @@ import {
 import {
   implicitEdges,
   WORKFLOW_EDGE_CONDITIONS,
-  WORKFLOW_EDGE_PATTERN,
+  parseEdge,
   workflowGraphLimits,
 } from './graph';
 
@@ -130,6 +130,8 @@ const hasDuplicates = (values: readonly string[]) =>
   new Set(values).size !== values.length;
 
 const stepDefinitionShape = {
+  join: z.enum(['all', 'reached']).optional(),
+  required: z.boolean().optional(),
   name: stepNameSchema,
   type: stepTypeSchema,
   phase: stepPhaseSchema,
@@ -356,8 +358,8 @@ export const workflowEdgeSchema = z
   .string()
   .min(3)
   .max(workflowGraphLimits.edgeText)
-  .regex(
-    WORKFLOW_EDGE_PATTERN,
+  .refine(
+    value => parseEdge(value) !== null,
     'Write an edge as "<step> -> <step>" with an optional "on success", "on failure" or "on any".',
   );
 const workflowEdgesSchema = z
@@ -439,6 +441,7 @@ export const resolvedGraphEdgeSchema = z.strictObject({
   from: stepNameSchema,
   to: stepNameSchema,
   when: workflowEdgeConditionSchema,
+  predicate: z.string().max(workflowGraphLimits.edgeText).optional(),
 });
 
 export const resolvedGraphSchema = z.strictObject({

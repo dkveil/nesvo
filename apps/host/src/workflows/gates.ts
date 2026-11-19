@@ -17,7 +17,13 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { GateReviewDecision } from '../sessions/service';
 import { filterResultText } from './evidence';
-import { WorkflowRunError, latestAttempts, type WorkflowRunner } from './runner';
+import {
+  conditionalGraph,
+  requiredStep,
+  WorkflowRunError,
+  latestAttempts,
+  type WorkflowRunner,
+} from './runner';
 import type { WorkflowRunStore } from './store';
 
 export const MARKED_DONE_SUMMARY =
@@ -178,6 +184,9 @@ export class WorkflowGates {
         'Only a step in the phase the run is checking can be skipped.',
       );
     this.ensureOnlyActiveRun(run);
+    const definition = run.workflow.steps[step.index];
+    if (definition && conditionalGraph(run) && requiredStep(definition))
+      throw invalid(`Required step "${step.name}" cannot be skipped.`);
     if (step.type === 'human' && guardsExternalStep(run, latest, step))
       throw invalid(
         `Step "${step.name}" is the human decision before an external step and cannot be skipped.`,
@@ -191,7 +200,10 @@ export class WorkflowGates {
       revision: step.revision + 1,
       state: 'skipped',
       result: null,
-      skip: { reason: bounded(input.reason, workflowLimits.skipReason), at: now },
+      skip: {
+        reason: bounded(input.reason, workflowLimits.skipReason),
+        at: now,
+      },
       updatedAt: now,
     };
     const next: WorkflowRun = {
@@ -305,9 +317,13 @@ export class WorkflowGates {
       step.state !== 'awaiting-human' ||
       run.status !== 'awaiting-human'
     )
-      throw invalid('This gate is not waiting for a decision. Refresh the run.');
+      throw invalid(
+        'This gate is not waiting for a decision. Refresh the run.',
+      );
     if (step.reviewId !== input.reviewId)
-      throw invalid('This gate is bound to a different result. Refresh the run.');
+      throw invalid(
+        'This gate is bound to a different result. Refresh the run.',
+      );
     if (step.reviewVersion !== input.version)
       throw invalid(
         'This result version is no longer current. Refresh the run.',
@@ -367,7 +383,8 @@ export class WorkflowGates {
     latest: Map<number, WorkflowStepRecord>;
   } {
     const run = this.ports.store.getRun(runId);
-    if (!run) throw new WorkflowRunError('not-found', 'Workflow run not found.');
+    if (!run)
+      throw new WorkflowRunError('not-found', 'Workflow run not found.');
     const step = this.ports.store.getStep(stepId);
     if (!step || step.runId !== run.id)
       throw new WorkflowRunError('not-found', 'Workflow step not found.');
@@ -409,7 +426,8 @@ export class WorkflowGates {
 
   private currentRun(runId: string): WorkflowRun {
     const run = this.ports.store.getRun(runId);
-    if (!run) throw new WorkflowRunError('not-found', 'Workflow run not found.');
+    if (!run)
+      throw new WorkflowRunError('not-found', 'Workflow run not found.');
     return run;
   }
 }
@@ -429,7 +447,12 @@ const operatorResult = (
     summary,
     note,
     at,
-  }: { status: StepResult['status']; summary: string; note: string; at: string },
+  }: {
+    status: StepResult['status'];
+    summary: string;
+    note: string;
+    at: string;
+  },
 ): StepResult => {
   const startedAt = step.startedAt ?? at;
   return stepResultSchema.parse({

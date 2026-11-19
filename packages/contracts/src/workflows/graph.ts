@@ -1,18 +1,27 @@
 import type { StepEffect, StepPhase, StepType } from './definitions';
-import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
+import {
+  parseUntilCondition,
+  parseWorkflowCondition,
+  STEP_OUTPUT_REFERENCE,
+} from './expressions';
 
 export const workflowGraphLimits = {
   edges: 64,
-  edgeText: 160,
+  edgeText: 280,
   layoutCoordinate: 100_000,
 } as const;
 
 export const WORKFLOW_EDGE_CONDITIONS = ['success', 'failure', 'any'] as const;
 export const WORKFLOW_EDGE_PATTERN =
-  /^\s*([a-z0-9-]+)\s*->\s*([a-z0-9-]+)(?:\s+on\s+(success|failure|any))?\s*$/;
+  /^\s*([a-z0-9-]+)\s*->\s*([a-z0-9-]+)(?:\s+on\s+(success|failure|any))?(?:\s+when\s+([^\r\n]+?))?\s*$/;
 
 export type EdgeCondition = (typeof WORKFLOW_EDGE_CONDITIONS)[number];
-export type GraphEdge = { from: string; to: string; when: EdgeCondition };
+export type GraphEdge = {
+  from: string;
+  to: string;
+  when: EdgeCondition;
+  predicate?: string | undefined;
+};
 export type GraphNode = { name: string; phase: StepPhase };
 export type GraphStep = {
   type: StepType;
@@ -22,6 +31,8 @@ export type GraphStep = {
   pr?: string;
   repeat?: readonly string[];
   condition?: string;
+  join?: 'all' | 'reached' | undefined;
+  required?: boolean | undefined;
 };
 export type GraphLayout = Readonly<Record<string, readonly [number, number]>>;
 export type GraphInput = {
@@ -45,6 +56,8 @@ export type GraphRule =
   | 'E9'
   | 'E10'
   | 'E11'
+  | 'E12'
+  | 'E13'
   | 'W1'
   | 'W2'
   | 'W3'
@@ -120,15 +133,19 @@ export const parseEdge = (text: string): GraphEdge | null => {
     return null;
   const match = WORKFLOW_EDGE_PATTERN.exec(text);
   if (!match) return null;
+  const predicate = match[4]?.trim();
+  if (match[4] && (!predicate || !parseWorkflowCondition(predicate)))
+    return null;
   return {
     from: match[1] as string,
     to: match[2] as string,
     when: (match[3] as EdgeCondition | undefined) ?? 'success',
+    ...(predicate ? { predicate } : {}),
   };
 };
 
 export const formatEdge = (edge: GraphEdge): string =>
-  `${edge.from} -> ${edge.to}${edge.when === 'success' ? '' : ` on ${edge.when}`}`;
+  `${edge.from} -> ${edge.to}${edge.when === 'success' ? '' : ` on ${edge.when}`}${edge.predicate ? ` when ${edge.predicate}` : ''}`;
 
 export const implicitEdges = (steps: readonly GraphNode[]): GraphEdge[] =>
   phases.flatMap(phase => {
@@ -581,10 +598,12 @@ function validateHostSteps(
         (previous &&
           (sources.length !== 1 ||
             sources[0]?.from !== previous ||
-            sources[0]?.when !== 'success')) ||
+            sources[0]?.when !== 'success' ||
+            sources[0]?.predicate)) ||
         targets.length !== 1 ||
         targets[0]?.to !== next ||
-        targets[0]?.when !== 'success'
+        targets[0]?.when !== 'success' ||
+        targets[0]?.predicate
       ) {
         report.add(
           'E10',
@@ -625,12 +644,82 @@ export const resolveGraph = (
     report.add('E6', graphMessages.cycle(cycle), cycle);
   layoutWarnings(input.layout, members, report);
   validateHostSteps(input.steps, stepsByName, { edges }, report);
+  const conditional =
+    edges.some(edge => edge.predicate) ||
+    known.some(
+      step =>
+        stepsByName.get(step.name)?.join === 'reached' ||
+        stepsByName.get(step.name)?.required,
+    );
+  for (const { edge, index } of listed ?? []) {
+    if (!edge.predicate) continue;
+    const condition = parseWorkflowCondition(edge.predicate);
+    if (condition?.input.kind !== 'output') continue;
+    const reference = condition.input.step;
+    const source = stepsByName.get(edge.from);
+    const referenced = stepsByName.get(reference);
+    if (!(
+      source &&
+      referenced &&
+      members.has(reference) &&
+      (reference === edge.from ||
+        phaseRank[referenced.phase] < phaseRank[source.phase] ||
+        ancestors({ edges }, edge.from).includes(reference))
+    ))
+      report.add(
+        'E12',
+        'The condition must read the source step or one upstream of it.',
+        [edge.from, edge.to],
+        index,
+      );
+  }
+  if (conditional) {
+    const gates = known.filter(
+      step => step.type === 'human' || step.type === 'wait-ci',
+    );
+    for (const step of known) {
+      const definition = stepsByName.get(step.name);
+      if (
+        !definition ||
+        (definition.effect !== 'external' && !looksExternal(definition.body))
+      )
+        continue;
+      if (definition.type !== 'command' && definition.type !== 'action')
+        continue;
+      const upstream = new Set(ancestors({ edges }, step.name));
+      if (
+        !gates.some(
+          gate =>
+            gate.type === 'human' &&
+            (phaseRank[gate.phase] < phaseRank[step.phase] ||
+              upstream.has(gate.name)),
+        ) ||
+        gates.some(
+          gate => gate.phase === step.phase && !upstream.has(gate.name),
+        )
+      ) {
+        report.add(
+          'E13',
+          'An external step needs an upstream human gate and every same-phase hard gate.',
+          [step.name],
+        );
+      }
+    }
+  }
   if (known.length && known.every(step => step.type === 'action'))
     report.add('W3', graphMessages.noGate(input.name));
   if ((!input.edges || listed) && !looped.length) {
     const order = orderNames(input.steps, edges);
     const requirements = requirementsOf(input.steps, edges);
-    contradictoryJoins(input.steps, edges, requirements, report);
+    const requiredEdges = edges.filter(
+      edge => !edge.predicate && stepsByName.get(edge.to)?.join !== 'reached',
+    );
+    contradictoryJoins(
+      input.steps,
+      requiredEdges,
+      conditional ? requirementsOf(input.steps, requiredEdges) : requirements,
+      report,
+    );
     externalWarnings(input, explicit, order, edges, stepsByName, report);
     parallelAgentWarning(
       input,

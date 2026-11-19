@@ -34,6 +34,7 @@ import {
   type DocumentIssue,
   type EdgeCondition,
   type EditorDocument,
+  type EditorEdge,
   type EditorNode,
   type Position,
   type StepDraft,
@@ -131,14 +132,16 @@ const renameNode = (
   const nodes = document.nodes.map(node =>
     node.id === from ? { ...node, id: to } : node,
   );
+  const prefix = `steps.${from}.outputs.`;
   const edges = document.edges.map(edge =>
-    edge.from === from || edge.to === from
-      ? editorEdge({
-          from: edge.from === from ? to : edge.from,
-          to: edge.to === from ? to : edge.to,
-          when: edge.when,
-        })
-      : edge,
+    editorEdge({
+      from: edge.from === from ? to : edge.from,
+      to: edge.to === from ? to : edge.to,
+      when: edge.when,
+      predicate: edge.predicate?.startsWith(prefix)
+        ? `steps.${to}.outputs.${edge.predicate.slice(prefix.length)}`
+        : edge.predicate,
+    }),
   );
   return { ...document, edges, ...withLayout(nodes) };
 };
@@ -223,7 +226,12 @@ const insertNode = (
   if (!source) return { document: base, notice: null, selectEdge: null };
   const when =
     origin?.kind === 'after' ? origin.when : (splitEdge?.when ?? 'success');
-  const incoming = { from: source.id, to: id, when };
+  const incoming = {
+    from: source.id,
+    to: id,
+    when,
+    predicate: splitEdge?.predicate,
+  };
   const refusal = connectionRefusal(base, incoming);
   if (refusal)
     return {
@@ -595,10 +603,14 @@ export function useEditorState({
     select({ kind: 'edge', id: next.id });
   };
 
-  const setEdgeWhen = (id: string, when: EdgeCondition) => {
+  const updateEdge = (
+    id: string,
+    fields: Partial<Pick<EditorEdge, 'when' | 'predicate'>>,
+  ) => {
     const edge = documentRef.current.edges.find(item => item.id === id);
-    if (!edge || edge.when === when) return;
-    const next = editorEdge({ from: edge.from, to: edge.to, when });
+    if (!edge) return;
+    const next = editorEdge({ ...edge, ...fields });
+    if (next.id === id) return;
     if (documentRef.current.edges.some(item => item.id === next.id)) {
       showNotice(`Edge "${next.id}" is already in this workflow.`);
       return;
@@ -865,7 +877,7 @@ export function useEditorState({
     moveNode,
     settleNode,
     connect,
-    setEdgeWhen,
+    updateEdge,
     removeEdge,
     autoLayoutAll,
     undo,

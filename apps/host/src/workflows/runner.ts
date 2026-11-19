@@ -4,6 +4,7 @@ import {
   parseDurationMs,
   looksExternal,
   incoming,
+  parseWorkflowCondition,
   isChildWorkflowStep,
   workflowLimits,
   stepResultSchema,
@@ -49,12 +50,7 @@ export const AUTHOR_UNAVAILABLE_ATTENTION =
   'The task session is not available on this host.';
 
 export type TurnState =
-  | 'none'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'stopped'
-  | 'interrupted';
+  'none' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 export type TurnKind = 'plan' | 'implement' | 'correction';
 
@@ -187,7 +183,12 @@ export type RunnerPorts = {
 
 export class WorkflowRunError extends Error {
   constructor(
-    readonly code: 'busy' | 'not-found' | 'invalid-request' | 'invalid-directory' | 'unavailable',
+    readonly code:
+      | 'busy'
+      | 'not-found'
+      | 'invalid-request'
+      | 'invalid-directory'
+      | 'unavailable',
     message: string,
   ) {
     super(message);
@@ -273,7 +274,12 @@ export type Move =
       message?: string;
     }
   | { kind: 'start-step'; step: WorkflowStepRecord }
-  | { kind: 'mark-unreached'; step: WorkflowStepRecord; reason: string }
+  | {
+      kind: 'mark-unreached';
+      step: WorkflowStepRecord;
+      reason: string;
+      closed: boolean;
+    }
   | { kind: 'reopen-step'; step: WorkflowStepRecord }
   | { kind: 'send-turn'; turn: AuthorTurn };
 
@@ -304,13 +310,16 @@ export function latestAttempts(
   const latest = new Map<number, WorkflowStepRecord>();
   for (const step of steps) {
     const current = latest.get(step.index);
-    if (!current || step.attempt >= current.attempt) latest.set(step.index, step);
+    if (!current || step.attempt >= current.attempt)
+      latest.set(step.index, step);
   }
   return latest;
 }
 
 const phaseIndices = (workflow: ResolvedWorkflow, phase: StepPhase) =>
-  workflow.steps.flatMap((step, index) => (step.phase === phase ? [index] : []));
+  workflow.steps.flatMap((step, index) =>
+    step.phase === phase ? [index] : [],
+  );
 
 const failureAttention = (step: WorkflowStepRecord) =>
   bounded(
@@ -321,7 +330,8 @@ const failureAttention = (step: WorkflowStepRecord) =>
 const needsPlanningTurn = (workflow: ResolvedWorkflow) =>
   workflow.steps.some(
     step =>
-      step.phase === 'plan' && (step.type === 'agent' || step.type === 'check' || step.type === 'human'),
+      step.phase === 'plan' &&
+      (step.type === 'agent' || step.type === 'check' || step.type === 'human'),
   );
 
 const afterImplementation = (run: WorkflowRun): Move => {
@@ -336,7 +346,10 @@ const afterPlanning = (run: WorkflowRun): Move =>
     ? { kind: 'begin-phase', phase: 'plan' }
     : { kind: 'status', status: 'implementing' };
 
-const authorTurn = (run: WorkflowRun, kind: 'plan' | 'implement'): AuthorTurn => ({
+const authorTurn = (
+  run: WorkflowRun,
+  kind: 'plan' | 'implement',
+): AuthorTurn => ({
   runId: run.id,
   kind,
   messageId: turnMessageId(run.id, kind, 1),
@@ -355,7 +368,10 @@ const turnMove = (
     const skillFailure = failedSkillTurn?.(turn.messageId);
     return skillFailure
       ? { kind: 'finish', status: 'failed', message: skillFailure }
-      : { kind: 'attention', message: `The ${label} turn failed. Open the session for details.` };
+      : {
+          kind: 'attention',
+          message: `The ${label} turn failed. Open the session for details.`,
+        };
   }
   if (state === 'stopped')
     return {
@@ -422,11 +438,21 @@ const authorMove = (
       : afterPlanning(run);
   if (run.status === 'planning') {
     const turn = authorTurn(run, 'plan');
-    return turnMove(context.turnState(turn.messageId), turn, () => afterPlanning(run), context.failedSkillTurn);
+    return turnMove(
+      context.turnState(turn.messageId),
+      turn,
+      () => afterPlanning(run),
+      context.failedSkillTurn,
+    );
   }
   if (run.status === 'implementing') {
     const turn = authorTurn(run, 'implement');
-    return turnMove(context.turnState(turn.messageId), turn, () => afterImplementation(run), context.failedSkillTurn);
+    return turnMove(
+      context.turnState(turn.messageId),
+      turn,
+      () => afterImplementation(run),
+      context.failedSkillTurn,
+    );
   }
   if (run.status === 'fixing') return fixMove(run, steps, context);
   return WAIT;
@@ -444,7 +470,7 @@ const completedPhase = (run: WorkflowRun, context: MoveContext): Move => {
 };
 
 type NodeOutcome = 'success' | 'failure' | 'unreached' | null;
-type EdgeState = 'fired' | 'dead' | 'open';
+type EdgeState = 'fired' | 'dead' | 'closed' | 'missing' | 'open';
 type IncomingEdge = {
   edge: GraphEdge;
   outcome: NodeOutcome;
@@ -464,6 +490,44 @@ const edgeState = (edge: GraphEdge, outcome: NodeOutcome): EdgeState => {
   if (outcome === 'unreached') return 'dead';
   return edge.when === 'any' || edge.when === outcome ? 'fired' : 'dead';
 };
+
+const routedEdgeState = (
+  run: WorkflowRun,
+  edge: GraphEdge,
+  source: WorkflowStepRecord | undefined,
+  outcome: NodeOutcome,
+  steps: ReadonlyMap<string, WorkflowStepRecord>,
+): EdgeState => {
+  if (!outcome) return 'open';
+  if (source?.skip?.routeClosed) return 'closed';
+  if (!edge.predicate || outcome === 'unreached')
+    return edgeState(edge, outcome);
+  const condition = parseWorkflowCondition(edge.predicate);
+  if (!condition) return 'missing';
+  const input = condition.input;
+  const producer = input.kind === 'output' ? steps.get(input.step) : undefined;
+  const outputs =
+    producer && !producer.skip ? producer.result?.outputs : undefined;
+  const value =
+    input.kind === 'stack'
+      ? run.projectProfile?.stack
+      : input.kind === 'output' && outputs && Object.hasOwn(outputs, input.key)
+        ? outputs[input.key]
+        : undefined;
+  if (value === undefined) return 'missing';
+  const matches =
+    condition.operator === '=='
+      ? value === condition.value
+      : value !== condition.value;
+  return matches ? edgeState(edge, outcome) : 'closed';
+};
+
+export const conditionalGraph = (run: WorkflowRun) =>
+  run.workflow.graph.edges.some(edge => edge.predicate) ||
+  run.workflow.steps.some(step => step.join === 'reached' || step.required);
+
+export const requiredStep = (step: ResolvedStep) =>
+  step.required || step.type === 'human' || step.type === 'wait-ci';
 
 const unreachedReason = (source: string, outcome: NodeOutcome) =>
   bounded(
@@ -545,11 +609,37 @@ const checkingMove = (
         return {
           edge,
           outcome,
-          state: edgeState(edge, outcome),
+          state: routedEdgeState(run, edge, source, outcome, named),
           order: source?.index ?? workflowLimits.stepsPerRun,
         };
       })
       .sort((left, right) => left.order - right.order);
+  const routes = (step: WorkflowStepRecord) => {
+    const edges = edgesInto(step);
+    const reached = run.workflow.steps[step.index]?.join === 'reached';
+    const active = reached
+      ? edges.filter(edge => edge.state !== 'closed')
+      : edges;
+    return {
+      ready:
+        (!edges.length || Boolean(active.length)) &&
+        active.every(edge => edge.state === 'fired'),
+      closed:
+        edges.length > 0 &&
+        (reached
+          ? !active.length
+          : edges.some(edge => edge.state === 'closed')) &&
+        edges.every(
+          edge =>
+            edge.state !== 'open' &&
+            edge.state !== 'missing' &&
+            edge.state !== 'dead',
+        ),
+      dead: active.find(edge => edge.state === 'dead'),
+      missing: active.find(edge => edge.state === 'missing'),
+      open: active.some(edge => edge.state === 'open'),
+    };
+  };
   const halted =
     !run.workflow.graph.explicit &&
     rows.some(step => FAILED_STEP_STATES.includes(step.state));
@@ -560,7 +650,7 @@ const checkingMove = (
         step =>
           (!step.retryAt ||
             Date.parse(step.retryAt) <= (context.now ?? Date.now())) &&
-          edgesInto(step).every(edge => edge.state === 'fired') &&
+          routes(step).ready &&
           ancestors(run.workflow.graph, step.name).every(name =>
             Boolean(outcomeOf(named.get(name))),
           ),
@@ -569,18 +659,29 @@ const checkingMove = (
   if (start) return { kind: 'start-step', step: start };
   if (run.workflow.graph.explicit) {
     for (const step of pending) {
-      const dead = edgesInto(step).find(edge => edge.state === 'dead');
-      if (dead)
+      const route = routes(step);
+      if (
+        route.closed ||
+        (route.dead &&
+          (!conditionalGraph(run) || (!route.open && !route.missing)))
+      )
         return {
           kind: 'mark-unreached',
           step,
-          reason: unreachedReason(dead.edge.from, dead.outcome),
+          reason: route.dead
+            ? unreachedReason(route.dead.edge.from, route.dead.outcome)
+            : bounded(
+                `Not reached: a condition on the incoming route to "${step.name}" was false.`,
+                workflowLimits.skipReason,
+              ),
+          closed: route.closed,
         };
     }
     const reopened = rows.find(
       step =>
         step.state === 'unreached' &&
-        edgesInto(step).every(edge => edge.state !== 'dead'),
+        !routes(step).closed &&
+        !routes(step).dead,
     );
     if (reopened) return { kind: 'reopen-step', step: reopened };
   }
@@ -604,6 +705,24 @@ const checkingMove = (
     return run.workflow.steps[failed.index]?.on_fail === 'fix'
       ? { kind: 'attention', message: failureAttention(failed) }
       : { kind: 'finish', status: 'failed' };
+  if (conditionalGraph(run)) {
+    const missing = pending.find(step => routes(step).missing);
+    if (missing)
+      return {
+        kind: 'attention',
+        message: `An input for the route to "${missing.name}" is unavailable.`,
+      };
+    const uncovered = rows.find(step => {
+      const definition = run.workflow.steps[step.index];
+      return definition && requiredStep(definition) && step.state !== 'passed';
+    });
+    if (uncovered)
+      return {
+        kind: 'attention',
+        message: `Required step "${uncovered.name}" did not pass on this route.`,
+      };
+    if (pending.length) return WAIT;
+  }
   return completedPhase(run, context);
 };
 
@@ -743,7 +862,9 @@ export class WorkflowRunner {
       finishedAt: null,
     };
     const needsSession = workflow.steps.some(
-      step => step.phase === phase && (isChildWorkflowStep(step.type) || step.type === 'check'),
+      step =>
+        step.phase === phase &&
+        (isChildWorkflowStep(step.type) || step.type === 'check'),
     );
     if (needsSession) run.manual = true;
     if (!this.store.insertRun(run))
@@ -794,7 +915,8 @@ export class WorkflowRunner {
   stop(runId: string): WorkflowRun {
     for (let attempt = 0; attempt < 8; attempt++) {
       const run = this.store.getRun(runId);
-      if (!run) throw new WorkflowRunError('not-found', 'Workflow run not found.');
+      if (!run)
+        throw new WorkflowRunError('not-found', 'Workflow run not found.');
       if (TERMINAL_STATUSES.includes(run.status)) return run;
       const now = this.timestamp();
       const stopped: WorkflowRun = {
@@ -854,7 +976,8 @@ export class WorkflowRunner {
 
   resume(runId: string): WorkflowRun {
     const run = this.store.getRun(runId);
-    if (!run) throw new WorkflowRunError('not-found', 'Workflow run not found.');
+    if (!run)
+      throw new WorkflowRunError('not-found', 'Workflow run not found.');
     if (run.status !== 'interrupted' && run.status !== 'needs-attention')
       throw new WorkflowRunError(
         'invalid-request',
@@ -890,7 +1013,9 @@ export class WorkflowRunner {
       run.phase && !correction
         ? phaseIndices(run.workflow, run.phase).flatMap(index => {
             const step = latest.get(index);
-            return step && RESUMABLE_STEP_STATES.includes(step.state) ? [step] : [];
+            return step && RESUMABLE_STEP_STATES.includes(step.state)
+              ? [step]
+              : [];
           })
         : [];
     const status = correction
@@ -904,10 +1029,14 @@ export class WorkflowRunner {
           ? 'implement'
           : null;
     const awaitedState = correction
-      ? this.author?.turnState(
+      ? (this.author?.turnState(
           run,
-          correctionMessageId(run.id, correction.step.id, correction.step.attempt),
-        ) ?? 'none'
+          correctionMessageId(
+            run.id,
+            correction.step.id,
+            correction.step.attempt,
+          ),
+        ) ?? 'none')
       : awaited && awaited !== 'correction'
         ? turn(awaited)
         : 'none';
@@ -938,7 +1067,8 @@ export class WorkflowRunner {
         'The run changed while it was being resumed. Try again.',
       );
     this.emit({ type: 'workflow-run-changed', run: next });
-    for (const step of created) this.emit({ type: 'workflow-step-changed', step });
+    for (const step of created)
+      this.emit({ type: 'workflow-step-changed', step });
     this.track(this.advanceRun(runId));
     return next;
   }
@@ -965,10 +1095,31 @@ export class WorkflowRunner {
       if (timer) clearTimeout(timer);
       this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
-      else if (run.status !== 'needs-attention' && !run.projectProfile && run.workflow.steps.some(step => step.type === 'check')) {
-        const profile = await projectChecks.read(run.directory, run.workflow.steps, this.environment, AbortSignal.timeout(8000), hash => this.projectMappingApproved?.(run.projectRoot, hash) === true)
+      else if (
+        run.status !== 'needs-attention' &&
+        !run.projectProfile &&
+        (run.workflow.steps.some(step => step.type === 'check') ||
+          run.workflow.graph.edges.some(
+            edge =>
+              edge.predicate &&
+              parseWorkflowCondition(edge.predicate)?.input.kind === 'stack',
+          ))
+      ) {
+        const profile = await projectChecks
+          .read(
+            run.directory,
+            run.workflow.steps,
+            this.environment,
+            AbortSignal.timeout(8000),
+            hash =>
+              this.projectMappingApproved?.(run.projectRoot, hash) === true,
+          )
           .then(scan => scan.profile, emptyProjectProfile);
-        if (this.closed || !this.writeRun(run, { semanticsVersion: 1, projectProfile: profile })) return;
+        if (
+          this.closed ||
+          !this.writeRun(run, { semanticsVersion: 1, projectProfile: profile })
+        )
+          return;
         continue;
       }
       const steps = this.store.stepsForRun(runId);
@@ -988,7 +1139,9 @@ export class WorkflowRunner {
       const move = nextMove(run, steps, {
         turnState: messageId =>
           run.sessionId && author ? author.turnState(run, messageId) : 'none',
-        failedSkillTurn: run.promptSkill ? messageId => author?.failedSkillTurn?.(run, messageId) ?? null : undefined,
+        failedSkillTurn: run.promptSkill
+          ? messageId => author?.failedSkillTurn?.(run, messageId) ?? null
+          : undefined,
         hasAuthor: Boolean(author),
         now: this.clock.now().getTime(),
       });
@@ -1064,7 +1217,8 @@ export class WorkflowRunner {
     move: Exclude<Move, { kind: 'wait' }>,
   ): boolean {
     if (move.kind === 'begin-phase') this.beginPhase(run, move.phase);
-    else if (move.kind === 'status') this.writeRun(run, { status: move.status });
+    else if (move.kind === 'status')
+      this.writeRun(run, { status: move.status });
     else if (move.kind === 'attention')
       this.writeRun(run, {
         status: 'needs-attention',
@@ -1081,7 +1235,11 @@ export class WorkflowRunner {
       this.writeStep(move.step, {
         state: 'unreached',
         result: null,
-        skip: { reason: move.reason, at: this.timestamp() },
+        skip: {
+          reason: move.reason,
+          at: this.timestamp(),
+          ...(move.closed ? { routeClosed: true } : {}),
+        },
       });
     else if (move.kind === 'reopen-step') this.reopenStep(move.step);
     else this.startStep(run, steps, move.step);
@@ -1206,7 +1364,8 @@ export class WorkflowRunner {
     });
     if (!written) return;
     this.emit({ type: 'workflow-run-changed', run: next });
-    for (const step of created) this.emit({ type: 'workflow-step-changed', step });
+    for (const step of created)
+      this.emit({ type: 'workflow-step-changed', step });
   }
 
   private startStep(
@@ -1216,7 +1375,23 @@ export class WorkflowRunner {
   ): void {
     const definition = run.workflow.steps[step.index];
     if (!definition) return;
-    const blocked = this.unmetNeed(definition, run.workflow.source.scope);
+    const protectedEffect =
+      conditionalGraph(run) &&
+      (definition.type === 'command' || definition.type === 'action') &&
+      (definition.effect === 'external' || looksExternal(definition.body));
+    const currentSteps = latestAttempts(steps);
+    const hasUnmetGate =
+      protectedEffect &&
+      run.workflow.steps.some(
+        (gate, index) =>
+          index !== step.index &&
+          requiredStep(gate) &&
+          PHASE_RANK[gate.phase] <= PHASE_RANK[definition.phase] &&
+          currentSteps.get(index)?.state !== 'passed',
+      );
+    const blocked = hasUnmetGate
+      ? 'An external step requires all current required checks and gate decisions.'
+      : this.unmetNeed(definition, run.workflow.source.scope);
     if (blocked) {
       const now = this.timestamp();
       this.writeStep(step, {
@@ -1233,7 +1408,11 @@ export class WorkflowRunner {
     );
     if (run.currentStepIndex !== currentIndex)
       if (!this.writeRun(run, { currentStepIndex: currentIndex })) return;
-    const running = this.store.beginStep(step.id, step.revision, this.timestamp());
+    const running = this.store.beginStep(
+      step.id,
+      step.revision,
+      this.timestamp(),
+    );
     if (!running) return;
     this.emit({ type: 'workflow-step-changed', step: running });
     this.executeStep(run, steps, running);
@@ -1302,18 +1481,16 @@ export class WorkflowRunner {
         : (this.executors[definition.type] ?? unavailableExecutor);
     const done = Promise.resolve()
       .then(() => executor(execution))
-      .catch(
-        (): StepOutcome => ({
-          kind: 'result',
-          result: this.verdict(
-            running,
-            definition.type === 'action' ? 'error' : 'fail',
-            'The step could not run on this host.',
-            running.startedAt ?? this.timestamp(),
-            this.timestamp(),
-          ),
-        }),
-      )
+      .catch((): StepOutcome => ({
+        kind: 'result',
+        result: this.verdict(
+          running,
+          definition.type === 'action' ? 'error' : 'fail',
+          'The step could not run on this host.',
+          running.startedAt ?? this.timestamp(),
+          this.timestamp(),
+        ),
+      }))
       .then(outcome => {
         if (controller.signal.reason === 'shutdown') return;
         if (!controller.signal.aborted) this.finishStep(running, outcome);
@@ -1561,7 +1738,12 @@ export class WorkflowRunner {
       startedAt,
       finishedAt,
       durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)),
-      cost: { usd: null, inputTokens: null, outputTokens: null, provider: null },
+      cost: {
+        usd: null,
+        inputTokens: null,
+        outputTokens: null,
+        provider: null,
+      },
       attempt: Math.max(step.attempt, 1),
     };
   }
@@ -1571,7 +1753,12 @@ export class WorkflowRunner {
     changes: Partial<
       Pick<
         WorkflowRun,
-        'status' | 'attention' | 'finishedAt' | 'currentStepIndex' | 'semanticsVersion' | 'projectProfile'
+        | 'status'
+        | 'attention'
+        | 'finishedAt'
+        | 'currentStepIndex'
+        | 'semanticsVersion'
+        | 'projectProfile'
       >
     >,
   ): boolean {
@@ -1674,7 +1861,10 @@ function resumeStatus(
   return 'pending';
 }
 
-function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord {
+function nextAttempt(
+  step: WorkflowStepRecord,
+  now: string,
+): WorkflowStepRecord {
   return {
     ...step,
     retry: undefined,
@@ -1769,7 +1959,11 @@ function ancestorOutputs(
   for (const other of precedingSteps(run, steps, step).sort(
     (left, right) => left.index - right.index,
   ))
-    if (other.result && Object.keys(other.result.outputs).length > 0)
+    if (
+      other.result &&
+      (!conditionalGraph(run) || !other.skip) &&
+      Object.keys(other.result.outputs).length > 0
+    )
       outputs.set(other.name, other.result.outputs);
   return outputs;
 }
@@ -1781,7 +1975,8 @@ function filteredResult(result: StepResult): StepResult {
     evidence: result.evidence.map(item => ({
       ...item,
       label: filterResultText(item.label).slice(0, 120),
-      text: item.text === null ? null : filterResultText(item.text).slice(0, 4000),
+      text:
+        item.text === null ? null : filterResultText(item.text).slice(0, 4000),
     })),
     outputs: Object.fromEntries(
       Object.entries(result.outputs).map(([key, value]) => [
@@ -1803,7 +1998,10 @@ function definitionFailure(error: unknown): WorkflowRunError {
   const issues = error.issues
     .filter(issue => issue.severity === 'error')
     .slice(0, 8)
-    .map(issue => `${issue.path}${issue.line ? `:${issue.line}` : ''}: ${issue.message}`);
+    .map(
+      issue =>
+        `${issue.path}${issue.line ? `:${issue.line}` : ''}: ${issue.message}`,
+    );
   return new WorkflowRunError(
     'invalid-request',
     bounded([error.message, ...issues].join('\n'), 4000),

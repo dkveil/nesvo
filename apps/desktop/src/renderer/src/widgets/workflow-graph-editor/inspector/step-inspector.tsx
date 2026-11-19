@@ -774,6 +774,19 @@ export function StepInspectorForm({
             </p>
           )}
         </div>
+        <Field id={fieldId('join')} label="Join" as="span">
+          <SegmentedControl
+            label="Join"
+            value={step.join ?? 'all'}
+            options={[
+              { value: 'all', label: 'All inputs' },
+              { value: 'reached', label: 'Reached inputs' },
+            ]}
+            onChange={join =>
+              update({ join: join === 'all' ? undefined : join })
+            }
+          />
+        </Field>
         <NeedsField
           id={fieldId('needs')}
           fieldClassName={inlineFieldClass}

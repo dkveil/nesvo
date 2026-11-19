@@ -31,7 +31,7 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
-const currentDatabaseVersion = 38;
+const currentDatabaseVersion = 39;
 const newerDatabaseVersion = currentDatabaseVersion + 1;
 
 test(
@@ -21902,6 +21902,86 @@ test(
             { kind: 'wait' },
           );
         }
+        const conditional = makeRun(
+          [
+            definition('inspect', 'pre-done'),
+            definition('typescript', 'pre-done'),
+            definition('kotlin', 'pre-done'),
+            definition('result', 'pre-done', { join: 'reached' }),
+          ],
+          [
+            {
+              from: 'inspect',
+              to: 'typescript',
+              when: 'success',
+              predicate: 'steps.inspect.outputs.stack == "typescript"',
+            },
+            {
+              from: 'inspect',
+              to: 'kotlin',
+              when: 'success',
+              predicate: 'steps.inspect.outputs.stack == "kotlin"',
+            },
+            { from: 'typescript', to: 'result', when: 'success' },
+            { from: 'kotlin', to: 'result', when: 'success' },
+          ],
+        );
+        const inspect = row(conditional, 0, 'passed');
+        inspect.result.outputs = { stack: 'typescript' };
+        const kotlin = row(conditional, 2, 'pending');
+        const joined = row(conditional, 3, 'pending');
+        const pendingJoin = [
+          inspect,
+          row(conditional, 1, 'running'),
+          kotlin,
+          joined,
+        ];
+        const closeRoute = nextMove(conditional, pendingJoin, context);
+        assert.equal(closeRoute.kind, 'mark-unreached');
+        assert.equal(closeRoute.step.id, kotlin.id);
+        assert.equal(closeRoute.closed, true);
+        const closed = {
+          ...kotlin,
+          state: 'unreached',
+          skip: { reason: closeRoute.reason, routeClosed: true, at: now },
+        };
+        assert.equal(
+          nextMove(
+            conditional,
+            [inspect, pendingJoin[1], closed, joined],
+            context,
+          ).kind,
+          'wait',
+        );
+        assert.deepEqual(
+          nextMove(
+            conditional,
+            [inspect, row(conditional, 1, 'passed'), closed, joined],
+            context,
+          ),
+          { kind: 'start-step', step: joined },
+        );
+        assert.equal(
+          nextMove(
+            conditional,
+            [inspect, row(conditional, 1, 'failed'), closed, joined],
+            context,
+          ).closed,
+          false,
+        );
+        assert.match(
+          nextMove(
+            conditional,
+            [
+              { ...inspect, result: { ...inspect.result, outputs: {} } },
+              row(conditional, 1, 'pending'),
+              kotlin,
+              joined,
+            ],
+            context,
+          ).message,
+          /input for the route/,
+        );
         const mixed = makeRun(
           [
             definition('publish', 'pre-done', { type: 'action' }),

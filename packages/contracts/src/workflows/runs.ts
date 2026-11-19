@@ -182,6 +182,7 @@ export const workflowStepRecordSchema = z.strictObject({
   skip: z
     .strictObject({
       reason: z.string().min(1).max(workflowLimits.skipReason),
+      routeClosed: z.literal(true).optional(),
       at: z.iso.datetime(),
     })
     .nullable(),

@@ -211,7 +211,8 @@ export function InspectorPanel({
               document.nodes.find(item => item.id === edge.from)?.step.type ??
               'command'
             }
-            onChange={when => state.setEdgeWhen(edge.id, when)}
+            onChange={when => state.updateEdge(edge.id, { when })}
+            onPredicate={predicate => state.updateEdge(edge.id, { predicate })}
             onDelete={() => state.removeEdge(edge.id)}
           />
         )}
