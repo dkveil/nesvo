@@ -65,6 +65,7 @@
 /scripts/*
 !/scripts/desktop-smoke.mjs
 !/scripts/manager-import-smoke.mjs
+!/scripts/d87-desktop-smoke.mjs
 !/scripts/gate-rule-flow-smoke.mjs
 !/scripts/g3-workers-smoke.mjs
 !/scripts/share-server-fixture.mjs

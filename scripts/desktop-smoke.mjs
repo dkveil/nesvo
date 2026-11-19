@@ -2266,6 +2266,7 @@ async function smokeDesktop() {
     'default-session-folder',
     'worktree-recipes',
     'session-control',
+    'coordinator-orchestration',
     'workflow-sharing',
     'workflow-child-sessions',
     'session-stages',
