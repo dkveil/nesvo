@@ -1,169 +1,70 @@
-# Nesvo
+<p align="center">
+  <img src="apps/desktop/build/icons/128x128.png" width="72" height="72" alt="Nesvo logo" />
+</p>
 
-The Expo mobile companion supports existing conversations, live activity and operator decisions. See [mobile setup and scope](docs/mobile.md).
+<h1 align="center">Nesvo</h1>
 
-A desktop workspace for technical sessions, visible delegation and operator review.
+<p align="center"><strong>vibe with full control</strong></p>
 
-The approved prototype targets Windows, macOS and Linux. The desktop connects installed Claude Code and Codex for technical conversations, streaming, Stop and persistent history. Codex adds provider-specific modes, one-time operation approvals and visible delegation. P0, the initial P1 layout, the delivered Codex scope of P3 and P4 are accepted. P5 provides direct decisions on session-linked inbox rows; successful Claude task evidence remains open in P2.
+Nesvo is one desktop app for running Claude Code and Codex side by side on this computer and your own servers. You decide what agents can do and which results to accept.
 
-## Start
+## Sessions
 
-Install Node.js 24.20.0 and Bun 1.4.0, then run from the repository root:
+- **Claude Code and Codex** — Work with both agents using their native permission modes and your existing sign-ins.
+- **Skills** — Pick a skill with `/` using native Codex skills or shared instructions in Claude Code.
+- **Session groups** — Organize related sessions and set defaults for new ones.
+- **History search** — Find messages across your computers and jump to the conversation.
+- **Import conversations** — Resume existing Claude Code and Codex CLI conversations in Nesvo.
+
+## Control
+
+- **MCP servers** — Choose servers for each session, see their status, and select Authorize or Reconnect when needed.
+- **Claude allow rules** — Approve recurring actions within a session or project.
+- **Full access** — Opt in for a supported session after enabling the computer-wide setting.
+- **Claude terminal view** — Follow live output from Claude Code in the session.
+- **Worktrees and recipes** — Isolate Git work and reuse project setup.
+- **Writable workers** — Delegate changes in separate worktrees, review each diff, and choose whether to merge.
+- **Restart recovery** — Continue coordinators and interrupted workers on their existing threads after a host restart.
+
+## Inbox
+
+- **Inbox and rules** — Choose what reaches your Inbox and when agents wait for your decision.
+- **Saved results** — Review the exact response and its diff, accept that version, or request corrections.
+- **External Inbox items** — Send review requests from scripts, CI or other agents through the `nesvo` CLI or MCP and wait for a decision.
+- **Lessons and gate rules** — Review proposals from incidents and workflow feedback, and see how often approved entries are used or cited.
+
+## Automation
+
+- **Workflows** — Chain steps with automated checks and human approval gates.
+- **Automations and rituals** — Run tasks on a schedule or when a check changes, with editable templates for recurring work.
+- **Pull requests** — Review diffs and publish reviews using your existing GitHub CLI sign-in.
+
+## Insight
+
+- **Costs and budgets** — See reported and estimated costs from local transcripts and set budgets to warn or block new turns.
+- **Usage limits** — See your remaining provider allowance and reset times.
+- **Running apps** — See servers started by your sessions and open local web previews.
+
+## Anywhere
+
+- **Remote computers** — Connect to your own Linux hosts over SSH and use their accounts, files and skills.
+- **Phone access** — Pair your phone to follow existing sessions, send messages and make decisions.
+- **Onboarding** — Check your providers, connect computers and choose starter Inbox rules and routines.
+
+## Download
+
+[Download page](https://nesvo.dev/) · [GitHub Releases](https://github.com/dkveil/nesvo/releases)
+
+Windows and macOS builds are unsigned, so the operating system will warn when you open them.
+
+## Development
 
 ```sh
 bun install --frozen-lockfile
 bun run dev
+bun run check
 ```
 
-The desktop opens your saved sessions in a black workspace with an English interface. Use New session to open a new thread: pick the provider and model, the computer, an optional project folder and access permissions from the chips under the composer, then send the first message. That message creates the session and its first line becomes the title. There is no role picker: new Codex sessions can propose workers when the task calls for delegation, without changing their permissions. A directory does not need Git; leaving it empty creates a separate local working folder. Connection and provider status are available on demand. Quitting the application stops its local active group and host. On macOS, use Quit to exit; closing the last window keeps the application available in the dock.
+[Documentation](docs/)
 
-The desktop uses Electron's embedded Node runtime. The Node version above is for development tools and the standalone host. Local remains the default computer. In Computers, add a prepared Linux host through SSH and connect it explicitly. New sessions can choose that connected computer; its files, skills and provider login belong to it. Quitting Nesvo stops Local work and disconnects remote computers without stopping their hosts. See [Linux host setup](docs/ssh-host.md).
-
-## Getting started
-
-The first desktop launch opens the full-window guide. The workspace opens when you skip or finish it. Reopen the guide from the command palette (Getting started) or Settings › About.
-
-1. **Welcome** introduces local and remote agents, the configurable Inbox, workflows and daily routines.
-2. **Coding agents** checks Claude Code and Codex on Local and shows any install or sign-in commands you need.
-3. **Computers** lets you pick the Local default session folder in the native directory dialog and add an SSH computer in the guide. Enter remote paths on the computer they belong to. Each host validates its own folder.
-4. **Your setup** shows configured MCP servers and discovered skills. Choose **Summarize my rules** to send excerpts from your user and project instruction files to the selected agent for a read-only summary in the guide. Nesvo proposes lessons from incidents for your review in the Inbox. Approved lessons are files that guide matching work.
-5. **Your Inbox** lets you enable starter rules for what reaches the Inbox and when an agent waits for you. Edit these files in Settings › Inbox rules.
-6. **Starter routines** offers an editable morning summary, pull request review and pre-push gates workflow. Automations are added paused. The workflow is saved to the confirmed project's `.agents/workflows` and runs only after you choose to use it.
-7. **Finish** summarizes the setup and lets you open the new session form or the workspace.
-
-The new session form pre-fills the computer's default folder when set. You can choose another folder or an isolated one. Group defaults take precedence when you start a session in a group.
-
-## Workspace
-
-The narrow left rail shows the remaining reported allowance for Claude Code and Codex on the selected computer. Open a provider indicator for its quota windows and reset times, or the account icon below for both accounts. Refresh is available in that panel. Unavailable data stays unknown; offline, expired and older observations are labeled explicitly. Reading limits starts no model task. Claude's native usage capability is experimental and may be unavailable in another CLI version. The panel covers reported subscription windows, not billing or account management.
-
-```text
-apps/desktop     Electron main/preload and React renderer
-apps/host        Effect services, SQLite and standalone entry
-packages/contracts  Zod schemas and inferred types
-docs             Architecture, workflow and acceptance plan
-scripts          Desktop and focused remote-host integration scenarios
-```
-
-## Commands
-
-| Command               | Purpose                                            |
-| --------------------- | -------------------------------------------------- |
-| bun run dev           | Start the desktop with development reload          |
-| bun run check         | Types, lint, formatting and host integration cases |
-| bun run build         | Build the standalone host and desktop              |
-| bun run smoke:desktop | Check the built desktop, real host and shutdown    |
-| bun run smoke:remote  | Check two hosts over isolated Docker SSH           |
-| bun run package:dir   | Produce an unpacked native desktop package         |
-| bun run format        | Format current workspace files                     |
-
-Install the native Claude Code or Codex CLI and sign in using `claude auth login` or `codex login`. Nesvo uses that existing login and requires no new model API key. It checks the installed CLI and authentication before execution. Claude choices are CLI aliases; Codex choices come from its local model catalog. Actual account access is confirmed by the provider, and the running model is shown in session details.
-
-Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs per host at a time: a parent with up to two approved workers, or a single session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. The inbox brings operation approvals, worker proposals and successful results into compact rows with distinct inline actions. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
-
-A workflow task runs a task spec from your project through the steps of a workflow defined in files. Starting a task creates one ordinary session, optionally in its own Git worktree and branch. The session plans first when the workflow asks for a plan check, then implements the task; when the turn ends, the computer runs the checks and actions of the workflow in order and records their results. A run never repeats work by itself: Stop ends it, a restart interrupts it until you resume it explicitly, and an action that may already have run needs your decision. One task runs per project at a time.
-
-The operator guide to workflow files, the graph editor, the assistant dock and the command line is [docs/workflows.md](docs/workflows.md).
-
-## P2 acceptance walkthrough
-
-1. Confirm that Claude Code is detected and logged in, then create a session in a small known directory.
-2. Ask it to summarize a file and observe the streamed response. Confirm the actual model in session details.
-3. Reload or restart the application and continue the same conversation.
-4. Start another response and press Stop. Confirm the stopped state and preserved partial output.
-5. Switch sessions, check separate drafts, and open navigation/details in a smaller window.
-
-On November 7, the local Claude account reported its weekly limit until November 8 at 20:00 Europe/Warsaw. Actual CLI startup, limit handling, reload and Stop were verified; successful Claude output still requires account availability. Damian explicitly authorized starting Codex in P3 while retaining this pending P2 evidence (D50). See [platform evidence](docs/platforms.md).
-
-## P3 acceptance walkthrough
-
-1. Refresh Codex availability and create a Codex session with a model from its catalog.
-2. In read-only mode, ask about a small file, reload and continue the same conversation.
-3. Create a supervised session in a disposable directory. Inspect a requested operation, decline it, and confirm its intended change did not happen.
-4. Request a new operation and allow it once. Check the resulting file. A stopped or completed request cannot be approved again.
-5. Press Stop during work or while awaiting a decision. Reopen the app and inspect the retained history.
-6. Switch to Claude and confirm its distinct capabilities and account state. Successful Claude work and the owner's full two-provider acceptance remain separate gates.
-
-## P4 acceptance walkthrough
-
-1. Create a new Codex session in a small known directory. Choose access permissions independently of delegation; no role choice is required. New Codex sessions receive the delegation tool and become orchestrators when they make a valid proposal. Existing conversations retain their original provider threads and recorded capabilities.
-2. Ask for two workers with explicit tasks and scopes. For example: "Propose two read-only Codex workers in this directory: one summarizes README.md, the other inspects package.json. After my approval, summarize their results. Use your delegation tool."
-3. Inspect each proposal's task, scope, directory, provider, model and mode. Approve or decline each separately. No worker session or process exists before approval.
-4. Open each child from the session tree and watch its conversation. Stop one while the other continues; return to the parent and inspect the distinct results. Stop group on the parent cancels both children and pending proposals.
-5. Reload or reopen the application and confirm that conversations and relationships remain. Interrupted work never starts automatically.
-
-Worker directories must exist inside the parent directory. Read-only workers may share a folder; writable workers require non-overlapping directories and a read-only parent. Until isolated workspaces exist, a supervised parent can delegate only read-only workers so its review snapshot cannot mix in worker edits. Unsupported proposals are rejected explicitly, without downgrading permissions or starting a child. The textual scope describes the assignment, not an additional filesystem sandbox. A proposal is accepted as shown; reject it and request another plan to change its settings. Workers cannot delegate recursively.
-P4's real demonstration uses Codex. Claude can be a read-only worker, with successful execution still dependent on account availability. Each parent turn has a ten-minute deadline including time spent awaiting operator decisions and worker results. The conversation retains at most 100 proposals before a new orchestrator is required.
-
-## P5 acceptance walkthrough
-
-1. Create a supervised Codex session in a small disposable directory and ask it to edit a text file. Open the inbox. Pending operations show the requesting session and their own approve/deny buttons; completed results show result acceptance actions.
-2. Read the short description and version in the row. Its session-name link opens the conversation at that exact request or saved result. Full task, answer, diff and decision history live there, without a separate inbox detail screen. Existing dirty contents are the baseline; the diff compares the start and end of that turn without changing the workspace or Git index.
-3. Request changes on the result row, enter feedback and submit it. This explicitly starts another turn in the same session, provider thread, directory and permissions. The app opens that conversation. Unsaved feedback survives navigation between the list and session.
-4. Return to the inbox for the new result version. The previous decision remains in history; its acceptance is not inherited. Each version shows its own turn's delta inside the conversation.
-5. Accept the result directly on the new row and reload the application. Select History to confirm the accepted version and correction history. Session links still open the exact historical version. An old result cannot accept a replaced version, and external changes to captured files block stale acceptance.
-
-The inbox receives successful turns completed after P5 was installed; it does not fabricate results for older conversations or stopped/failed runs. Read-only results are reviewed as saved responses. Parent summaries link to exact worker results; accepting a summary does not accept those workers automatically. Continuing a child invalidates dependent parent summaries. When continuing a parent without another delegation, it receives the latest saved child summaries and retains their result references.
-
-Writable review uses a bounded local snapshot: 500 files, 512 KiB per file, 8 MiB total and five seconds per capture. Generated directories are excluded and listed in the result. Symlinks, special files, read failures, excessive size or changed binary contents make the diff unavailable and block acceptance. Use a small work directory for this prototype. Changes made outside Nesvo during a turn can also appear in the comparison. Review decisions wait until the active group finishes.
-
-## P6 skill walkthrough
-
-1. Open either provider session. Type `/` at the start of a draft or use Choose skill to search the shared local library.
-2. Inspect the source and delivery label. Codex uses Native skill; Claude uses compatible static content as Shared instructions. Unsupported entries explain why they cannot be selected.
-3. Select with the mouse or arrow keys and Enter/Tab. Escape closes the menu. One removable skill is attached to the current draft.
-4. Send your task. Nesvo revalidates the source and selected content hash. A changed, disabled or incompatible selection fails explicitly without widening session permissions.
-5. Inspect the result and source reference in history. The reference includes origin, delivery and content hash and survives reopening the app. The hash does not freeze supporting files or later native reads.
-
-The catalog covers known project/user/managed sources and the isolated native Codex catalog, with explicit coverage limits. It does not promise every plugin or remote skill. Claude's Shared instructions delivery is distinct from native Claude skill execution. Real Codex use of a Claude-source skill is verified on Windows; a successful real Claude task remains open because the account reached its weekly limit.
-
-## P7 restart walkthrough
-
-1. Finish a parent/worker task and leave a result pending in Inbox. Open a saved result diff if you want to resume that review location.
-2. Quit and reopen Nesvo. The last session or Inbox and the exact saved diff are restored. Sessions, worker relationships, results, decisions and selected skill references come from the host database.
-3. An unfinished run is marked Interrupted with its cause. Partial output remains available; no successful result or operation completion is invented. Expired operation and worker approvals are not restored as actionable requests.
-4. Use Continue conversation to focus the composer, then send a new instruction after checking the current state. The button itself starts nothing. Nesvo retains the provider thread and includes interruption context; it never replays the previous task automatically.
-5. Continue reviewing the same saved result version. Re-delivery of an already recorded decision returns that decision rather than starting another correction.
-
-Reloading the window leaves the host running. Quitting the app closes its local owned work and disconnects remote computers; a host restart reconciles incomplete records. Local view preferences contain only navigation identifiers and a diff path, not authoritative status or permission. Unsent composer and review-feedback drafts remain transient in this stage. Only one app/host may own a data directory.
-
-## Agent review walkthrough
-
-1. Open Settings › Code review on the computer that has the repository checkout. Add a reviewer profile with the provider, model, finding types, minimum severity, maximum findings, tone, language and summary choice. Add global, language or project conventions if you want them in every matching review.
-2. Open Pull requests from a session in the repository and choose a pull request. Use **Review with agent** in its header, pick a profile and confirm the checkout folder. To review several at once, use **Select pull requests to review** in the list, select them and start the reviews together.
-3. Each review appears as a read-only session in the sidebar. When it finishes, the **Agent review** tab shows the summary and the findings with file, lines, severity and type. Keep, discard or edit each finding. **Save as rule** turns a discarded or edited finding into a convention.
-4. Choose Comment, Request changes or Approve, add an optional comment and publish the kept findings as one GitHub review. If the pull request moved since the review, Nesvo asks before publishing against the reviewed commit.
-5. An automation can review new pull requests on a schedule. Choose **Review new pull requests** as its task, a profile and the checkout folder. Drafts reach the Inbox; nothing is published until you do it.
-
-The review uses the installed provider CLI and the GitHub CLI with their existing sign-ins. Nesvo stores no GitHub token.
-
-## Tracked repositories
-
-1. Open Pull requests. When the current session folder is not a GitHub checkout, choose **Track a repository**; otherwise open the repository picker and choose **Track a repository…**. You can also manage the list in Settings › Tracked repositories.
-2. Enter `owner/name` or a GitHub link, and optionally the folder of a local clone. Suggestions come from session folders and recently opened pull requests. The computer checks the repository with its GitHub CLI login; nothing else is stored.
-3. With two or more tracked repositories, choose **All tracked** to see their pull requests in one list. The Open, Authored and Review requested filters and the search apply to every repository, and the repository filter shows each repository's count and lets you leave some out. A repository that cannot be loaded is reported on its own line while the others stay visible.
-4. Nesvo remembers the chosen source and the repository filter for each computer.
-
-## External Inbox CLI and MCP
-
-Open **Settings → Devices**, select a computer and create an Inbox device token. The token grants post, status and cancel for that device. Copy it into a secret environment variable named `NESVO_INBOX_TOKEN`, or point `NESVO_INBOX_CONFIG` at an owner-only JSON file with a `token` property. Use mode `0600` on Unix and a user-only ACL on Windows. The token identifies the host instance. Revoke it from the same settings page.
-
-Nesvo includes the CLI in its desktop app. In **Settings → Devices**, copy **Add to PATH** and run it in PowerShell on Windows or in your shell on macOS or Linux. The command applies to the current terminal. Then run:
-
-```bash
-nesvo inbox post --title "Publish next build?" --source "Release CI" --body-file release-notes.md --idempotency-key release-12 --wait --timeout 120 --json
-nesvo inbox status <item-id> --json
-nesvo inbox cancel <item-id> --json
-```
-
-Use `--body` for inline Markdown, `--actions approve,reject` to override the offered labels and `--session <id>` to link a session. Use the same explicit key and payload to recover the same item after a lost response. Without a key the client generates one for that call. For SSH targets, copy the selected computer's SSH settings from the MCP snippet into `NESVO_INBOX_SSH` or the config file's `ssh` object. `--computer <instance-id>` pins the destination to the selected token's host. SSH uses the same known host and identity settings as the desktop.
-
-An ordinary post prints the item ID. With `--wait`, exit status is **0** for the first declared action, **1** for another declared action, **2** for timeout and **3** for withdrawal or error. The default wait is five minutes and timeout leaves the item pending. `--json` writes one object with the status, action, zero-based action index and optional operator comment. During a JSON wait the CLI prints the ID on stderr as soon as the host accepts the post.
-
-Run `nesvo mcp` for the stdio server. **Settings → Devices** has copyable Claude Code JSON and Codex TOML with the installed paths. Set the token in the client's launch environment or use a private CLI config file. The tools are `inbox_post`, `inbox_status` and `inbox_cancel`. Waiting through MCP returns the equivalent exit code in the result. The operator applies the PATH command and edits provider configuration.
-
-## Working agreement
-
-Small conventional commits go directly to master during the prototype. Each stage ends with Damian's acceptance. See [roadmap](docs/roadmap.md), [contributing](CONTRIBUTING.md), [testing](docs/testing.md) and [platform evidence](docs/platforms.md).
-
-The active repository contains no previous branding. The baseline is preserved in Git; see [baseline](docs/baseline.md). Existing checkouts may contain ignored historical files and private runtime data. Use only the documented workspace commands.
+Licensed under the [MIT License](LICENSE).
