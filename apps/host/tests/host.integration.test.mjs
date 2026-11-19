@@ -2532,6 +2532,11 @@ test('setup profiles validate and apply offline, own routing, and reconcile incl
     assert.equal((await cli('validate')).document.status, 'invalid');
     await writeFile(entry, 'version: 2\n');
     assert.equal((await cli('validate')).document.status, 'unsupported');
+    await writeFile(
+      entry,
+      'version: 1\nrecipes: [{id: shell, name: Shell, repository: git.example.test/org/project, setup: [{executable: bash, argv: []}]}]\n',
+    );
+    assert.equal((await cli('validate')).document.status, 'invalid');
     await writeFile(entry, configuration);
     await writeFile(shared, sharedDocument);
     await writeFile(machine, machineDocument);
@@ -2566,6 +2571,21 @@ test('setup profiles validate and apply offline, own routing, and reconcile incl
     assert.equal(loaded.routing.writesTo, machine);
     assert.equal((await cli('diff')).document.code, 'busy');
     assert.equal((await host.request('list-sessions')).sessions.length, 0);
+    const profileReviews = (
+      await host.request('list-config-changes', { area: 'setup-review' })
+    ).result.page.changes;
+    assert.equal(profileReviews.length, 1);
+    assert.equal(profileReviews[0].status, 'pending');
+    const refused = (
+      await host.request('decide-config-proposal', {
+        id: profileReviews[0].id,
+        revision: profileReviews[0].revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+        confirmAuthority: true,
+      })
+    ).result;
+    assert.equal(refused.code, 'unsupported');
     assert.equal(
       (await host.request('save-inbox-settings', { defaultRoute: 'both' }))
         .type,
@@ -2622,6 +2642,11 @@ test('setup profiles validate and apply offline, own routing, and reconcile incl
     ).result.page.changes;
     assert.equal(history[0].source.kind, 'system');
     assert.equal(history[0].status, 'applied');
+    assert.equal(
+      (await host.request('list-config-changes', { area: 'setup-review' }))
+        .result.page.changes.length,
+      1,
+    );
     await writeFile(machine, 'version: 2\n');
     assert.equal((await inspect()).result.review.status, 'unsupported');
     assert.equal(

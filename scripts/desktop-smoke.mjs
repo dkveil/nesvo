@@ -213,6 +213,41 @@ async function smokeSetupProfile() {
   await page.getByRole('button', { name: 'Close profile sources' }).click();
   await page.getByRole('button', { name: 'Load profile' }).click();
   await page.getByText('Active profile', { exact: true }).waitFor();
+  if (setupStage === 'C') {
+    await page
+      .getByRole('button', { name: 'Close settings', exact: true })
+      .click();
+    await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+    const pending = page.getByRole('article', {
+      name: 'Configuration change Prepare checkout',
+    });
+    await pending
+      .getByRole('button', { name: 'Review diff for Prepare checkout' })
+      .click();
+    await pending
+      .getByText('Runtime verification is unavailable on this computer.')
+      .waitFor();
+    assert.equal(
+      await pending
+        .getByRole('button', { name: 'Accept', exact: true })
+        .count(),
+      0,
+    );
+    await setupShot(application, page, 'stage-c-local-review-withheld');
+    assert.equal(
+      (await page.evaluate(() => window.nesvo.listSessions())).length,
+      0,
+    );
+    console.log(
+      JSON.stringify({
+        result: 'passed',
+        scenario: 'unavailable runtime stays withheld',
+        stage: setupStage,
+        platform: process.platform,
+      }),
+    );
+    return;
+  }
   await page.getByRole('button', { name: 'Inbox rules', exact: true }).click();
   await page.getByRole('button', { name: 'Edit profile setting' }).click();
   const editor = page.getByRole('dialog', { name: 'Edit profile setting' });
