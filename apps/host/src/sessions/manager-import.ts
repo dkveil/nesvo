@@ -36,6 +36,7 @@ import {
 import { SessionError } from './service';
 import type { SessionStore } from './store';
 import { readT3Source } from './t3-import-source';
+import { readAgentDeckSource } from './agent-deck-import-source';
 
 type ResolvedTranscript = {
   profileId: string | null;
@@ -339,16 +340,21 @@ export class ManagerImport {
     signal: AbortSignal,
   ): Promise<Scan> {
     try {
-      if (input.source !== 't3-code')
-        return emptyCatalog(
-          'unsupported',
-          'This source is unavailable on this computer.',
-        );
-      const source = await readT3Source(input.root, this.dataDirectory, signal);
+      const readSource =
+        input.source === 't3-code' ? readT3Source : readAgentDeckSource;
+      const source = await readSource(input.root, this.dataDirectory, signal);
       if (!source)
         return emptyCatalog(
           'not-found',
-          'No T3 Code v2 store was found on this computer.',
+          input.source === 't3-code'
+            ? 'No T3 Code v2 store was found on this computer.'
+            : 'No Agent Deck profile store was found on this computer.',
+        );
+      if ('roots' in source)
+        return emptyCatalog(
+          'choose-root',
+          'Agent Deck has conflicting data stores. Choose the one to import.',
+          source.roots,
         );
       return await this.resolve(source, signal);
     } catch (error) {

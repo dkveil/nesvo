@@ -46,6 +46,7 @@
 !apps/host/tests/host.integration.test.mjs
 !apps/host/tests/running-apps.test.mjs
 !apps/host/tests/provider-profile-directory.mjs
+!apps/host/tests/manager-import-fixture.mjs
 !apps/host/tests/daemon.integration.test.mjs
 !apps/host/tests/mobile.integration.test.mjs
 !apps/host/tests/claude-fixture.mjs

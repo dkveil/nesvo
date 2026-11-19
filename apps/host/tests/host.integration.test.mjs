@@ -26,7 +26,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { automaticPersistence } from '../src/process/test-command-audit.ts';
 import { createProfileDirectory } from './provider-profile-directory.mjs';
-import { t3ImportFixture } from './manager-import-fixture.mjs';
+import {
+  agentDeckImportFixture,
+  t3ImportFixture,
+} from './manager-import-fixture.mjs';
 
 test(
   'manager import reads WAL-only rows and adopts a verified native thread once',
@@ -39,7 +42,17 @@ test(
       root,
       join(directory, 'claude-config'),
     );
-    const environment = { T3CODE_HOME: root };
+    const deckRoot = join(directory, 'agent-deck');
+    const deck = await agentDeckImportFixture(
+      deckRoot,
+      join(directory, 'codex-config'),
+      fixture,
+    );
+    const environment = {
+      T3CODE_HOME: root,
+      NESVO_TEST_AGENT_DECK_ROOT: deckRoot,
+      NESVO_TEST_MODE: '1',
+    };
     const request = { source: 't3-code' };
     const digest = async path =>
       createHash('sha256')
@@ -52,6 +65,9 @@ test(
           fixture.path + '-wal',
           fixture.transcript,
           fixture.duplicateTranscript,
+          deck.sqlitePath,
+          deck.legacyPath,
+          deck.path,
         ].map(digest),
       );
     const selected = rows =>
@@ -158,10 +174,88 @@ test(
         requestId: randomUUID(),
       });
       assert.match(duplicate.message, /already been adopted/);
+      const deckRequest = { source: 'agent-deck' };
+      const deckList = (await host.request('list-manager-import', deckRequest))
+        .catalog;
+      assert.equal(deckList.status, 'ready');
+      assert.equal(deckList.profileCount, 2);
+      assert.equal(deckList.sessionCount, 4);
+      assert.equal(
+        deckList.rows.find(row => row.title === 'Agent Deck release notes')
+          .disposition,
+        'existing',
+      );
+      assert.match(
+        deckList.rows.find(row => row.title === 'Remote agent').reason,
+        /SSH target/,
+      );
+      assert.match(
+        deckList.rows.find(row => row.title === 'Guessed conversation').reason,
+        /unverified/,
+      );
+      const folded = deckList.rows.find(
+        row => row.title === 'releases/november',
+      );
+      assert.equal(
+        folded.parent,
+        deckList.rows.find(row => row.title === 'Platform').key,
+      );
+      const deckImport = await host.request('adopt-manager-import', {
+        ...deckRequest,
+        requestId: randomUUID(),
+        selected: selected(
+          deckList.rows.filter(
+            row => row.kind === 'group' || row.disposition !== 'blocked',
+          ),
+        ),
+      });
+      assert.equal(
+        deckImport.result.outcomes.filter(row => row.status === 'created')
+          .length,
+        deckList.groupCount + 1,
+      );
+      assert.equal(
+        deckImport.result.outcomes.filter(row => row.status === 'existing')
+          .length,
+        1,
+      );
+      const combined = (await host.request('list-sessions')).sessions;
+      assert.equal(combined.length, 3);
+      assert.deepEqual(
+        combined.find(item => item.id === session.id),
+        session,
+      );
+      const codex = combined.find(item => item.provider === 'Codex');
+      assert.equal(codex.title, 'Database migration');
+      assert.equal(codex.providerSessionId, deck.nativeId);
+      assert.equal(codex.mode, 'read-only');
+      assert.equal(codex.groupId, null);
       assert.deepEqual(await hashes(), changed);
       assert.ok(
         !(await readdir(directory)).some(name => name.startsWith('.import-')),
       );
+      const codexState = pidFile + '.state';
+      await mkdir(codexState, { recursive: true });
+      await writeFile(
+        join(codexState, '.nesvo-codex-fixture-' + deck.nativeId + '.json'),
+        JSON.stringify({ turns: 1, delegationEnabled: false }),
+      );
+      await host.stop();
+      host = launch(directory, pidFile, environment);
+      const continued = await host.request('send-message', {
+        sessionId: codex.id,
+        messageId: randomUUID(),
+        text: 'Continue the fixture conversation.',
+      });
+      assert.equal(continued.type, 'session');
+      const completed = await host.event(
+        item =>
+          item.id === codex.id &&
+          item.runId === continued.session.runId &&
+          item.status === 'completed',
+      );
+      assert.equal(completed.providerSessionId, deck.nativeId);
+      assert.match(completed.messages.at(-1).body, /fixture resumed reply/i);
     } finally {
       await host?.stop();
       fixture.db.close();
