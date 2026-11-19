@@ -66,6 +66,7 @@ type SessionControlParams = {
   signal: AbortSignal;
   route: (session: Session) => DecisionRoute;
   gate: (sessionId: string, runId: string) => 'hold' | 'declined' | null;
+  wakeChanged: () => void;
 };
 
 type Handler<T extends SessionControlToolName> = (context: {
@@ -272,7 +273,7 @@ export class SessionControl {
 
   savePolicy(policy: CoordinatorPolicy): CoordinatorPolicy {
     const saved = this.params.store.savePolicy(policy);
-    this.wake.signal();
+    this.wake.signal(true);
     return saved;
   }
 
@@ -659,6 +660,7 @@ export class SessionControl {
       return;
     for (const entry of records) {
       if (entry.kind === 'question' && entry.status === 'pending') {
+        this.wake.signal();
         for (const wake of this.waiters.get(record.parentId) ?? []) wake();
         continue;
       }
@@ -1704,6 +1706,7 @@ export class SessionControl {
           input.events,
         ),
       );
+      if (receipt?.acknowledged.length) this.wake.signal(true);
       return receipt
         ? success(receipt)
         : refusal('invalid', 'Only acknowledge events returned to this turn.');

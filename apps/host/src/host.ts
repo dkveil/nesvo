@@ -648,6 +648,7 @@ export const serveHost = ({
         signal: probes.controller.signal,
         route: session => inbox.current?.sessionRoute(session) ?? 'inbox',
         gate: (sessionId, runId) => inboxStore.deliveryGate(sessionId, runId),
+        wakeChanged: () => emit({ type: 'coordinator-wake-changed' }),
       });
       control.current = sessionControl;
       yield* Effect.acquireRelease(

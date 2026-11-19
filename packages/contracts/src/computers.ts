@@ -258,6 +258,10 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
     change: configurationChangeSchema,
   }),
   z.strictObject({
+    type: z.literal('coordinator-wake-changed'),
+    hostId: hostIdSchema,
+  }),
+  z.strictObject({
     type: z.literal('session-changed'),
     session: desktopSessionSchema,
   }),

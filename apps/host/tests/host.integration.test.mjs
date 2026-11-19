@@ -3472,7 +3472,8 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         draftEvents.push(message.draft);
       } else if (
         message.type === 'inbox-item-changed' ||
-        message.type === 'configuration-changed'
+        message.type === 'configuration-changed' ||
+        message.type === 'coordinator-wake-changed'
       ) {
         assert.ok(!message.id);
       } else if (message.type === 'sessions-removed') {
@@ -4631,7 +4632,7 @@ test(
     assert.deepEqual(health.health, {
       status: 'ready',
       protocolVersion: 1,
-      contractRevision: 6,
+      contractRevision: 7,
       instanceId,
       capabilities: [
         'scheduled-jobs',
@@ -30124,6 +30125,9 @@ test('D87 wakes an idle coordinator once with exact direct child runs and the re
   assert.equal(state.pending, 0);
   assert.equal(state.directChildren, 2);
   assert.equal(state.effective, true);
+  assert.ok(
+    host.timeline.some(message => message.type === 'coordinator-wake-changed'),
+  );
 
   const action = {
     sessionId: parent.id,

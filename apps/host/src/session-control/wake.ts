@@ -38,6 +38,7 @@ type WakePorts = {
   ) => { id: string; version: number } | null;
   route: (session: Session) => DecisionRoute;
   gate: (sessionId: string, runId: string) => 'hold' | 'declined' | null;
+  wakeChanged?: () => void;
   now?: () => number;
 };
 
@@ -46,6 +47,8 @@ export class CoordinatorWake {
   private readonly reasons = new Map<string, WakeReason>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private next = Infinity;
+  private refresh = false;
+  private announced = '[]';
 
   constructor(private readonly ports: WakePorts) {
     ports.store.pause(null, 'restart');
@@ -139,11 +142,12 @@ export class CoordinatorWake {
       store.saveSettingReceipt(actionId, fingerprint, updated);
       return updated;
     });
-    this.signal();
+    this.signal(true);
     return state;
   }
 
-  signal() {
+  signal(refresh = false) {
+    this.refresh ||= refresh;
     this.schedule(this.now());
   }
 
@@ -265,6 +269,23 @@ export class CoordinatorWake {
         if (sessions.snapshot(parentId)) this.schedule(now + MAX_RETRY);
       }
     }
+    const pending = JSON.stringify(
+      store.pendingParents().map(parentId => {
+        const events = store.pending(parentId);
+        return [
+          parentId,
+          events[0]?.seq,
+          events.at(-1)?.seq,
+          events.length,
+          events[0]?.recovery,
+          this.reasons.get(parentId),
+        ];
+      }),
+    );
+    const notify = this.refresh || this.announced !== pending;
+    this.refresh = false;
+    this.announced = pending;
+    if (notify) this.ports.wakeChanged?.();
   }
 
   private pump(parentId: string, now: number) {
@@ -354,7 +375,15 @@ export class CoordinatorWake {
         'not-found',
         'Refresh the coordinator recovery state.',
       );
-    return this.prepare(parent, batch, input.messageId, true, !!recovery);
+    const receipt = this.prepare(
+      parent,
+      batch,
+      input.messageId,
+      true,
+      !!recovery,
+    );
+    this.signal(true);
+    return receipt;
   }
 
   private prepare(

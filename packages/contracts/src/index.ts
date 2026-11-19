@@ -685,6 +685,7 @@ export * from './workflows/gate-rules';
 export * from './lessons';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('coordinator-wake-changed') }),
   z.strictObject({
     type: z.literal('configuration-changed'),
     change: configurationChangeSchema,
