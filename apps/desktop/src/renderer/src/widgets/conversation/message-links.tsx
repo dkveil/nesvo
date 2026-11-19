@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ExternalLink, Inbox, MessageSquare, Monitor } from 'lucide-react';
 import {
   ChecksIcon,
@@ -6,9 +6,16 @@ import {
   visualState,
   visualStateLabels,
 } from '@/entities/pull-request';
+import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { FileTypeIcon } from '@/shared/ui/file-type-icon';
-import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/shared/ui/popover';
+import { Hint } from '@/shared/ui/tooltip';
 import { StatusDot } from '@/shared/ui/status-dot';
 import {
   classifyMessageLink,
@@ -41,7 +48,7 @@ function FileChip({ file }: { file: FileTarget }) {
       title={file.path + suffix}
       onClick={() => scope?.openFile(file)}
     >
-      <span>{name + suffix}</span>
+      <span>{name.trimStart() + suffix}</span>
     </Chip>
   );
 }
@@ -94,6 +101,8 @@ function GithubLink({
 }) {
   const scope = useContext(MessageLinkContext);
   const [requested, setRequested] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const reference =
     target.kind === 'pr'
       ? { repository: target.repository, number: target.number }
@@ -112,41 +121,75 @@ function GithubLink({
     .filter(Boolean)
     .join(' · ');
   const internal = !!reference && !!scope;
+  const chip = (
+    <Chip
+      ref={trigger}
+      size="inline"
+      icon={<GithubGlyph />}
+      title={internal ? undefined : title}
+      aria-haspopup={internal ? 'dialog' : undefined}
+      aria-expanded={internal ? actionsOpen : undefined}
+      aria-keyshortcuts={internal ? 'Shift+F10' : undefined}
+      onFocus={() => setRequested(true)}
+      onMouseEnter={() => setRequested(true)}
+      onClick={() =>
+        internal ? scope.openPullRequest(reference) : openExternal(target.url)
+      }
+      onContextMenu={event => {
+        if (!internal) return;
+        event.preventDefault();
+        setActionsOpen(true);
+      }}
+      onKeyDown={event => {
+        if (
+          !internal ||
+          (event.key !== 'ContextMenu' &&
+            !(event.key === 'F10' && event.shiftKey))
+        )
+          return;
+        event.preventDefault();
+        setActionsOpen(true);
+      }}
+    >
+      <span>
+        {label ?? (target.kind === 'pr' ? 'PR #' : 'Issue #') + target.number}
+      </span>
+      {state && (
+        <StatusDot tone={stateTones[state]} label={visualStateLabels[state]} />
+      )}
+      {data && <ChecksIcon checks={data.checks} className="size-3" />}
+    </Chip>
+  );
+  if (!internal) return chip;
   return (
-    <span className="inline-flex max-w-full items-center gap-px align-middle">
-      <Chip
-        size="inline"
-        icon={<GithubGlyph />}
-        title={title}
-        onFocus={() => setRequested(true)}
-        onMouseEnter={() => setRequested(true)}
-        onClick={() =>
-          internal ? scope.openPullRequest(reference) : openExternal(target.url)
+    <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
+      <Hint label={title + ' · Right-click or Shift+F10 for GitHub'}>
+        <PopoverAnchor asChild>{chip}</PopoverAnchor>
+      </Hint>
+      <PopoverContent
+        align="start"
+        surface="solid"
+        size="auto"
+        padding="sm"
+        aria-label="Pull request actions"
+        onEscapeKeyDown={() =>
+          requestAnimationFrame(() => trigger.current?.focus())
         }
       >
-        <span>
-          {label ?? (target.kind === 'pr' ? 'PR #' : 'Issue #') + target.number}
-        </span>
-        {state && (
-          <StatusDot
-            tone={stateTones[state]}
-            label={visualStateLabels[state]}
-          />
-        )}
-        {data && <ChecksIcon checks={data.checks} className="size-3" />}
-      </Chip>
-      {internal && (
-        <Chip
-          size="inline"
-          aria-label="Open on GitHub"
-          title="Open on GitHub"
-          className="px-1"
-          onClick={() => openExternal(target.url)}
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={() => {
+            setActionsOpen(false);
+            trigger.current?.focus();
+            openExternal(target.url);
+          }}
         >
-          <ExternalLink aria-hidden="true" />
-        </Chip>
-      )}
-    </span>
+          <ExternalLink />
+          Open on GitHub
+        </Button>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -168,7 +211,9 @@ export function MessageLink({
   const label =
     children === href || ('url' in target && children === target.url)
       ? null
-      : content;
+      : typeof children === 'string'
+        ? children.trim() || null
+        : content;
   if ('repository' in target)
     return scope ? (
       <GithubLink target={target} label={label} />

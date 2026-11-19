@@ -20,6 +20,8 @@ import Markdown, {
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { InlineFileCode, MessageLink } from './message-links';
+import { MessageLinkContext } from './message-link-context';
+import { fileTarget } from './message-link-target';
 import { Check, Copy, WrapText } from 'lucide-react';
 import type { MessageAttachment } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
@@ -110,6 +112,28 @@ const linkBareUrls = () => (tree: HastNode) => {
         ? [...nodes, { type: 'text', value: child.value.slice(start) }]
         : [child];
     });
+  };
+  visit(tree);
+};
+
+const tightenInlinePunctuation = (directory: string) => (tree: HastNode) => {
+  const visit = (node: HastNode) => {
+    if (!node.children || ['a', 'pre', 'code'].includes(node.tagName ?? ''))
+      return;
+    for (let index = 1; index < node.children.length; index++) {
+      const child = node.children[index]!;
+      const previous = node.children[index - 1]!;
+      if (
+        child.type === 'text' &&
+        child.value &&
+        (previous.tagName === 'a' ||
+          (previous.tagName === 'code' &&
+            fileTarget(textOf(previous), directory)))
+      ) {
+        child.value = child.value.replace(/^[ \t\u00a0]+(?=[,.:;!?)\]])/, '');
+      }
+    }
+    node.children.forEach(visit);
   };
   visit(tree);
 };
@@ -341,6 +365,14 @@ export const MessageBody = memo(function MessageBody({
   renderAttachment?: (attachment: MessageAttachment) => ReactNode;
   streaming?: boolean;
 }) {
+  const directory = useContext(MessageLinkContext)?.directory;
+  const plugins = useMemo<Options['rehypePlugins']>(
+    () =>
+      directory
+        ? [...rehypePlugins, [tightenInlinePunctuation, directory]]
+        : rehypePlugins,
+    [directory],
+  );
   const readyForMarkdown = useDeferredValue(!streaming);
   const inline = !!renderAttachment && hasPlacedAttachments(attachments);
   const markdown =
@@ -365,7 +397,7 @@ export const MessageBody = memo(function MessageBody({
         <InlineAttachmentContext.Provider value={renderIndex}>
           <Markdown
             remarkPlugins={remarkPlugins}
-            rehypePlugins={rehypePlugins}
+            rehypePlugins={plugins}
             components={components}
             urlTransform={(url, key, node) =>
               node.tagName === 'a' && key === 'href'
