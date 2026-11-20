@@ -6010,29 +6010,89 @@ async function smokeDesktop() {
     name: 'Workflow graph canvas',
     exact: true,
   });
-  const inside = (box, frame) =>
+  const inside = (box, frame, inset) =>
     !!box &&
     !!frame &&
-    box.x >= frame.x &&
-    box.y >= frame.y &&
-    box.x + box.width <= frame.x + frame.width &&
-    box.y + box.height <= frame.y + frame.height;
-  const revealGraphControls = async controls => {
+    box.x >= frame.x + inset &&
+    box.y >= frame.y + inset &&
+    box.x + box.width <= frame.x + frame.width - inset &&
+    box.y + box.height <= frame.y + frame.height - inset;
+  const revealGraphControls = async (controls, inset = 0) => {
     const zoomOut = editor.getByRole('button', {
       name: 'Zoom out',
       exact: true,
     });
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    const viewport = canvas.locator('.react-flow__viewport');
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       const frame = await canvas.boundingBox();
       const boxes = await Promise.all(
         controls.map(control => control.boundingBox()),
       );
-      if (boxes.every(box => inside(box, frame))) return;
-      if (attempt === 0) await fitGraph();
-      else await zoomOut.click();
-      await delay(250);
+      if (boxes.every(box => inside(box, frame, inset))) return;
+      if (attempt === 0) {
+        await fitGraph();
+        continue;
+      }
+      const before = await viewport.getAttribute('style');
+      await zoomOut.click();
+      await restartedPage.waitForFunction(
+        before =>
+          document
+            .querySelector('.react-flow__viewport')
+            ?.getAttribute('style') !== before,
+        before,
+        { polling: 50, timeout: 4000 },
+      );
     }
     throw new Error('Graph editor controls stay outside the canvas.');
+  };
+  const dragConnection = async (source, target) => {
+    const centre = locator =>
+      locator.evaluate(handle => {
+        const box = handle.getBoundingClientRect();
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+        if (document.elementFromPoint(x, y) !== handle)
+          throw new Error(`Connection handle is obscured: ${handle.ariaLabel}`);
+        return { x, y };
+      });
+    const start = await centre(source);
+    const end = await centre(target);
+    const cdp = await restartedPage.context().newCDPSession(restartedPage);
+    try {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        ...start,
+      });
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        ...start,
+        button: 'left',
+        buttons: 1,
+        clickCount: 1,
+      });
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: (start.x + end.x) / 2,
+        y: (start.y + end.y) / 2,
+        button: 'left',
+        buttons: 1,
+      });
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        ...end,
+        button: 'left',
+        buttons: 1,
+      });
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        ...end,
+        button: 'left',
+        clickCount: 1,
+      });
+    } finally {
+      await cdp.detach();
+    }
   };
   const connectSteps = async (from, to, expectedRefusal) => {
     const sourceHandle = editor.getByLabel(`Connect from ${from}`, {
@@ -6041,8 +6101,8 @@ async function smokeDesktop() {
     const targetHandle = editor.getByLabel(`Connect into ${to}`, {
       exact: true,
     });
-    await revealGraphControls([sourceHandle, targetHandle]);
-    await sourceHandle.dragTo(targetHandle, { force: true, steps: 8 });
+    await revealGraphControls([sourceHandle, targetHandle], 40);
+    await dragConnection(sourceHandle, targetHandle);
     if (expectedRefusal) {
       await restartedPage
         .locator('[data-editor-notice]')

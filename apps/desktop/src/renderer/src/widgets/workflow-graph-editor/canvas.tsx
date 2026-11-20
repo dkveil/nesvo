@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +13,7 @@ import {
   MarkerType,
   MiniMap,
   ReactFlow,
+  useNodesInitialized,
   useReactFlow,
   useStore,
   useStoreApi,
@@ -32,7 +34,6 @@ import {
   PLACEHOLDER_NODE_ID,
   START_NODE_ID,
   edgeTypes,
-  fitViewOptions,
   nodeTypes,
 } from './canvas-types';
 import type { ConditionEdge } from './edges';
@@ -65,6 +66,8 @@ const canvasVariables = {
 type Measured = { width: number; height: number };
 
 const snapGrid: [number, number] = [10, 10];
+const fitPadding = 48;
+const minFitZoom = 0.75;
 
 export function EditorCanvas({
   state,
@@ -78,12 +81,40 @@ export function EditorCanvas({
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [minimap, setMinimap] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { fitView, setCenter } = useReactFlow();
+  const { getNodes, getNodesBounds, setCenter, setViewport } =
+    useReactFlow<EditorCanvasNode>();
   const width = useStore(state => state.width);
   const height = useStore(state => state.height);
+  const initialized = useNodesInitialized();
+  const initiallyFitted = useRef(false);
+  const fitGraph = useCallback(() => {
+    const bounds = getNodesBounds(getNodes());
+    if (!bounds.width || !bounds.height || !width || !height) return;
+    const fitZoom = Math.min(
+      1,
+      (width - fitPadding * 2) / bounds.width,
+      (height - fitPadding * 2) / bounds.height,
+    );
+    if (fitZoom >= minFitZoom) {
+      void setCenter(
+        bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2,
+        { zoom: fitZoom },
+      );
+    } else {
+      void setViewport({
+        x: fitPadding - bounds.x * minFitZoom,
+        y: fitPadding - bounds.y * minFitZoom,
+        zoom: minFitZoom,
+      });
+    }
+  }, [getNodes, getNodesBounds, height, setCenter, setViewport, width]);
   useEffect(() => {
-    if (width > 0 && height > 0) void fitView(fitViewOptions);
-  }, [fitView, height, width]);
+    if (!initialized || width <= 0 || height <= 0 || initiallyFitted.current)
+      return;
+    initiallyFitted.current = true;
+    fitGraph();
+  }, [fitGraph, height, initialized, width]);
   const store = useStoreApi();
   const hoverEdge = (id: string | null) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -285,8 +316,6 @@ export function EditorCanvas({
       onEdgeMouseEnter={(_, edge) => hoverEdge(edge.id)}
       onEdgeMouseLeave={() => hoverEdge(null)}
       onPaneClick={() => state.select({ kind: 'none' })}
-      fitView
-      fitViewOptions={fitViewOptions}
       minZoom={0.15}
       maxZoom={2}
       panOnDrag={[0, 1, 2]}
@@ -325,6 +354,7 @@ export function EditorCanvas({
         />
       )}
       <CanvasControls
+        onFit={fitGraph}
         minimap={minimap}
         onToggleMinimap={() => setMinimap(value => !value)}
         onTidy={state.autoLayoutAll}

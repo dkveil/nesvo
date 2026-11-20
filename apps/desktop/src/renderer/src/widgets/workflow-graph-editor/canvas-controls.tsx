@@ -3,9 +3,9 @@ import { LayoutGrid, Map } from 'lucide-react';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ToolbarSeparator } from '@/shared/ui/panel';
 import { ZoomControls } from '@/shared/ui/zoom-controls';
-import { fitViewOptions } from './canvas-types';
 
 type Props = {
+  onFit: () => void;
   minimap?: boolean;
   onToggleMinimap?: () => void;
   onTidy?: () => void;
@@ -13,12 +13,13 @@ type Props = {
 };
 
 export function CanvasControls({
+  onFit,
   minimap,
   onToggleMinimap,
   onTidy,
   tidyDisabled,
 }: Props) {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const { zoomIn, zoomOut } = useReactFlow();
   const { zoom } = useViewport();
   return (
     <div
@@ -30,7 +31,7 @@ export function CanvasControls({
         zoom={zoom}
         onZoomOut={() => void zoomOut()}
         onZoomIn={() => void zoomIn()}
-        onFit={() => void fitView(fitViewOptions)}
+        onFit={onFit}
       />
       {(onToggleMinimap || onTidy) && <ToolbarSeparator className="mx-0.5" />}
       {onToggleMinimap && (

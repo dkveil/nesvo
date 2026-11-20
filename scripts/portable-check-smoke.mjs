@@ -432,6 +432,35 @@ export async function smokePortableCheck({
       name: 'Canvas controls',
     });
     await canvasControls.getByText(/^(7[5-9]|[89]\d|100)%$/).waitFor();
+    const graphLayout = await editor
+      .getByRole('application', { name: 'Workflow graph canvas' })
+      .evaluate(canvas => {
+        const frame = canvas.getBoundingClientRect();
+        const nodes = Array.from(
+          canvas.querySelectorAll('[data-editor-start], [data-editor-node]'),
+          node => node.getBoundingClientRect(),
+        );
+        return {
+          left: Math.min(...nodes.map(node => node.left)) - frame.left,
+          right: frame.right - Math.max(...nodes.map(node => node.right)),
+          top: Math.min(...nodes.map(node => node.top)) - frame.top,
+          bottom: frame.bottom - Math.max(...nodes.map(node => node.bottom)),
+        };
+      });
+    assert.ok(
+      graphLayout.left >= 46 && graphLayout.top >= 46,
+      JSON.stringify(graphLayout),
+    );
+    if (shotSize[0] === 1920) {
+      assert.ok(
+        Math.abs(graphLayout.left - graphLayout.right) <= 2,
+        JSON.stringify(graphLayout),
+      );
+      assert.ok(
+        Math.abs(graphLayout.top - graphLayout.bottom) <= 2,
+        JSON.stringify(graphLayout),
+      );
+    }
     await screenshots('d83-2-conditional-route');
     if (['3', '4', '5', '6', '7'].includes(process.env.NESVO_D90_STAGE)) {
       await editor
