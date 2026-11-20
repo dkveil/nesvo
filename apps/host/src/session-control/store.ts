@@ -204,11 +204,15 @@ export class SessionControlStore {
     const limits = managedSessionLimits(this.database);
     return {
       ...policy,
-      groupSize: Math.min(policy.groupSize, limits.maxSessions ?? policy.groupSize),
+      groupSize: Math.min(
+        policy.groupSize,
+        limits.maxSessions ?? policy.groupSize,
+      ),
       nested: policy.nested && limits.maxDepth !== 1,
-      childModes: limits.workers === 'read-only'
-        ? policy.childModes.filter(mode => mode === 'read-only')
-        : policy.childModes,
+      childModes:
+        limits.workers === 'read-only'
+          ? policy.childModes.filter(mode => mode === 'read-only')
+          : policy.childModes,
     };
   }
 
@@ -233,7 +237,8 @@ export class SessionControlStore {
     const current = this.policy();
     const manual = this.manualPolicy();
     if (
-      (limits.maxSessions !== undefined && valid.groupSize !== current.groupSize) ||
+      (limits.maxSessions !== undefined &&
+        valid.groupSize !== current.groupSize) ||
       (limits.maxDepth !== undefined && valid.nested !== current.nested) ||
       (limits.workers === 'read-only' &&
         JSON.stringify(valid.childModes) !== JSON.stringify(current.childModes))
