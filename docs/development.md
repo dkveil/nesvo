@@ -11,6 +11,8 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
+The Electron package does not declare a postinstall script, so Bun's trusted dependency list does not download its executable. Install it from the repository root with `node node_modules/electron/install.js` if `bun run dev` reports it missing.
+
 The workspace uses neutral shadcn components in the operating system's light or dark scheme. Session details open on demand, leaving the main area for the conversation. The sidebar collapses with its toggle or Ctrl+B, resizes from its edge and remembers both choices locally. A new thread starts from the main-area screen; its first message creates the session. SQLite owns session history; only selection, the sidebar state and unsent drafts remain in renderer memory.
 Connection details show the host connection and separate Claude Code and Codex availability on demand. Install the native CLI and use `claude auth login` or `codex login` in a terminal. The desktop never reads or displays credentials. Missing installation, incompatible CLI behavior, missing login and provider failures are distinct states. One provider being unavailable does not block the other.
 

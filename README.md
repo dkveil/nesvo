@@ -87,6 +87,8 @@ bun run dev
 bun run check
 ```
 
+If the Electron executable is missing, run `node node_modules/electron/install.js` from the repository root before retrying `bun run dev`. See [Development](docs/development.md#toolchain).
+
 [Documentation](docs/)
 
 Licensed under the [MIT License](LICENSE).
