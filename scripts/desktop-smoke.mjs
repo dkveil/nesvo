@@ -6385,7 +6385,9 @@ async function smokeDesktop() {
     await delay(50);
   assert.match(await readFile(savedTimeoutStep, 'utf8'), /^timeout: 90m$/m);
   await closeInspector();
-  await editor.locator('[data-editor-start]').click();
+  const startNode = editor.locator('[data-editor-start]');
+  await revealGraphControls([startNode]);
+  await startNode.click();
   await editor.locator('[data-editor-inspector="start"]').waitFor();
   await inspector
     .locator('[data-start-row="new-thread"]')
