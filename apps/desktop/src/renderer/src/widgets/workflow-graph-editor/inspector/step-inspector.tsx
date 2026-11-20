@@ -775,7 +775,10 @@ export function StepInspectorForm({
               .filter(Boolean)
               .join(' ')}
             onCheckedChange={checked =>
-              update({ effect: checked ? 'external' : 'local' })
+              update({
+                effect: checked ? 'external' : 'local',
+                explicitLocalEffect: undefined,
+              })
             }
           />
         </Field>

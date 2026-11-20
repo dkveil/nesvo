@@ -743,7 +743,13 @@ function parseDocument<T>(
     yaml,
     issues,
   );
-  const result = schema.safeParse({ ...known, body });
+  const result = schema.safeParse({
+    ...known,
+    ...(kind === 'step' && known.effect === 'local'
+      ? { explicitLocalEffect: true }
+      : {}),
+    body,
+  });
   const schemaIssues = result.success ? [] : result.error.issues;
   for (const schemaIssue of graphSchemaIssues(schemaIssues)) {
     const field = String(schemaIssue.path[0] ?? '');

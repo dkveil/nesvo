@@ -13693,7 +13693,7 @@ test(
           [
             [
               'warning',
-              'Step "publish" in workflow "release" looks like an external action (git push, gh pr, curl or wget) without a human step before it',
+              'Step "publish" in workflow "release" looks like an external action (git push, gh pr, gh api, curl or wget) without a human step before it',
             ],
           ],
         );
@@ -20247,6 +20247,7 @@ test(
       security: ['agent', 'pre-done', 'Check the change for security issues.'],
       approve: ['human', 'pre-push', 'Approve the release.'],
       publish: ['action', 'pre-push', 'git push origin HEAD'],
+      'local-probe': ['command', 'pre-push', 'echo "git push"', 'local'],
       notify: ['action', 'pre-push', 'echo notify'],
       verify: ['command', 'pre-push', 'echo verify'],
       ship: ['action', 'pre-push', 'echo ship', 'external'],
@@ -20390,6 +20391,12 @@ test(
     const heuristic = await workflowFile(project, 'heuristic', [
       'steps: [verify, publish]',
       ...edgeLines(['verify -> publish']),
+    ]);
+    const local = await workflowFile(project, 'local', [
+      'steps: [approve, local-probe]',
+      ...edgeLines([
+        'local-probe -> approve when steps.local-probe.outputs.status == "ok"',
+      ]),
     ]);
     const exclusive = await workflowFile(project, 'exclusive', [
       'steps: [lint, review, security]',
@@ -20570,11 +20577,70 @@ test(
           [
             'warning',
             null,
-            'Step "publish" looks like an external action (git push, gh pr, curl or wget) and a path reaches it without a human step',
+            'Step "publish" looks like an external action (git push, gh pr, gh api, curl or wget) and a path reaches it without a human step',
           ],
         ]);
         for (const name of ['open-path', 'guarded', 'placed', 'parallel'])
           assert.ok(listed(name), name);
+      },
+    );
+
+    await t.test(
+      'external effect classification keeps conditional gates for writes',
+      () => {
+        assert.equal(
+          listed('local').steps.find(step => step.name === 'local-probe')
+            .explicitLocalEffect,
+          true,
+        );
+        assert.deepEqual(issuesFor(local), []);
+        const graph = {
+          name: 'release',
+          steps: ['inspect', 'approve'],
+          edges: ['inspect -> approve'],
+        };
+        const approve = {
+          type: 'human',
+          phase: 'pre-push',
+          required: true,
+          effect: 'local',
+          body: 'Approve',
+        };
+        const errors = (body, effect = 'local') =>
+          contracts
+            .resolveGraph(
+              graph,
+              new Map([
+                [
+                  'inspect',
+                  { type: 'command', phase: 'pre-push', effect, body },
+                ],
+                ['approve', approve],
+              ]),
+            )
+            .issues.map(issue => issue.rule);
+        for (const command of [
+          ...['view', 'list', 'status', 'checks', 'diff'].map(
+            subcommand => `gh pr ${subcommand}`,
+          ),
+          'gh search prs',
+          'gh api repos/owner/repo',
+          'gh api -X GET /repos/owner/repo --paginate',
+          'gh api repos/owner/repo --method=GET',
+        ])
+          assert.deepEqual(errors(command), [], command);
+        for (const command of [
+          'gh pr merge 7',
+          'gh pr list && gh pr edit 7',
+          'gh api repos/owner/repo -X DELETE',
+          'gh api repos/owner/repo -f name=changed',
+          'gh api repos/owner/repo --method GET --method PATCH',
+          'gh api graphql',
+          'git push origin HEAD',
+          'curl example.com',
+        ])
+          assert.ok(errors(command).includes('E13'), command);
+        assert.ok(errors('gh pr list', 'external').includes('E13'));
       },
     );
 

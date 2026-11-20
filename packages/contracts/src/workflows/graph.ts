@@ -28,6 +28,7 @@ export type GraphStep = {
   type: StepType;
   phase: StepPhase;
   effect: StepEffect;
+  explicitLocalEffect?: true | undefined;
   body: string;
   pr?: string;
   repeat?: readonly string[];
@@ -87,9 +88,31 @@ const phaseRank: Record<StepPhase, number> = {
 const phases = (Object.keys(phaseRank) as StepPhase[]).sort(
   (left, right) => phaseRank[left] - phaseRank[right],
 );
-const externalEffectPattern = /\bgit\s+push\b|\bgh\s+pr\b|\bcurl\b|\bwget\b/;
-export const looksExternal = (body: string) => externalEffectPattern.test(body);
-const externalHeuristic = 'git push, gh pr, curl or wget';
+const externalEffectPattern = /\bgit\s+push\b|\bcurl\b|\bwget\b/;
+const githubCommand = /\bgh[ \t]+(pr|api)\b([^;&|\r\n]*)/g;
+const readOnlyPullRequest = /^\s*(?:view|list|status|checks|diff)(?:\s|$)/;
+const getMethod = String.raw`(?:-X[ \t]*GET|--method(?:=|[ \t]+)GET)`;
+const getEndpoint = String.raw`(?!\/?graphql(?:\s|$))\/?[\w.{][\w.{}-]*(?:\/[\w.{}-]+)*\/?`;
+const readOnlyGitHubApi = new RegExp(
+  `^(?:${getMethod}[ \\t]+)?${getEndpoint}(?:[ \\t]+(?:${getMethod}|--paginate|--include|--silent))*$`,
+);
+
+export const looksExternal = (body: string) =>
+  externalEffectPattern.test(body) ||
+  [...body.matchAll(githubCommand)].some(([, command, args = '']) =>
+    command === 'pr'
+      ? !readOnlyPullRequest.test(args)
+      : !readOnlyGitHubApi.test(args.trim()),
+  );
+
+export const hasExternalEffect = (
+  step: Pick<GraphStep, 'type' | 'effect' | 'explicitLocalEffect' | 'body'>,
+) =>
+  (step.type === 'command' || step.type === 'action') &&
+  (step.effect === 'external' ||
+    (!step.explicitLocalEffect && looksExternal(step.body)));
+
+const externalHeuristic = 'git push, gh pr, gh api, curl or wget';
 
 const quoted = (value: string) => `"${value}"`;
 const printable = (value: string, length: number) =>
@@ -454,10 +477,7 @@ const externalWarnings = (
           : graphMessages.chainExternalStep(name, input.name),
         [name],
       );
-    else if (
-      (step.type === 'action' || step.type === 'command') &&
-      looksExternal(step.body)
-    )
+    else if (hasExternalEffect(step))
       report.add(
         'W2',
         explicit
@@ -723,13 +743,7 @@ export const resolveGraph = (
     );
     for (const step of known) {
       const definition = stepsByName.get(step.name);
-      if (
-        !definition ||
-        (definition.effect !== 'external' && !looksExternal(definition.body))
-      )
-        continue;
-      if (definition.type !== 'command' && definition.type !== 'action')
-        continue;
+      if (!definition || !hasExternalEffect(definition)) continue;
       const upstream = new Set(ancestors({ edges }, step.name));
       if (
         !gates.some(

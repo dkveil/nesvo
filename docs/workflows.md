@@ -93,11 +93,13 @@ bun run lint
 | `retry_backoff` | `1s` to `4h` | Fixed delay between automatic attempts. Defaults to no delay. |
 | `idempotent` | `true`, `false` | Defaults to false. Declare that repetition is safe to allow automatic retries of actions, external commands, agent steps and commands after a human gate. |
 | `on_fail` | `stop`, `fix` | Default `stop`: a failure ends the run. `fix`: the run needs your attention with the failure instead of failing, and Resume runs the step again. Only the Fix decision of a `human` gate sends a correction to the author. |
-| `effect` | `local`, `external` | Default `local`. Only `command` and `action` steps can be `external`; Nesvo warns when nothing asks a human first. |
+| `effect` | `local`, `external` | Applies to `command` and `action` steps. An explicit value takes precedence over the external-effect heuristic for graph checks. |
 | `skill` | a skill name | Only `agent` steps. An agent step needs instructions or a skill. |
 | `needs` | `env:NAME`, `browser` | A missing `env:NAME` variable blocks the step with a readable reason instead of running it. `browser` runs an `agent` step whose step and workflow are defined in your own workflows folder with browser access when its provider supports it on this computer (Claude Code with the browser extension); otherwise, on other step types and for steps defined in the repository, the step is blocked with the reason. An unattended browser step can open and read pages but cannot click, type, run scripts or take screenshots. |
 
 Body by type: a `command` or `action` body is a shell script run in the task directory; an `agent` body holds the instructions for the verifying session; a `human` body is the question shown at the gate. Command and action steps do not inherit variables ending in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`; list them in `needs` when a step really needs one.
+
+When `effect` is omitted, Nesvo looks for commands such as `git push`, `curl`, `wget`, mutating `gh pr` subcommands and `gh api` calls it cannot recognize as GET. The `gh pr` subcommands `view`, `list`, `status`, `checks` and `diff` and `gh search` are treated as reads. Declare real external effects explicitly. Conditional graphs require the existing human and CI gates before external steps.
 
 ### Portable test checks
 

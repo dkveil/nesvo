@@ -186,6 +186,7 @@ const stepDefinitionShape = {
     .default(0),
   on_fail: stepOnFailSchema.default('stop'),
   effect: stepEffectSchema.default('local'),
+  explicitLocalEffect: z.literal(true).optional(),
   needs: z
     .array(stepNeedSchema)
     .max(workflowDefinitionLimits.needs)

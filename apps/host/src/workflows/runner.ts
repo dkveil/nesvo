@@ -2,6 +2,7 @@ import { untilExecutor } from './steps/until';
 import {
   ancestors,
   parseDurationMs,
+  hasExternalEffect,
   looksExternal,
   incoming,
   parseWorkflowCondition,
@@ -1526,10 +1527,7 @@ export class WorkflowRunner {
   ): void {
     const definition = run.workflow.steps[step.index];
     if (!definition) return;
-    const protectedEffect =
-      conditionalGraph(run) &&
-      (definition.type === 'command' || definition.type === 'action') &&
-      (definition.effect === 'external' || looksExternal(definition.body));
+    const protectedEffect = conditionalGraph(run) && hasExternalEffect(definition);
     const currentSteps = latestAttempts(steps);
     const hasUnmetGate =
       protectedEffect &&

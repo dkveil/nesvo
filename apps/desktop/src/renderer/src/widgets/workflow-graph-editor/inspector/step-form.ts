@@ -139,6 +139,9 @@ export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   itemsText: type === 'fan-out' ? step.itemsText : undefined,
   on_fail: type === 'human' ? 'stop' : step.on_fail,
   effect: declaresEffect(type) ? step.effect : 'local',
+  explicitLocalEffect: declaresEffect(type)
+    ? step.explicitLocalEffect
+    : undefined,
 });
 
 export const readInlineItems = (text: string) => {

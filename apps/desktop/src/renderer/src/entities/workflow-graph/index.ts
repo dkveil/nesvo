@@ -251,6 +251,7 @@ export const stepDefinitionOf = (
   max_depth: step.max_depth,
   on_fail: step.on_fail,
   effect: step.effect,
+  explicitLocalEffect: step.explicitLocalEffect,
   needs: [...step.needs],
   body: step.body,
 });
@@ -313,6 +314,7 @@ const graphStep = (step: StepDefinition): GraphStep => ({
   type: step.type,
   phase: step.phase,
   effect: step.effect,
+  explicitLocalEffect: step.explicitLocalEffect,
   body: step.body,
 });
 
@@ -588,7 +590,8 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.preferred)
     lines.push(`preferred: ${JSON.stringify(step.preferred)}`);
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
-  if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
+  if (step.effect === 'external' || step.explicitLocalEffect)
+    lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);
   if (step.session) lines.push(`session: ${JSON.stringify(step.session)}`);
   if (step.items) lines.push(`items: ${JSON.stringify(step.items)}`);
