@@ -405,7 +405,9 @@ async function smokeSetupProfile() {
   await editor.getByRole('button', { name: 'Save changes' }).click();
   await editor.waitFor({ state: 'hidden' });
   assert.match(await readFile(machine, 'utf8'), /defaultRoute: both/);
-  await page.getByRole('button', { name: 'Open Change history' }).click();
+  await page
+    .getByRole('button', { name: 'Change history', exact: true })
+    .click();
   const route = page.getByRole('article', {
     name: 'Configuration change Profile Inbox route',
   });

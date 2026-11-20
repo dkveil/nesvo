@@ -108,7 +108,7 @@ export function SetupFindings({
               {computer?.capabilities.includes('setup-diagnostics-v1') && (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   disabled={!detection.online || detection.busy}
                   onClick={() => {
                     setAssistant(false);
@@ -122,7 +122,7 @@ export function SetupFindings({
               {computer?.capabilities.includes('setup-assistant-v1') && (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   disabled={!detection.online || !scan}
                   onClick={() => {
                     setPanel(null);
@@ -272,7 +272,12 @@ export function SetupFindings({
                         ) : (
                           <>
                             <StatusMessage>
-                              {readiness[item.readiness]}
+                              {group === 'Providers' &&
+                              item.readiness === 'observed'
+                                ? item.evidence === 'cached'
+                                  ? 'Version verified'
+                                  : 'Executable found'
+                                : readiness[item.readiness]}
                             </StatusMessage>
                             {group === 'Providers' && (
                               <Button

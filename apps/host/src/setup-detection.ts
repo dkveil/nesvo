@@ -175,7 +175,11 @@ async function providers(
               : executable
                 ? 'filesystem'
                 : 'unavailable',
-            readiness: executable ? 'partial' : 'unavailable',
+            readiness: !executable
+              ? 'unavailable'
+              : verified && !verified.version
+                ? 'partial'
+                : 'observed',
             classification: 'observation',
             identity: executable ? digest(executable) : undefined,
           },

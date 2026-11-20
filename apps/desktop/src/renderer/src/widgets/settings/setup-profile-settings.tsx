@@ -59,14 +59,12 @@ const layerLabels = {
 
 export function SetupProfileSettings({
   computer,
-  openHistory,
   initialEdit = false,
   onboarding = false,
   saveOnly = false,
   onReviewOpenChange,
 }: {
   computer?: Computer;
-  openHistory?: () => void;
   initialEdit?: boolean;
   onboarding?: boolean;
   saveOnly?: boolean;
@@ -238,11 +236,7 @@ export function SetupProfileSettings({
                   title={profileStates[review.status]}
                   description={
                     review.status === 'absent' ? undefined : (
-                      <MiddleTruncatedText
-                        value={
-                          review.path.split(/[\\/]/u).at(-1) ?? review.path
-                        }
-                      />
+                      <MiddleTruncatedText path value={review.path} />
                     )
                   }
                 >
@@ -279,7 +273,7 @@ export function SetupProfileSettings({
                     {review.status === 'current' && review.revision && (
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
                         disabled={busy || releaseReviewRequested}
                         onClick={() => {
                           if (!review.revision) return;
@@ -305,7 +299,7 @@ export function SetupProfileSettings({
                   >
                     {review.status === 'current' && review.routing.managed && (
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
                         disabled={editorOpen}
                         onClick={() => {
@@ -365,9 +359,6 @@ export function SetupProfileSettings({
                   <div className="flex flex-wrap gap-2 px-3 py-2">
                     <Button
                       size="sm"
-                      variant={
-                        details ? 'ghost' : onboarding ? 'outline' : 'default'
-                      }
                       disabled={busy}
                       aria-expanded={reviewing}
                       onClick={() => setDetails('changes')}
@@ -418,11 +409,6 @@ export function SetupProfileSettings({
               </Disclosure>
             )}
           </SettingsSection>
-        )}
-        {openHistory && (
-          <Button variant="ghost" size="sm" onClick={openHistory}>
-            Open Change history
-          </Button>
         )}
       </div>
       {details && review && (
@@ -565,11 +551,10 @@ export function SetupProfileSettings({
               <Textarea
                 id={id + '-fragment-text'}
                 resize="none"
-                rows={10}
                 value={fragmentText}
                 onChange={event => setFragmentText(event.target.value)}
                 disabled={busy}
-                className="font-mono"
+                className="min-h-56 font-mono"
               />
             </Field>
             {error && <StatusMessage tone="error">{error}</StatusMessage>}

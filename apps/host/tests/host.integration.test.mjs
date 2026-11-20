@@ -3746,6 +3746,16 @@ test('setup tool diagnostics require a fresh one-use batch for fixed argv', asyn
         finding => !finding.description.includes('CLI version'),
       ),
     );
+    const providerEvidence = scan =>
+      scan.findings
+        .filter(finding =>
+          ['provider/claude', 'provider/codex'].includes(finding.id),
+        )
+        .map(({ readiness, evidence }) => [readiness, evidence]);
+    assert.deepEqual(providerEvidence(first.scan), [
+      ['observed', 'filesystem'],
+      ['observed', 'filesystem'],
+    ]);
     const second = await check('diagnostic-preview');
     assert.equal(
       (await check('verify-diagnostics', { digest: first.diagnostics.digest }))
@@ -3762,6 +3772,10 @@ test('setup tool diagnostics require a fresh one-use batch for fixed argv', asyn
       ).length,
       2,
     );
+    assert.deepEqual(providerEvidence(verified.scan), [
+      ['observed', 'cached'],
+      ['observed', 'cached'],
+    ]);
     assert.equal(
       (await check('verify-diagnostics', { digest: second.diagnostics.digest }))
         .code,

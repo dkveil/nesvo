@@ -6583,10 +6583,6 @@ ${text}`
                       key={`profile:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                       computer={settingsComputer}
                       initialEdit={editProfileRouting}
-                      openHistory={() => {
-                        setEditProfileRouting(false);
-                        setSettingsPage('change-history');
-                      }}
                     />
                     <SetupFindings
                       key={`detection:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
