@@ -180,7 +180,10 @@ export async function smokeManagerImport() {
     await guide
       .getByRole('heading', { name: 'Computers', exact: true })
       .waitFor();
-    await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+    await guide
+      .getByRole('button', { name: 'Finish setup later', exact: true })
+      .click();
+    await guide.waitFor({ state: 'detached' });
 
     const archived = () =>
       page.getByRole('list', { name: 'Archived sessions' });

@@ -322,7 +322,15 @@ const NO_INBOX_RULES: PreparedTurnRules = {
   },
 };
 const GOOD_CHECK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
-const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
+const olderSetupHostFixture =
+  process.env.NESVO_TEST_MODE === '1' &&
+  process.env.NESVO_ISOLATED_PROFILE === '1' &&
+  process.env.NESVO_TEST_OLDER_SETUP_HOST === '1';
+const ADVERTISED_CAPABILITIES = olderSetupHostFixture
+  ? hostCapabilitySchema.options.filter(
+      capability => !capability.startsWith('setup-'),
+    )
+  : hostCapabilitySchema.options;
 
 const worktreeFailure = (error: unknown, message: string) => ({
   ...(error instanceof ProviderUsageHeld ? { usageHold: error.hold } : {}),

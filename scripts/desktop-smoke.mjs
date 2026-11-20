@@ -692,7 +692,7 @@ async function smokeSetupDetection() {
 }
 
 async function smokeOlderSetupHost() {
-  application = await launchApplication();
+  application = await launchApplication({ NESVO_TEST_OLDER_SETUP_HOST: '1' });
   const page = await application.firstWindow();
   hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
