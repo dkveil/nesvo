@@ -50,6 +50,7 @@ For a manual macOS install, move Nesvo to Applications, open it once, and click 
 - **Project trust** — Review repository tools and grant specific hooks or MCP tools in supported read-only sessions.
 - **Writable workers** — Delegate changes in separate worktrees, review each diff, and choose whether to merge.
 - **Coordinators and recovery** — Follow child sessions in Flows, let idle coordinators pick up updates, and resume interrupted work on the same threads after a host restart.
+- **Orchestration** — Use `session_*` tools to start and coordinate child sessions within the computer's policy. Use workflow steps to run child workflows and fan out over a list. [Session control tools](docs/architecture.md#session-control-tools) · [Workflow orchestration](docs/workflows.md#example-orchestrator)
 
 ## Inbox
 
