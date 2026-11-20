@@ -2262,7 +2262,6 @@ async function smokeDesktop() {
     'scheduled-jobs',
     'reasoning-effort',
     'workflows',
-    'portable-checks',
     'git-branch',
     'session-worktrees',
     'session-worktree-tools',

@@ -103,8 +103,6 @@ test(
     assert.equal(
       inspection.type,
       'session-message-watchers',
-      'coordinator-orchestration',
-      'portable-checks',
       JSON.stringify(inspection),
     );
     await call({

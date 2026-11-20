@@ -86,7 +86,7 @@ const CI_SWEEP_MS = 60_000;
 const CI_SESSIONS_PER_SWEEP = 20;
 const WORKFLOW_HOLD_POLL_MS = 500;
 
-type ApplicableRule = { rule: InboxRule; scope: InboxRuleScope; contentHash: string };
+type ApplicableRule = { rule: InboxRule; scope: InboxRuleScope; contentHash: string | null };
 
 type CiStatus = {
   headSha: string;
@@ -1279,7 +1279,7 @@ export class InboxRules {
         ? { route: matches.find(entry => entry.rule.route)!.rule.route }
         : {}),
     });
-    const entry: ApplicableRule = approval ?? { scope: 'project', rule: fallback };
+    const entry: ApplicableRule = approval ?? { scope: 'project', rule: fallback, contentHash: null };
     const item = record(entry, (invocation.proposal ? 'proposal:' : 'hold:') + entry.scope + ':' + entry.rule.name);
     if (!item) return 'The host could not record this command approval.';
     try {
