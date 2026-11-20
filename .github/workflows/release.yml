@@ -8,6 +8,10 @@ on:
         description: Existing release tag (for example v0.1.0)
         type: string
         required: true
+      diagnose_gatekeeper:
+        description: Assess a known notarized app on two macOS runners without packaging
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,7 +20,34 @@ concurrency:
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
+  diagnose-gatekeeper:
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_gatekeeper
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - name: Compare Gatekeeper assessments of a notarized app
+        shell: bash
+        run: |
+          work="$(mktemp -d)"
+          curl --fail --silent --show-error --location --retry 2 --max-time 120 \
+            https://update.code.visualstudio.com/1.147.0/darwin-arm64/stable \
+            --output "$work/control.zip"
+          printf '149d944feb599b076b48406b174e1c3cd1d510e9d673854777a20a6f4116a59a  %s\n' "$work/control.zip" | shasum -a 256 -c
+          ditto -x -k "$work/control.zip" "$work"
+          app="$work/Visual Studio Code.app"
+          sw_vers
+          spctl --status
+          codesign --verify --strict --deep "$app"
+          xcrun stapler validate "$app" || true
+          spctl -a -vv -t exec "$app" || true
+          spctl -a -vv -t exec --ignore-cache --no-cache "$app" || true
+          syspolicy_check distribution "$app"
   package:
+    if: github.event_name != 'workflow_dispatch' || !inputs.diagnose_gatekeeper
     strategy:
       fail-fast: false
       matrix:
