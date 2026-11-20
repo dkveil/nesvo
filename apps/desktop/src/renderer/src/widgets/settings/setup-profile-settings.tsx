@@ -35,11 +35,8 @@ import {
 import { StatusMessage } from '@/shared/ui/status-message';
 import { PanelBody } from '@/shared/ui/panel';
 import { Textarea } from '@/shared/ui/textarea';
-import {
-  SidePanel,
-  SidePanelFooter,
-  SidePanelHeader,
-} from '@/shared/ui/side-panel';
+import { SidePanelFooter } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 
 const routeLabels = {
   inbox: 'Inbox',
@@ -429,21 +426,14 @@ export function SetupProfileSettings({
         )}
       </div>
       {details && review && (
-        <SidePanel
-          kind="details"
-          aria-label={drawerTitle}
+        <SettingsDrawer
+          title={drawerTitle}
           resizeLabel="Resize profile sources"
-          onEscape={() => setDetails(null)}
-          focusOnOpen
+          onClose={() => setDetails(null)}
+          closeLabel={
+            reviewing ? 'Close profile review' : 'Close profile sources'
+          }
         >
-          <SidePanelHeader
-            titleBar={false}
-            title={drawerTitle}
-            onClose={() => setDetails(null)}
-            closeLabel={
-              reviewing ? 'Close profile review' : 'Close profile sources'
-            }
-          />
           <PanelBody className="space-y-3 p-3">
             {reviewing ? (
               <SettingsRows>
@@ -533,25 +523,16 @@ export function SetupProfileSettings({
               </Button>
             </SidePanelFooter>
           )}
-        </SidePanel>
+        </SettingsDrawer>
       )}
       {fragment && review && (
-        <SidePanel
-          kind="details"
-          aria-label="Edit profile values"
+        <SettingsDrawer
+          title="Edit profile values"
           resizeLabel="Resize profile editor"
-          focusOnOpen
-          onEscape={() => {
-            if (!busy) setFragment(undefined);
-          }}
+          closeLabel="Close profile editor"
+          closeDisabled={busy}
+          onClose={() => setFragment(undefined)}
         >
-          <SidePanelHeader
-            titleBar={false}
-            title="Edit profile values"
-            closeLabel="Close profile editor"
-            closeDisabled={busy}
-            onClose={() => setFragment(undefined)}
-          />
           <PanelBody className="space-y-3 p-3">
             <Field id={id + '-fragment-layer'} label="Profile layer">
               <Select
@@ -623,25 +604,16 @@ export function SetupProfileSettings({
               Save changes
             </Button>
           </SidePanelFooter>
-        </SidePanel>
+        </SettingsDrawer>
       )}
       {editing && review && (
-        <SidePanel
-          kind="details"
-          aria-label="Edit profile setting"
+        <SettingsDrawer
+          title="Edit profile setting"
           resizeLabel="Resize Inbox route editor"
-          focusOnOpen
-          onEscape={() => {
-            if (!busy) setEditing(false);
-          }}
+          closeLabel="Close Inbox route editor"
+          closeDisabled={busy}
+          onClose={() => setEditing(false)}
         >
-          <SidePanelHeader
-            titleBar={false}
-            title="Edit profile setting"
-            closeLabel="Close Inbox route editor"
-            closeDisabled={busy}
-            onClose={() => setEditing(false)}
-          />
           <PanelBody className="space-y-3 p-3">
             <Field id={id + '-route'} label="Default Inbox route">
               <Select
@@ -722,7 +694,7 @@ export function SetupProfileSettings({
               Save changes
             </Button>
           </SidePanelFooter>
-        </SidePanel>
+        </SettingsDrawer>
       )}
       {saving && review && (
         <Dialog

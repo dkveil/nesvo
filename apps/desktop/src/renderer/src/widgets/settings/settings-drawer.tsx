@@ -3,14 +3,16 @@ import {
   useContext,
   useEffect,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import type { Drawer } from './use-settings-drawer';
 
 type DrawerHost = {
   element: HTMLDivElement | null;
-  register: (drawer: { close: () => void; dismiss: () => void }) => () => void;
+  register: (drawer: Drawer) => () => void;
 };
 
 const DrawerContext = createContext<DrawerHost | null>(null);
@@ -27,12 +29,20 @@ export function SettingsDrawerHost({
 export function SettingsDrawer({
   title,
   closeLabel,
+  closeDisabled,
+  kind = 'details',
+  icon,
+  meta,
   resizeLabel,
   onClose,
   children,
 }: {
   title: string;
   closeLabel: string;
+  closeDisabled?: boolean;
+  kind?: ComponentProps<typeof SidePanel>['kind'];
+  icon?: ComponentProps<typeof SidePanelHeader>['icon'];
+  meta?: ReactNode;
   resizeLabel: string;
   onClose: () => void;
   children: ReactNode;
@@ -45,6 +55,7 @@ export function SettingsDrawer({
       : null,
   );
   const close = () => {
+    if (closeDisabled) return;
     onClose();
     trigger?.focus();
   };
@@ -54,9 +65,10 @@ export function SettingsDrawer({
   return createPortal(
     <SidePanel
       aria-label={title}
-      kind="details"
+      kind={kind}
       resizeLabel={resizeLabel}
       focusOnOpen
+      onEscape={close}
       className="pointer-events-auto"
     >
       <SidePanelHeader
@@ -64,6 +76,9 @@ export function SettingsDrawer({
           <span className="block leading-4 whitespace-normal">{title}</span>
         }
         closeLabel={closeLabel}
+        icon={icon}
+        meta={meta}
+        closeDisabled={closeDisabled}
         onClose={close}
       />
       {children}

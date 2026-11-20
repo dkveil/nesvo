@@ -26,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { MessageBody } from '@/widgets/conversation/message-body';
 
@@ -153,23 +153,16 @@ export function SetupAssistant({
   };
 
   return (
-    <SidePanel
+    <SettingsDrawer
       kind="assistant"
-      aria-label="Setup assistant"
       resizeLabel="Resize setup assistant"
-      focusOnOpen
-      onEscape={close}
-      className="min-h-80 max-h-[min(34rem,60dvh)]"
+      title="Setup assistant"
+      icon={MessageSquareText}
+      meta={computer.name}
+      onClose={close}
+      closeLabel="Close setup assistant"
     >
-      <SidePanelHeader
-        titleBar={false}
-        title="Setup assistant"
-        icon={MessageSquareText}
-        meta={computer.name}
-        onClose={close}
-        closeLabel="Close setup assistant"
-      />
-      <PanelBody className="max-h-96 space-y-3 px-3 py-2">
+      <PanelBody className="space-y-3 px-3 py-2">
         {!ready && (
           <StatusMessage>
             {online
@@ -297,6 +290,6 @@ export function SetupAssistant({
           />
         </Composer>
       </form>
-    </SidePanel>
+    </SettingsDrawer>
   );
 }

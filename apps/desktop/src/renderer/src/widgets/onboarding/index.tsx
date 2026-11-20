@@ -26,6 +26,8 @@ import { ProvidersStep } from './providers-step';
 import { RoutinesStep, type RoutineOutcomes } from './routines-step';
 import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
 import { SetupFindings } from '@/widgets/settings/setup-findings';
+import { SettingsDrawerHost } from '@/widgets/settings/settings-drawer';
+import { useSettingsDrawer } from '@/widgets/settings/use-settings-drawer';
 import { OnboardingStepLayout } from './step-layout';
 import { useOnboardingComputers } from './use-onboarding-computers';
 import { WelcomeStep } from './welcome-step';
@@ -88,6 +90,10 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   const [approvalsOpen, setApprovalsOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [setupError, setSetupError] = useState('');
+  const [setupDrawerHost, setSetupDrawerHost] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const { registerDrawer } = useSettingsDrawer();
   const { computers, local, error, statuses, checkProviders } =
     useOnboardingComputers(api);
   const defaultFolders = useDefaultSessionFolders(computers);
@@ -249,34 +255,39 @@ export function Onboarding({ onStartSession, onClose }: Props) {
               />
             )}
             {step.id === 'setup' && (
-              <div className="space-y-6">
-                <SetupProfileSettings
-                  computer={local}
-                  onboarding
-                  onReviewOpenChange={setProfileReviewOpen}
-                />
-                <SetupFindings
-                  computer={local}
-                  onboarding
-                  onReviewOpenChange={setFindingsReviewOpen}
-                  statuses={statuses}
-                  onCompleteScan={setSetupScan}
-                  openImport={
-                    local?.capabilities.includes('manager-import')
-                      ? () => setSetupImports(!setupImports)
-                      : undefined
-                  }
-                />
-                {setupImports && (
-                  <ManagerImportPicker
-                    api={api}
+              <SettingsDrawerHost
+                element={setupDrawerHost}
+                register={registerDrawer}
+              >
+                <div className="space-y-6">
+                  <SetupProfileSettings
                     computer={local}
-                    detected={detected}
-                    initialSource={foundSource}
-                    onBusyChange={setImporting}
+                    onboarding
+                    onReviewOpenChange={setProfileReviewOpen}
                   />
-                )}
-              </div>
+                  <SetupFindings
+                    computer={local}
+                    onboarding
+                    onReviewOpenChange={setFindingsReviewOpen}
+                    statuses={statuses}
+                    onCompleteScan={setSetupScan}
+                    openImport={
+                      local?.capabilities.includes('manager-import')
+                        ? () => setSetupImports(!setupImports)
+                        : undefined
+                    }
+                  />
+                  {setupImports && (
+                    <ManagerImportPicker
+                      api={api}
+                      computer={local}
+                      detected={detected}
+                      initialSource={foundSource}
+                      onBusyChange={setImporting}
+                    />
+                  )}
+                </div>
+              </SettingsDrawerHost>
             )}
             {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
             {step.id === 'routines' && (
@@ -416,6 +427,12 @@ export function Onboarding({ onStartSession, onClose }: Props) {
           </footer>
         </div>
       </div>
+      {step.id === 'setup' && (
+        <div
+          ref={setSetupDrawerHost}
+          className="pointer-events-none absolute inset-0 z-10 flex justify-end"
+        />
+      )}
       {reviewing && setupComputer && (
         <SidePanel
           id="onboarding-local-approvals"

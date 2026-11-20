@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import {
@@ -20,6 +14,7 @@ import { NavItem, NavList } from '@/shared/ui/nav-list';
 import { SearchField } from '@/shared/ui/search-field';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { SettingsDrawerHost } from './settings-drawer';
+import { useSettingsDrawer } from './use-settings-drawer';
 import {
   matchesSettingsPage,
   settingsPages,
@@ -59,21 +54,7 @@ export function Settings({
   const [drawerElement, setDrawerElement] = useState<HTMLDivElement | null>(
     null,
   );
-  const activeDrawer = useRef<{
-    close: () => void;
-    dismiss: () => void;
-  } | null>(null);
-  const registerDrawer = useCallback(
-    (drawer: { close: () => void; dismiss: () => void }) => {
-      const previous = activeDrawer.current;
-      activeDrawer.current = drawer;
-      previous?.dismiss();
-      return () => {
-        if (activeDrawer.current === drawer) activeDrawer.current = null;
-      };
-    },
-    [],
-  );
+  const { activeDrawer, registerDrawer } = useSettingsDrawer();
   const [returnFocus] = useState(() =>
     document.activeElement instanceof HTMLElement
       ? document.activeElement

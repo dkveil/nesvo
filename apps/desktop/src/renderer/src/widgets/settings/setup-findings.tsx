@@ -10,11 +10,8 @@ import { Button } from '@/shared/ui/button';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { PanelBody } from '@/shared/ui/panel';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import {
-  SidePanel,
-  SidePanelFooter,
-  SidePanelHeader,
-} from '@/shared/ui/side-panel';
+import { SidePanelFooter } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
@@ -340,26 +337,20 @@ export function SetupFindings({
         />
       )}
       {panel && scan && !assistant && (
-        <SidePanel
-          kind="details"
+        <SettingsDrawer
           resizeLabel="Resize setup review"
-          focusOnOpen
-          onEscape={() => setPanel(null)}
+          title={
+            panel === 'diagnostics'
+              ? 'Verify tools'
+              : panel === 'changed'
+                ? 'Setup changed'
+                : panel === 'choices'
+                  ? 'Review setup choices'
+                  : 'Setup finding'
+          }
+          closeLabel="Close setup review"
+          onClose={() => setPanel(null)}
         >
-          <SidePanelHeader
-            titleBar={false}
-            title={
-              panel === 'diagnostics'
-                ? 'Verify tools'
-                : panel === 'changed'
-                  ? 'Setup changed'
-                  : panel === 'choices'
-                    ? 'Review setup choices'
-                    : 'Setup finding'
-            }
-            closeLabel="Close setup review"
-            onClose={() => setPanel(null)}
-          />
           <PanelBody className="space-y-2 p-3">
             {panel === 'choices' &&
               choices.map(choice => (
@@ -475,7 +466,7 @@ export function SetupFindings({
               </Button>
             </SidePanelFooter>
           )}
-        </SidePanel>
+        </SettingsDrawer>
       )}
     </div>
   );

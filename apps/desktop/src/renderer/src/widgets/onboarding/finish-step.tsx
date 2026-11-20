@@ -43,6 +43,8 @@ export function FinishStep({
       status === 'unsupported'
     );
   });
+  const skipped =
+    setup?.choices?.filter(item => item.choice === 'skip').length ?? 0;
   const summary = [
     {
       label: 'Agents detected',
@@ -65,13 +67,11 @@ export function FinishStep({
       label: 'Routines added',
       value: routines.join(', ') || 'None added',
     },
-    ...(setup
+    ...(skipped > 0
       ? [
           {
             label: 'Setup skipped',
-            value: String(
-              setup.choices?.filter(item => item.choice === 'skip').length ?? 0,
-            ),
+            value: String(skipped),
           },
         ]
       : []),
