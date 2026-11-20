@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { ClaudePlanHookDialog } from './claude-plan-hook-dialog';
 
@@ -368,20 +368,13 @@ export function ReadonlyIntegrationsSettings({
         )}
       </SettingsSection>
       {showHistory && (
-        <SidePanel
-          kind="details"
+        <SettingsDrawer
+          title="Read-only integration history"
+          closeLabel="Close integration history"
           resizeLabel="Resize integration history"
-          focusOnOpen
-          onEscape={() => setShowHistory(false)}
-          className="min-[1200px]:absolute min-[1200px]:inset-y-0 min-[1200px]:right-0"
+          onClose={() => setShowHistory(false)}
         >
-          <SidePanelHeader
-            title="Read-only integration history"
-            closeLabel="Close integration history"
-            onClose={() => setShowHistory(false)}
-            titleBar={false}
-          />
-          <PanelBody className="min-h-40">
+          <PanelBody>
             {data?.history.length ? (
               data.history.map(entry => (
                 <SettingsRow
@@ -406,7 +399,7 @@ export function ReadonlyIntegrationsSettings({
               <SettingsRow title="No decisions yet" />
             )}
           </PanelBody>
-        </SidePanel>
+        </SettingsDrawer>
       )}
       <ConfirmDialog
         open={!!revoke}

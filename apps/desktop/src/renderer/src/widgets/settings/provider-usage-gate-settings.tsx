@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 export function ProviderUsageGateSettings({
@@ -402,20 +402,13 @@ export function ProviderUsageGateSettings({
         }
       />
       {history && (
-        <SidePanel
-          kind="details"
+        <SettingsDrawer
+          title="Usage gate history"
+          closeLabel="Close usage history"
           resizeLabel="Resize usage history"
-          focusOnOpen
-          onEscape={() => setHistory(false)}
-          className="min-[1200px]:absolute min-[1200px]:inset-y-0 min-[1200px]:right-0"
+          onClose={() => setHistory(false)}
         >
-          <SidePanelHeader
-            title="Usage gate history"
-            closeLabel="Close usage history"
-            onClose={() => setHistory(false)}
-            titleBar={false}
-          />
-          <PanelBody className="min-h-40">
+          <PanelBody>
             {settings?.history.length ? (
               settings.history.map(entry => (
                 <SettingsRow
@@ -432,7 +425,7 @@ export function ProviderUsageGateSettings({
               <SettingsRow title="No decisions yet" />
             )}
           </PanelBody>
-        </SidePanel>
+        </SettingsDrawer>
       )}
     </div>
   );

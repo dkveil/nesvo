@@ -22,7 +22,7 @@ import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { PanelBody } from '@/shared/ui/panel';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 const ruleName = (rule: RepositoryTrustRule) =>
@@ -180,20 +180,13 @@ export function RepositoryTrustSettings({
         )}
       </SettingsSection>
       {showHistory && (
-        <SidePanel
-          kind="details"
+        <SettingsDrawer
+          title="Repository trust history"
+          closeLabel="Close repository trust history"
           resizeLabel="Resize repository trust history"
-          focusOnOpen
-          onEscape={() => setShowHistory(false)}
-          className="min-[1200px]:absolute min-[1200px]:inset-y-0 min-[1200px]:right-0"
+          onClose={() => setShowHistory(false)}
         >
-          <SidePanelHeader
-            title="Repository trust history"
-            titleBar={false}
-            closeLabel="Close repository trust history"
-            onClose={() => setShowHistory(false)}
-          />
-          <PanelBody className="min-h-40 overflow-y-auto">
+          <PanelBody>
             {data?.history.length ? (
               data.history.map(entry => (
                 <SettingsRow
@@ -206,7 +199,7 @@ export function RepositoryTrustSettings({
               <SettingsRow title="No decisions yet" />
             )}
           </PanelBody>
-        </SidePanel>
+        </SettingsDrawer>
       )}
       <ConfirmDialog
         open={!!remove}

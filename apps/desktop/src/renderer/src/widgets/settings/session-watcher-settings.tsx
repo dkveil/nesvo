@@ -21,7 +21,7 @@ import {
 import { Field } from '@/shared/ui/field';
 import { PanelBody } from '@/shared/ui/panel';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Textarea } from '@/shared/ui/textarea';
 
@@ -282,20 +282,13 @@ export function SessionWatcherSettings({
         )}
       </SettingsSection>
       {history && (
-        <SidePanel
-          kind="details"
+        <SettingsDrawer
+          title="Watcher history"
+          closeLabel="Close watcher history"
           resizeLabel="Resize watcher history"
-          focusOnOpen
-          onEscape={() => setHistory(false)}
-          className="min-[1200px]:absolute min-[1200px]:inset-y-0 min-[1200px]:right-0"
+          onClose={() => setHistory(false)}
         >
-          <SidePanelHeader
-            title="Watcher history"
-            closeLabel="Close watcher history"
-            onClose={() => setHistory(false)}
-            titleBar={false}
-          />
-          <PanelBody className="min-h-40">
+          <PanelBody>
             {data?.history.length ? (
               data.history.map(entry => (
                 <SettingsRow
@@ -318,7 +311,7 @@ export function SessionWatcherSettings({
               <SettingsRow title="No decisions yet" />
             )}
           </PanelBody>
-        </SidePanel>
+        </SettingsDrawer>
       )}
       <ConfirmDialog
         open={!!remove}

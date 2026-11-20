@@ -29,7 +29,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
-import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
+import { SettingsDrawer } from './settings-drawer';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { ingressStatus } from '@/features/session-ingress/use-session-ingress-history';
 
@@ -287,27 +287,20 @@ export function ExternalSessionSettings({
               </SettingsRow>
             ))}
             <SettingsRow
-              title="Coordinator events and wake unavailable"
-              description="This host supports history, Inbox decisions and operator-initiated delivery."
+              title="External coordinator delivery unavailable"
+              description="External messages can wait for an operator turn or request an Inbox decision."
             />
           </>
         )}
       </SettingsSection>
       {history && (
-        <SidePanel
-          kind="details"
+        <SettingsDrawer
+          title="External message history"
+          closeLabel="Close external message history"
           resizeLabel="Resize external message history"
-          focusOnOpen
-          onEscape={() => setHistory(false)}
-          className="min-[1200px]:absolute min-[1200px]:inset-y-0 min-[1200px]:right-0"
+          onClose={() => setHistory(false)}
         >
-          <SidePanelHeader
-            title="External message history"
-            closeLabel="Close external message history"
-            onClose={() => setHistory(false)}
-            titleBar={false}
-          />
-          <PanelBody className="min-h-40">
+          <PanelBody>
             {(data?.messages ?? []).map(({ receipt }) => (
               <SettingsRow
                 key={receipt.id}
@@ -333,7 +326,7 @@ export function ExternalSessionSettings({
               <SettingsRow title="No messages or decisions yet" />
             )}
           </PanelBody>
-        </SidePanel>
+        </SettingsDrawer>
       )}
       <ConfirmDialog
         open={!!revoke}
