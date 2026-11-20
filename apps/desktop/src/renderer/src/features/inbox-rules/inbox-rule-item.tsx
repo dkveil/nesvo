@@ -187,8 +187,8 @@ export function InboxRuleDecisions({
       className={cn(
         compact
           ? 'contents'
-          : 'col-start-2 row-start-1 flex flex-col items-end gap-1.5 self-center',
-        !compact && (external ? 'w-[min(38vw,22rem)]' : 'max-w-56'),
+          : 'flex min-w-0 flex-col items-end gap-1.5 justify-self-end self-center',
+        !compact && (external ? 'w-full max-w-[22rem]' : 'max-w-56'),
       )}
     >
       <div
@@ -237,6 +237,7 @@ export function InboxRuleDecisions({
             <Button
               key={option}
               variant="secondary"
+              className="h-auto min-h-7 max-w-full py-1 whitespace-normal [overflow-wrap:anywhere]"
               disabled={disabled}
               onClick={() =>
                 onDecide({

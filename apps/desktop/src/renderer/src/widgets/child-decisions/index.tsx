@@ -65,7 +65,7 @@ type Props = {
   ) => void;
 };
 
-const COLUMNS = 'minmax(0,1fr) auto';
+const COLUMNS = 'var(--child-decision-columns)';
 
 function CardHeader({
   title,
@@ -81,14 +81,16 @@ function CardHeader({
       <Button
         variant="link"
         size="inline"
-        className="max-w-full justify-start text-ui text-foreground"
+        className="min-w-0 max-w-full items-baseline justify-start text-left text-ui whitespace-normal text-foreground"
         aria-label={`Open session: ${title}`}
         onClick={onOpen}
       >
-        <span className="truncate">{title}</span>
-        <ArrowUpRight className="size-3 text-muted-foreground" />
+        <span className="[overflow-wrap:anywhere]">{title}</span>
+        <ArrowUpRight className="size-3 self-start text-muted-foreground" />
       </Button>
-      <span className="text-2xs text-muted-foreground">{what}</span>
+      <span className="text-2xs text-muted-foreground [overflow-wrap:anywhere]">
+        {what}
+      </span>
     </div>
   );
 }
@@ -185,14 +187,14 @@ export function ChildDecisions({
   return (
     <section
       aria-label="Decisions from child sessions"
-      className="space-y-1.5 rounded-surface border bg-card p-2"
+      className="@container/child-decisions space-y-1.5 border-t pt-2"
     >
       <SectionLabel as="h2" className="px-2">
         {count === 1
           ? 'A child session waits for you'
           : `${count} child decisions wait for you`}
       </SectionLabel>
-      <div className="space-y-px">
+      <div className="divide-y divide-border [--child-decision-columns:minmax(0,1fr)] @min-[40rem]/child-decisions:[--child-decision-columns:minmax(0,1fr)_auto]">
         {steering.map(({ child, request }) => (
           <article
             key={request.id}
@@ -250,7 +252,9 @@ export function ChildDecisions({
                   what={resultReason(review)}
                   onOpen={() => onOpen(entityKey(child))}
                 />
-                <p className="line-clamp-2 text-ui">{reviewPreview(review)}</p>
+                <p className="text-ui [overflow-wrap:anywhere]">
+                  {reviewPreview(review)}
+                </p>
                 {review.diff.files.length > 0 && (
                   <Button
                     size="inline"
@@ -371,9 +375,11 @@ export function ChildDecisions({
                   what="Plan ready"
                   onOpen={() => onOpen(entityKey(child))}
                 />
-                <p className="line-clamp-3 text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {child.plan?.text}
-                </p>
+                <NativeDisclosure title="Read plan">
+                  <p className="max-h-64 overflow-y-auto text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {child.plan?.text}
+                  </p>
+                </NativeDisclosure>
               </div>
               <PlanDecision session={child} actions={stages} compact />
             </ListRow>
