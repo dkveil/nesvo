@@ -142,7 +142,7 @@ Outputs are `status` (`success`, `failure` or `timeout`), `failing_checks` (newl
 
 ### Repeating a sequence
 
-An `until` step follows the steps it repeats. Set `repeat` to their names in order, `condition` to a string comparison and `max_iterations` to a number from 1 to 20. The following step checks the output of `read-status`.
+An `until` step follows the steps it repeats. Set `repeat` to their names in order, `condition` to a string comparison and `max_iterations` to a number from 1 to 20. The following step checks the output of a `read-status` step of type `action`.
 
 ```yaml
 name: ready
@@ -152,6 +152,8 @@ repeat: [read-status]
 condition: 'steps.read-status.outputs.state == "ready"'
 max_iterations: 4
 ```
+
+Have `read-status` print a single-line JSON object such as `{"state":"ready"}` to stdout. An `action` publishes the last stdout line that is a JSON object when it has up to 16 valid output names and text values of up to 4,000 characters. A `command` records its process result and logs without publishing JSON outputs.
 
 Connect the body and the loop control in one same-phase success chain. The body can receive incoming edges at its first step, and exits go from the control step. Loops cannot overlap or nest. Only a current iteration's output can satisfy the condition. A missing output does not match either comparison. A body failure follows the normal failure route. When the limit is reached without a match, the control step fails.
 
