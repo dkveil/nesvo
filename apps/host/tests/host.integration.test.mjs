@@ -2539,8 +2539,25 @@ test('setup profiles validate and apply offline, own routing, and reconcile incl
     assert.equal((await cli('validate')).document.status, 'invalid');
     await writeFile(entry, configuration);
     await writeFile(shared, sharedDocument);
-    await writeFile(machine, machineDocument);
+    const withRepository =
+      machineDocument + 'github: [{id: repo, repository: org/project}]\n';
+    await writeFile(machine, withRepository);
+    const validation = await cli('validate');
+    assert.equal(validation.code, 0);
+    const repository = validation.document.declarations.find(
+      entry => entry.key === 'github/repo',
+    );
+    assert.equal(repository.state, 'unsupported');
+    assert.match(repository.preview, /not applied/);
     const preview = (await cli('diff')).document;
+    assert.deepEqual(
+      preview.declarations.find(entry => entry.key === 'github/repo'),
+      repository,
+    );
+    assert.equal(
+      preview.changes.find(change => change.key === 'github/repo').after,
+      repository.preview,
+    );
     assert.equal(preview.routing.effective, 'inbox');
     assert.equal(preview.routing.desired, 'parent');
     assert.equal(preview.runtimeChecks[0].key, 'recipes/setup');

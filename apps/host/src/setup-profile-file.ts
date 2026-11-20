@@ -526,8 +526,10 @@ function mergeProfile(
         );
     }
     const value = entry.value;
-    const preview =
-      'template' in value && typeof value.template === 'string'
+    const trackedRepository = key.startsWith('github/') && !value.disabled;
+    const preview = trackedRepository
+      ? 'This profile entry is not applied. Track the repository in Pull requests.'
+      : 'template' in value && typeof value.template === 'string'
         ? value.template
         : 'threshold' in value && 'effect' in value
           ? `${value.effect} at ${value.threshold}%`
@@ -552,13 +554,15 @@ function mergeProfile(
       revision: sha(JSON.stringify(entry.value)),
       state: value.disabled
         ? 'masked'
-        : ordinary ||
-            key.startsWith('rituals/') ||
-            (key.startsWith('repositoryTrust/') &&
-              'effect' in value &&
-              value.effect === 'deny')
-          ? 'ordinary'
-          : 'pending',
+        : trackedRepository
+          ? 'unsupported'
+          : ordinary ||
+              key.startsWith('rituals/') ||
+              (key.startsWith('repositoryTrust/') &&
+                'effect' in value &&
+                value.effect === 'deny')
+            ? 'ordinary'
+            : 'pending',
       preview: configurationText(preview ?? '').slice(0, 300) || undefined,
     });
   }
