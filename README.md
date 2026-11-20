@@ -23,13 +23,14 @@ Download Nesvo from [nesvo.dev](https://nesvo.dev/) or get the installers from [
 Before opening an installer, compare its SHA-256 with the matching entry in `SHA256SUMS.txt`. Use `Get-FileHash -Algorithm SHA256` on Windows or `shasum -a 256` on macOS.
 
 - **Windows** — If SmartScreen warns, choose **More info → Run anyway** if offered.
-- **macOS** — Move Nesvo to Applications, then Control-click it and choose **Open**. If macOS still blocks it, use **System Settings → Privacy & Security → Open Anyway**.
 
-The [macOS install script](docs/web.md#macos-install-script) verifies the checksum before installing.
+On macOS, use the [Terminal installer](docs/web.md#macos-install-script). It verifies the checksum before installing and clears quarantine from the installed app.
 
 ```sh
 curl -fsSL https://nesvo.dev/install.sh | sh
 ```
+
+For a manual macOS install, move Nesvo to Applications, open it once, and click **Done**. Go to **System Settings → Privacy & Security**, choose **Open Anyway** next to Nesvo, and confirm with your password. After verifying the disk image, you can also run `xattr -dr com.apple.quarantine /Applications/Nesvo.app`.
 
 ## Sessions
 

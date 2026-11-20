@@ -11,6 +11,9 @@ export type DownloadTarget = {
   firstLaunch: string;
 };
 
+const macFirstLaunch =
+  'Open Nesvo once and click Done. In System Settings → Privacy & Security, choose Open Anyway next to Nesvo and confirm with your password.';
+
 export const DOWNLOAD_TARGETS = {
   windows: {
     fileName: 'Nesvo-Windows-Setup.exe',
@@ -27,8 +30,7 @@ export const DOWNLOAD_TARGETS = {
     buttonLabel: 'Download for macOS',
     buttonDetail: 'Apple silicon · .dmg',
     detail: 'M1 or later · disk image',
-    firstLaunch:
-      'macOS blocks unsigned apps at first. Control-click Nesvo in Applications and choose Open.',
+    firstLaunch: macFirstLaunch,
   },
   'mac-intel': {
     fileName: 'Nesvo-macOS-x64.dmg',
@@ -36,8 +38,7 @@ export const DOWNLOAD_TARGETS = {
     buttonLabel: 'Download for macOS',
     buttonDetail: 'Intel · .dmg',
     detail: 'Intel processor · disk image',
-    firstLaunch:
-      'macOS blocks unsigned apps at first. Control-click Nesvo in Applications and choose Open.',
+    firstLaunch: macFirstLaunch,
   },
 } as const satisfies Record<DownloadTargetId, DownloadTarget>;
 

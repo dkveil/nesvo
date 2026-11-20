@@ -1,3 +1,5 @@
+import { DOWNLOAD_TARGETS } from '@/releases/download-targets';
+
 export const FirstLaunchNotes = () => (
   <ul className="panel-list">
     <li>
@@ -9,13 +11,11 @@ export const FirstLaunchNotes = () => (
       <em>Run anyway</em>.
     </li>
     <li>
-      <strong>macOS</strong>: Control-click Nesvo in Applications and choose{' '}
-      <em>Open</em>, or use <em>System Settings › Privacy &amp; Security</em> ›{' '}
-      <em>Open Anyway</em>.
+      <strong>macOS</strong> — Use the Terminal installer. It verifies the
+      checksum.
     </li>
     <li>
-      <strong>Terminal</strong>: the command verifies the SHA-256 checksum,
-      copies Nesvo to Applications and keeps the macOS check in place.
+      <strong>Manual disk image</strong> — {DOWNLOAD_TARGETS.mac.firstLaunch}
     </li>
   </ul>
 );

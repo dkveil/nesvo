@@ -130,6 +130,12 @@ describe('Home page', () => {
     expect(primaryHref(arm)).toBe('/download/mac');
     expect(arm).toContain('v0.2.0 · Latest · Apple silicon · .dmg');
     expect(arm).toContain(INSTALL_COMMAND);
+    expect(arm).toContain('Use the Terminal installer.');
+    expect(arm).toContain('Open Nesvo once and click Done.');
+    expect(arm).toContain(
+      'choose Open Anyway next to Nesvo and confirm with your password.',
+    );
+    expect(arm).not.toContain('Control-click');
     expect(arm).not.toContain('macOS from Terminal');
     expect(arm).not.toContain('Intel Mac?');
     expect(primaryHref(intel)).toBe('/download/mac-intel');

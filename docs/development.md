@@ -69,10 +69,10 @@ Electron-builder writes these installers to `apps/desktop/release`. The workflow
 
 Download the checksum file alongside your installer. On Windows, run `Get-FileHash .\Nesvo-Windows-Setup.exe -Algorithm SHA256`. On macOS, run `shasum -a 256 Nesvo-macOS-arm64.dmg`, substituting the Intel filename if needed. Compare the output with the matching line in `SHA256SUMS.txt` before opening the installer.
 
-Download the latest installers from the [Nesvo releases page](https://github.com/dkveil/nesvo/releases/latest). Builds are unsigned, macOS builds are not notarized, and updates require downloading a new installer.
+Download the installers from [nesvo.dev](https://nesvo.dev/) or [GitHub Releases](https://github.com/dkveil/nesvo/releases). Builds are unsigned, macOS builds are not notarized, and updates require downloading a new installer.
 
 - **Windows.** Microsoft Defender SmartScreen may warn that the installer is unrecognized. Verify the download source before continuing if Windows offers that choice. [Microsoft guidance](https://support.microsoft.com/en-us/windows/security/windows-security/app-browser-control-in-the-windows-security-app)
-- **macOS.** Move Nesvo from the disk image to Applications. Gatekeeper may block the first launch because the developer cannot be verified. If you trust the download, use **System Settings → Privacy & Security → Open Anyway** after the first attempt if the option is available. [Apple guidance](https://support.apple.com/en-us/102445)
+- **macOS.** Use the Terminal installer to verify and install the release. For a manual disk image install, follow the [macOS first-launch steps](web.md#macos-install-script).
 
 ## External Inbox CLI from source
 

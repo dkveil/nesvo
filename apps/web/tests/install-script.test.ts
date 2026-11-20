@@ -45,12 +45,22 @@ describe('install.sh', () => {
     expect(install).toBeGreaterThan(verify);
   });
 
-  it('keeps the macOS first-launch check and explains it', () => {
-    expect(script).not.toMatch(/xattr\s+-(?:d|c|r)/);
-    expect(script).not.toMatch(/spctl|--no-quarantine|sudo/);
-    expect(script).toContain('com.apple.quarantine');
-    expect(script).toContain('Control-click Nesvo and choose Open');
-    expect(script).toContain('Privacy & Security');
+  it('clears quarantine only from the installed app after verifying the download', () => {
+    const check = script.indexOf('checksum mismatch for');
+    const copy = script.indexOf(
+      'ditto "$MOUNT_DIR/$APP_NAME" "$TARGET_DIR/$APP_NAME"',
+    );
+    const remove = script.indexOf(
+      'xattr -drs com.apple.quarantine "$TARGET_DIR/$APP_NAME"',
+    );
+
+    expect(check).toBeGreaterThan(0);
+    expect(copy).toBeGreaterThan(check);
+    expect(remove).toBeGreaterThan(copy);
+    expect(script).not.toMatch(/xattr\s+-(?:w|c)|spctl|sudo/);
+    expect(script).toContain(
+      'System Settings > Privacy & Security > Open Anyway',
+    );
   });
 
   it.skipIf(!hasShell)('is valid POSIX shell', () => {

@@ -36,15 +36,15 @@ The download buttons use `/download/windows`, `/download/mac` and `/download/mac
 
 ### macOS install script
 
-On a Mac the page also offers `curl -fsSL https://nesvo.dev/install.sh | sh` as one copyable line; other systems find it under Other platforms. The script:
+The recommended macOS install is `curl -fsSL https://nesvo.dev/install.sh | sh`. The page offers it as a copyable line on Mac and under Other platforms on Windows. The script does the following.
 
 1. refuses anything but macOS and picks the disk image by processor, treating a shell running under Rosetta as Apple silicon;
 2. stops when `/Applications` is not writable or Nesvo is running;
 3. downloads the disk image and `SHA256SUMS.txt` from the primary release tag resolved when `/install.sh` is requested and compares the SHA-256 with `shasum -a 256`; on a mismatch nothing is installed;
 4. mounts the image read-only, copies `Nesvo.app` to `/Applications` (replacing an older copy) and unmounts it;
-5. prints the first-launch steps: Control-click Nesvo in Applications and choose Open, or System Settings › Privacy & Security › Open Anyway.
+5. removes the quarantine attribute from the verified copy in `/Applications/Nesvo.app` and tells you to open it from Applications.
 
-The script never removes the quarantine attribute and never changes Gatekeeper settings. `curl` does not mark its downloads the way a browser does, so the script adds the standard `com.apple.quarantine` attribute to the downloaded image and the installed app; otherwise macOS would skip its first-launch check for an unsigned app. It uses no `sudo`.
+For a manual disk image install on macOS 15 or later, verify the checksum and move Nesvo to Applications. Open it once and click **Done**, then go to **System Settings → Privacy & Security** and choose **Open Anyway** next to Nesvo. Confirm with your password. After verification, you can also run `xattr -dr com.apple.quarantine /Applications/Nesvo.app`. [Apple first-launch guidance](https://support.apple.com/en-us/102445)
 
 `/install.sh` returns `404` before a release is published and `503` when release data is unavailable without a cached result.
 

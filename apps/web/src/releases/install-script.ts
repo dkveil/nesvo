@@ -73,8 +73,6 @@ ACTUAL="$(shasum -a 256 "$WORK_DIR/$ASSET" | awk '{ print $1 }')"
 [ "$EXPECTED" = "$ACTUAL" ] || fail "checksum mismatch for $ASSET. Nothing was installed."
 say "Checksum verified: $ACTUAL"
 
-xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");nesvo-install;" "$WORK_DIR/$ASSET"
-
 mkdir -p "$MOUNT_DIR"
 hdiutil attach "$WORK_DIR/$ASSET" -nobrowse -readonly -noautoopen -mountpoint "$MOUNT_DIR" -quiet || fail "the disk image could not be opened."
 [ -d "$MOUNT_DIR/$APP_NAME" ] || fail "the disk image does not contain $APP_NAME."
@@ -84,16 +82,16 @@ if [ -d "$TARGET_DIR/$APP_NAME" ]; then
   rm -rf "$TARGET_DIR/$APP_NAME"
 fi
 ditto "$MOUNT_DIR/$APP_NAME" "$TARGET_DIR/$APP_NAME"
-xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");nesvo-install;" "$TARGET_DIR/$APP_NAME"
+if ! xattr -drs com.apple.quarantine "$TARGET_DIR/$APP_NAME" 2>/dev/null; then
+  ATTRIBUTES="$(xattr -rs "$TARGET_DIR/$APP_NAME")" || fail "could not check quarantine on the installed app."
+  case "$ATTRIBUTES" in
+    *com.apple.quarantine*) fail "could not clear quarantine. Use System Settings > Privacy & Security > Open Anyway." ;;
+  esac
+fi
 
 say ""
 say "Nesvo is installed in $TARGET_DIR."
-say ""
-say "Nesvo is not signed yet, so macOS asks before the first launch:"
-say "  1. Open Finder, go to Applications, Control-click Nesvo and choose Open."
-say "  2. Choose Open again in the dialog."
-say "If macOS only offers to move it to the Bin, open System Settings,"
-say "go to Privacy & Security and choose Open Anyway next to Nesvo."
+say "Open Nesvo from Applications."
 say ""
 say "Nesvo does not update itself. Run this command again for a new version."
 `;
