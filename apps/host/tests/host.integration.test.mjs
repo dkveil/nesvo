@@ -17247,6 +17247,18 @@ test(
     };
     await fanOut('batch', 2, 1);
     await fanOut('restart', 1);
+    await step(
+      'empty-batch',
+      'fan-out',
+      [
+        `session: ${session('worker-gates', '{{ item.id }}')}`,
+        'items: { kind: file, path: empty-stages.md }',
+        `policy: ${policy(1)}`,
+      ].join('\n'),
+      '{{ item.task }}',
+    );
+    await workflow('empty-batch', ['empty-batch', 'verify']);
+    await write('empty-stages.md', '| id | task |\n| --- | --- |\n');
     await step('review', 'human', '', 'Approve the result.');
     await workflow('review-worker', ['review']);
     await fanOut('review-restart', 1, undefined, 'review-worker');
@@ -17254,7 +17266,13 @@ test(
       'stages.md',
       '| id | task |\n| --- | --- |\n| A | fixture:chatty |\n| B | fixture:chatty |\n| C | fixture:chatty |\n',
     );
-    for (const name of ['single', 'batch', 'restart', 'review-restart'])
+    for (const name of [
+      'single',
+      'batch',
+      'restart',
+      'review-restart',
+      'empty-batch',
+    ])
       await write(
         `${name}.md`,
         `---\nworkflow: ${name}\n---\nRun the workflow.\n`,
@@ -17340,6 +17358,22 @@ test(
 
     await writeFile(join(directory, 'usage-control.json'), '{}');
     await setResources(0, 100);
+    const empty = await start('empty-batch');
+    const emptyResult = await wait(
+      empty,
+      current => current.run.status === 'passed' && current,
+    );
+    const [emptyStep, nextStep] = emptyResult.steps;
+    assert.equal(emptyStep.state, 'passed');
+    assert.deepEqual(emptyStep.result.items, []);
+    assert.deepEqual(emptyStep.result.outputs, {
+      total: '0',
+      passed: '0',
+      items: '[]',
+    });
+    assert.equal(nextStep.state, 'done');
+    assert.deepEqual(await sessions(empty), []);
+
     const batch = await start('batch');
     await wait(batch, current =>
       items(current)[0]?.reason?.includes('free RAM below'),

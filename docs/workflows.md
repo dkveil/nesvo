@@ -191,6 +191,8 @@ The run lists queued items and the reason they are waiting. Items start as capac
 
 The step timeout includes queued time and time while the host is down. Stop on the parent run stops its children and clears the queue. On restart, a running step reconnects to recorded children, keeps completed reports, and marks items that never started as interrupted. An interrupted provider turn stays interrupted. A child already waiting for human input can still receive that decision. Child steps have no automatic retries.
 
+An empty list, including a Markdown table with headers and no rows, passes without starting children. The step publishes `total: "0"`, `passed: "0"` and `items: "[]"` and follows its success edges.
+
 #### Example orchestrator
 
 Save this as `.agents/workflows/workflows/orchestrate-stages.md`.
