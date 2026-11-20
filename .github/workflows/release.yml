@@ -92,7 +92,7 @@ jobs:
           fi
 
           build_image() {
-            local arch="$1" mach_arch="$2" app="$3" binary assessment
+            local arch="$1" mach_arch="$2" app="$3" binary
             local dmg="apps/desktop/release/Nesvo-macOS-$arch.dmg"
             bun run --cwd apps/desktop electron-builder --config "$config" --mac dmg "--$arch" --publish never
             lipo "$app/Contents/MacOS/Nesvo" -verify_arch "$mach_arch"
@@ -104,15 +104,6 @@ jobs:
                 fi
               done < <(find "$app/Contents" -type f -print0)
               xcrun stapler validate "$app"
-              spctl --status
-              local assessment_status=0
-              assessment="$(LC_ALL=C spctl -a -vv -t exec --ignore-cache --no-cache "$PWD/$app" 2>&1)" || assessment_status=$?
-              sed '/^origin=/d' <<< "$assessment"
-              if [[ "$assessment_status" != 0 ]] ||
-                ! grep -Fxq 'source=Notarized Developer ID' <<< "$assessment"; then
-                printf 'Gatekeeper did not confirm notarized Developer ID for %s (exit %s).\n' "$app" "$assessment_status" >&2
-                exit 1
-              fi
               codesign --verify --strict -R "$requirement" "$dmg"
               if ! xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" \
                 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
@@ -128,6 +119,32 @@ jobs:
           build_image arm64 arm64 apps/desktop/release/mac-arm64/Nesvo.app
           build_image x64 x86_64 apps/desktop/release/mac/Nesvo.app
           printf 'signed=%s\n' "$signed" >> "$GITHUB_OUTPUT"
+      - name: Assess notarized apps with Gatekeeper
+        if: runner.os == 'macOS' && steps.mac-release.outputs.signed == 'true'
+        shell: bash
+        run: |
+          spctl --status
+          failed=0
+          for app in "$PWD"/apps/desktop/release/{mac-arm64,mac}/Nesvo.app; do
+            for delay in 0 30 60; do
+              sleep "$delay"
+              assessment_status=0
+              assessment="$(LC_ALL=C spctl -a -vv -t exec --ignore-cache --no-cache "$app" 2>&1)" || assessment_status=$?
+              sed '/^origin=/d' <<< "$assessment"
+              if [[ "$assessment_status" == 0 ]] &&
+                grep -Fxq 'source=Notarized Developer ID' <<< "$assessment"; then
+                continue 2
+              fi
+            done
+            printf 'Gatekeeper did not confirm notarized Developer ID for %s (exit %s).\n' "$app" "$assessment_status" >&2
+            syspolicy_check distribution "$app" || true
+            failed=1
+          done
+          if [[ "$failed" != 0 ]]; then
+            /usr/bin/log show --last 5m --info --style compact \
+              --predicate 'process == "syspolicyd" AND eventMessage CONTAINS[c] "Nesvo"' || true
+          fi
+          exit "$failed"
       - name: Check signed native package
         if: runner.os == 'macOS' && steps.mac-release.outputs.signed == 'true'
         shell: bash
