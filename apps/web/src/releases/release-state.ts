@@ -16,6 +16,7 @@ export const releaseDownloadSchema = z.object({
 export const publishedReleaseSchema = z.object({
   version: z.string(),
   tagName: z.string(),
+  isPrerelease: z.boolean().default(false),
   publishedAt: z.string().nullable(),
   notesUrl: z.string(),
   checksumsUrl: z.string().nullable(),

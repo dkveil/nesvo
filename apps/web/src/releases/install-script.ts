@@ -1,15 +1,21 @@
-import { CHECKSUMS_FILE_NAME, DOWNLOAD_TARGETS } from './download-targets';
+import {
+  CHECKSUMS_FILE_NAME,
+  DOWNLOAD_TARGETS,
+  releaseAssetsUrl,
+} from './download-targets';
 
 export const INSTALL_COMMAND_PATH = '/install.sh';
 
 export const installCommandFor = (origin: string): string =>
   `curl -fsSL ${origin}${INSTALL_COMMAND_PATH} | sh`;
 
-export const renderInstallScript = (repository: string): string => `#!/bin/sh
+export const renderInstallScript = (
+  repository: string,
+  tagName: string,
+): string => `#!/bin/sh
 set -eu
 
-REPOSITORY="${repository}"
-BASE_URL="https://github.com/$REPOSITORY/releases/latest/download"
+BASE_URL="${releaseAssetsUrl(repository, tagName)}"
 APP_NAME="Nesvo.app"
 TARGET_DIR="/Applications"
 

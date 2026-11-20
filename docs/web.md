@@ -4,15 +4,15 @@
 
 ## What it serves
 
-| Path                                                        | What                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------ |
-| `/`                                                         | Download page, rendered per request                    |
-| `/download/windows`, `/download/mac`, `/download/mac-intel` | `302` to the stable asset of the latest GitHub Release |
-| `/releases`, `/github`                                      | `302` to the releases page and the repository          |
-| `/install.sh`                                               | macOS install script                                   |
-| `/w/<id>`                                                   | Shared workflow page                                   |
-| `/api/shares`, `/api/shares/<id>`                           | Share API                                              |
-| `/robots.txt`                                               | Disallows everything                                   |
+| Path                                                        | What                                                                                |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `/`                                                         | Download page, rendered per request                                                 |
+| `/download/windows`, `/download/mac`, `/download/mac-intel` | `302` to the matching asset of the newest published release or to the releases page |
+| `/releases`, `/github`                                      | `302` to the releases page and the repository                                       |
+| `/install.sh`                                               | macOS install script                                                                |
+| `/w/<id>`                                                   | Shared workflow page                                                                |
+| `/api/shares`, `/api/shares/<id>`                           | Share API                                                                           |
+| `/robots.txt`                                               | Disallows everything                                                                |
 
 ## Not indexed
 
@@ -26,13 +26,13 @@ The wordmark carries a static scanline texture and a short slice glitch, CSS onl
 
 The system is detected twice. The server reads User-Agent Client Hints (`Sec-CH-UA-Platform`, `Sec-CH-UA-Arch`, `Sec-CH-UA-Mobile`) and falls back to the User-Agent string; every response sends `Accept-CH` so supporting browsers include the architecture on later requests. After hydration the page asks `navigator.userAgentData.getHighEntropyValues` for the architecture and corrects the choice, which is how an Intel Mac on a Chromium browser gets the Intel disk image on the first visit. Browsers without Client Hints report every Mac as Intel, so a Mac with an unknown architecture gets the Apple silicon build with an "Intel Mac?" link under the button. Phones, tablets and Linux get no primary button; the platform list is shown directly instead.
 
-Release data comes from the GitHub API (`/repos/<repo>/releases/latest`) and the release's `SHA256SUMS.txt`. The result is cached in D1 for ten minutes per repository, so the unauthenticated API limit is not a concern; when GitHub cannot be reached the last cached result is used. Three states are handled:
+The site reads `/repos/<repo>/releases?per_page=10` from the GitHub API and selects the most recently published release in that list. Pre-releases are eligible and drafts are skipped. The site reads the selected release's `SHA256SUMS.txt` and caches the result in D1 for ten minutes per repository. When GitHub cannot be reached, the last cached result is used.
 
-- **Published**: the download button, version, sizes and checksums.
-- **No release yet** (the API answers 404): the download button stays visible but inactive, with the single line "The first build is on its way." and nothing else.
-- **Unavailable** (no cache and GitHub fails): the download button still points at the latest release and one line says the release details cannot be loaded, with a link to all releases.
+- **Published** shows the download button, version, sizes and checksums. A pre-release is noted alongside the version.
+- **No release yet** applies when GitHub returns 404 or the list contains no published releases. The button stays visible but inactive, with the line "The first build is on its way."
+- **Unavailable** applies when GitHub fails and there is no cached result. Downloads lead to the GitHub releases page and the site explains that release details could not be loaded.
 
-The download buttons always use the short `/download/*` paths, which redirect to the stable file names the release workflow publishes (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so a new release needs no change to the site.
+The download buttons use the short `/download/*` paths. Each redirect resolves the release through the same D1 cache and uses its tag with the stable file name (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`). If the release or the requested asset is unknown, the redirect leads to the GitHub releases page.
 
 ### macOS install script
 
@@ -40,11 +40,13 @@ On a Mac the page also offers `curl -fsSL https://nesvo.dev/install.sh | sh` as 
 
 1. refuses anything but macOS and picks the disk image by processor, treating a shell running under Rosetta as Apple silicon;
 2. stops when `/Applications` is not writable or Nesvo is running;
-3. downloads the disk image and `SHA256SUMS.txt` from the latest release and compares the SHA-256 with `shasum -a 256`; on a mismatch nothing is installed;
+3. downloads the disk image and `SHA256SUMS.txt` from the tag resolved when `/install.sh` is requested and compares the SHA-256 with `shasum -a 256`; on a mismatch nothing is installed;
 4. mounts the image read-only, copies `Nesvo.app` to `/Applications` (replacing an older copy) and unmounts it;
 5. prints the first-launch steps: Control-click Nesvo in Applications and choose Open, or System Settings › Privacy & Security › Open Anyway.
 
 The script never removes the quarantine attribute and never changes Gatekeeper settings. `curl` does not mark its downloads the way a browser does, so the script adds the standard `com.apple.quarantine` attribute to the downloaded image and the installed app; otherwise macOS would skip its first-launch check for an unsigned app. It uses no `sudo`.
+
+`/install.sh` returns `404` before a release is published and `503` when release data is unavailable without a cached result.
 
 ## Workflow sharing
 

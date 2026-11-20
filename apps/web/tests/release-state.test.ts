@@ -25,6 +25,8 @@ const releaseBody = {
   tag_name: 'v0.2.0',
   html_url: 'https://github.com/dkveil/nesvo/releases/tag/v0.2.0',
   published_at: '2026-11-20T10:00:00Z',
+  draft: false,
+  prerelease: false,
   assets: [
     {
       name: 'Nesvo-Windows-Setup.exe',
@@ -45,15 +47,18 @@ const releaseBody = {
 };
 
 const githubFetcher =
-  (status = 200): Fetcher =>
+  (status = 200, releases: unknown[] = [releaseBody]): Fetcher =>
   async input => {
     if (input.endsWith('/SHA256SUMS.txt')) {
       return new Response(
         `${WINDOWS_SUM}  Nesvo-Windows-Setup.exe\n${ARM_SUM}  Nesvo-macOS-arm64.dmg\n`,
       );
     }
+    expect(input).toBe(
+      'https://api.github.com/repos/dkveil/nesvo/releases?per_page=10',
+    );
     if (status !== 200) return new Response('{}', { status });
-    return Response.json(releaseBody);
+    return Response.json(releases);
   };
 
 const failingFetcher: Fetcher = async () => {
@@ -77,6 +82,7 @@ describe('fetchLatestRelease', () => {
     expect(state.status).toBe('published');
     if (state.status !== 'published') return;
     expect(state.release.version).toBe('0.2.0');
+    expect(state.release.isPrerelease).toBe(false);
     expect(state.release.downloads).toEqual([
       {
         target: 'windows',
@@ -102,10 +108,43 @@ describe('fetchLatestRelease', () => {
     ]);
   });
 
-  it('reports no release when the repository has none', async () => {
+  it('chooses the most recently published release, including pre-releases', async () => {
+    const draft = {
+      ...releaseBody,
+      tag_name: 'v0.3.0',
+      published_at: null,
+      draft: true,
+    };
+    const prerelease = {
+      ...releaseBody,
+      tag_name: 'v0.3.0-alpha.1',
+      published_at: '2026-11-20T11:00:00Z',
+      prerelease: true,
+    };
+    const state = await fetchLatestRelease(
+      config,
+      githubFetcher(200, [draft, releaseBody, prerelease]),
+    );
+
+    expect(state).toMatchObject({
+      status: 'published',
+      release: { version: '0.3.0-alpha.1', isPrerelease: true },
+    });
+  });
+
+  it('reports no release for 404, an empty list or drafts only', async () => {
     expect(await fetchLatestRelease(config, githubFetcher(404))).toEqual({
       status: 'none',
     });
+    expect(await fetchLatestRelease(config, githubFetcher(200, []))).toEqual({
+      status: 'none',
+    });
+    expect(
+      await fetchLatestRelease(
+        config,
+        githubFetcher(200, [{ ...releaseBody, draft: true }]),
+      ),
+    ).toEqual({ status: 'none' });
   });
 
   it('reports the release as unavailable when the request fails', async () => {
@@ -125,6 +164,39 @@ describe('fetchLatestRelease', () => {
 });
 
 describe('loadReleaseState', () => {
+  it('accepts a cached stable release without a pre-release flag', async () => {
+    const now = Date.parse('2026-11-20T12:00:00Z');
+    const legacy = {
+      status: 'published' as const,
+      release: {
+        version: '0.2.0',
+        tagName: releaseBody.tag_name,
+        publishedAt: releaseBody.published_at,
+        notesUrl: releaseBody.html_url,
+        checksumsUrl: null,
+        downloads: [],
+      },
+    };
+    await database
+      .prepare(
+        'INSERT INTO release_cache (repository, state, fetched_at) VALUES (?, ?, ?)',
+      )
+      .bind(config.releaseRepository, JSON.stringify(legacy), now)
+      .run();
+
+    expect(
+      await loadReleaseState({
+        db: database,
+        config,
+        now,
+        fetcher: failingFetcher,
+      }),
+    ).toEqual({
+      ...legacy,
+      release: { ...legacy.release, isPrerelease: false },
+    });
+  });
+
   it('serves the cached release and keeps it when the refresh fails', async () => {
     const now = Date.parse('2026-11-20T12:00:00Z');
     const fresh = await loadReleaseState({

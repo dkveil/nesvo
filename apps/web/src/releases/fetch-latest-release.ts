@@ -21,8 +21,12 @@ const githubReleaseSchema = z.object({
   tag_name: z.string().min(1),
   html_url: z.url(),
   published_at: z.string().nullable(),
+  draft: z.boolean(),
+  prerelease: z.boolean(),
   assets: z.array(githubAssetSchema),
 });
+
+const githubReleasesSchema = z.array(githubReleaseSchema);
 
 type GithubAsset = z.infer<typeof githubAssetSchema>;
 
@@ -65,7 +69,7 @@ export const fetchLatestRelease = async (
 ): Promise<ReleaseState> => {
   try {
     const response = await fetcher(
-      `${config.releaseApiOrigin}/repos/${config.releaseRepository}/releases/latest`,
+      `${config.releaseApiOrigin}/repos/${config.releaseRepository}/releases?per_page=10`,
       {
         headers: githubHeaders,
         signal: AbortSignal.timeout(RELEASE_FETCH_TIMEOUT_MS),
@@ -73,9 +77,14 @@ export const fetchLatestRelease = async (
     );
     if (response.status === 404) return { status: 'none' };
     if (!response.ok) return { status: 'unavailable' };
-    const parsed = githubReleaseSchema.safeParse(await response.json());
+    const parsed = githubReleasesSchema.safeParse(await response.json());
     if (!parsed.success) return { status: 'unavailable' };
-    const release = parsed.data;
+    const [release] = parsed.data
+      .filter(item => !item.draft)
+      .sort((a, b) =>
+        (b.published_at ?? '').localeCompare(a.published_at ?? ''),
+      );
+    if (!release) return { status: 'none' };
     const assets = new Map(release.assets.map(asset => [asset.name, asset]));
     const checksumsAsset = assets.get(CHECKSUMS_FILE_NAME);
     const checksums = await fetchChecksums(checksumsAsset, fetcher);
@@ -95,6 +104,7 @@ export const fetchLatestRelease = async (
       release: {
         version: release.tag_name.replace(/^v/, ''),
         tagName: release.tag_name,
+        isPrerelease: release.prerelease,
         publishedAt: release.published_at,
         notesUrl: release.html_url,
         checksumsUrl: checksumsAsset?.browser_download_url ?? null,

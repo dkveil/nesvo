@@ -1,8 +1,9 @@
 import {
-  DOWNLOAD_TARGETS,
   isDownloadTargetId,
-  latestAssetUrl,
+  releaseAssetsUrl,
+  releasesUrl,
 } from '@/releases/download-targets';
+import { loadReleaseState } from '@/releases/load-release-state';
 import { getSiteContext } from '@/server/site-context';
 
 type DownloadRouteContext = {
@@ -13,15 +14,26 @@ export const GET = async (
   request: Request,
   { params }: DownloadRouteContext,
 ): Promise<Response> => {
-  const [{ target }, { config }] = await Promise.all([
-    params,
-    getSiteContext(),
-  ]);
+  const { target } = await params;
   if (!isDownloadTargetId(target)) {
     return Response.redirect(new URL('/', request.url), 302);
   }
-  return Response.redirect(
-    latestAssetUrl(config.releaseRepository, DOWNLOAD_TARGETS[target].fileName),
-    302,
-  );
+  const { db, config } = await getSiteContext();
+  const state = await loadReleaseState({ db, config });
+  if (state.status === 'published') {
+    const asset = state.release.downloads.find(
+      item => item.target === target && item.isPublished,
+    );
+    if (asset) {
+      const base = releaseAssetsUrl(
+        config.releaseRepository,
+        state.release.tagName,
+      );
+      return Response.redirect(
+        `${base}/${encodeURIComponent(asset.fileName)}`,
+        302,
+      );
+    }
+  }
+  return Response.redirect(releasesUrl(config.releaseRepository), 302);
 };

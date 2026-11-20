@@ -6,7 +6,7 @@ import {
   renderInstallScript,
 } from '@/releases/install-script';
 
-const script = renderInstallScript('dkveil/nesvo');
+const script = renderInstallScript('dkveil/nesvo', 'v0.0.1-alpha.1');
 
 const hasShell = spawnSync('sh', ['-c', 'exit 0']).status === 0;
 
@@ -17,14 +17,19 @@ describe('install.sh', () => {
     );
   });
 
-  it('downloads the disk image for the processor from the latest release', () => {
+  it('downloads the disk image for the processor from the resolved tag', () => {
     expect(script).toContain(
-      'BASE_URL="https://github.com/$REPOSITORY/releases/latest/download"',
+      'BASE_URL="https://github.com/dkveil/nesvo/releases/download/v0.0.1-alpha.1"',
     );
-    expect(script).toContain('REPOSITORY="dkveil/nesvo"');
     expect(script).toContain('arm64) ASSET="Nesvo-macOS-arm64.dmg"');
     expect(script).toContain('ASSET="Nesvo-macOS-x64.dmg"');
     expect(script).toContain('sysctl.proc_translated');
+  });
+
+  it('escapes shell metacharacters in the tag URL', () => {
+    expect(renderInstallScript('dkveil/nesvo', 'v0.0.1-$USER')).toContain(
+      'BASE_URL="https://github.com/dkveil/nesvo/releases/download/v0.0.1-%24USER"',
+    );
   });
 
   it('verifies the SHA-256 checksum before installing', () => {

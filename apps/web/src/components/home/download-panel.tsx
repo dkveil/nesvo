@@ -41,6 +41,7 @@ const primaryMeta = (release: ReleaseState, target: DownloadTargetId) => {
   )?.sizeBytes;
   return [
     `v${release.release.version}`,
+    release.release.isPrerelease ? 'Pre-release' : null,
     DOWNLOAD_TARGETS[target].buttonDetail,
     formatMegabytes(size ?? null),
   ]
@@ -108,6 +109,7 @@ export const DownloadPanel = ({
   }
 
   const isMacPrimary = isMacTarget(target);
+  const hasInstallCommand = release.status === 'published';
   const otherTargets = DOWNLOAD_TARGET_IDS.filter(item => item !== target);
 
   return (
@@ -123,7 +125,7 @@ export const DownloadPanel = ({
           <a href="/releases">All releases</a>
         </p>
       ) : null}
-      {isMacPrimary ? (
+      {isMacPrimary && hasInstallCommand ? (
         <CopyCommand command={installCommand} label="macOS install command" />
       ) : null}
       <QuietDisclosures
@@ -134,7 +136,7 @@ export const DownloadPanel = ({
             content: (
               <>
                 <PlatformList release={release} targets={otherTargets} />
-                {isMacPrimary ? null : (
+                {!isMacPrimary && hasInstallCommand ? (
                   <div className="panel-install">
                     <p className="panel-label">macOS from Terminal</p>
                     <CopyCommand
@@ -142,7 +144,7 @@ export const DownloadPanel = ({
                       label="macOS install command"
                     />
                   </div>
-                )}
+                ) : null}
               </>
             ),
           },

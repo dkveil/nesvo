@@ -46,11 +46,11 @@ export const CHECKSUMS_FILE_NAME = 'SHA256SUMS.txt';
 export const isDownloadTargetId = (value: string): value is DownloadTargetId =>
   (DOWNLOAD_TARGET_IDS as readonly string[]).includes(value);
 
-export const latestAssetUrl = (repository: string, fileName: string): string =>
-  `https://github.com/${repository}/releases/latest/download/${fileName}`;
-
 export const repositoryUrl = (repository: string): string =>
   `https://github.com/${repository}`;
 
 export const releasesUrl = (repository: string): string =>
-  `https://github.com/${repository}/releases`;
+  `${repositoryUrl(repository)}/releases`;
+
+export const releaseAssetsUrl = (repository: string, tagName: string): string =>
+  `${releasesUrl(repository)}/download/${encodeURIComponent(tagName)}`;

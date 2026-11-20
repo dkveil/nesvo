@@ -15,6 +15,7 @@ const PUBLISHED: ReleaseState = {
   release: {
     version: '0.2.0',
     tagName: 'v0.2.0',
+    isPrerelease: false,
     publishedAt: '2026-11-20T10:00:00Z',
     notesUrl: 'https://github.com/dkveil/nesvo/releases/tag/v0.2.0',
     checksumsUrl:
@@ -69,8 +70,28 @@ describe('Home page', () => {
     expect(primaryHref(html)).toBe('/download/windows');
     expect(html).toContain('Download for Windows');
     expect(html).toContain('v0.2.0 · Windows 10 and 11 · x64 · 100.0 MB');
+    expect(html).not.toContain('Pre-release');
     expect(html).toContain('Other platforms');
     expect(html).toContain('Run anyway');
+  });
+
+  it('offers a pre-release with the same platform downloads', () => {
+    const release: ReleaseState = {
+      status: 'published',
+      release: {
+        ...PUBLISHED.release,
+        version: '0.0.1-alpha.1',
+        tagName: 'v0.0.1-alpha.1',
+        isPrerelease: true,
+      },
+    };
+    const html = renderHome({ os: 'windows', architecture: 'x86' }, release);
+
+    expect(primaryHref(html)).toBe('/download/windows');
+    expect(html).toContain('v0.0.1-alpha.1 · Pre-release');
+    expect(html).toContain('href="/download/mac"');
+    expect(html).toContain('href="/download/mac-intel"');
+    expect(html).not.toContain('aria-disabled="true"');
   });
 
   it('puts the matching disk image and the Terminal command first on a Mac', () => {
@@ -125,7 +146,7 @@ describe('Home page', () => {
     expect(html).not.toContain(INSTALL_COMMAND);
   });
 
-  it('keeps downloads working when release details are unavailable', () => {
+  it('offers the releases fallback when release details are unavailable', () => {
     const html = renderHome(
       { os: 'macos', architecture: 'arm' },
       {
@@ -135,6 +156,7 @@ describe('Home page', () => {
 
     expect(primaryHref(html)).toBe('/download/mac');
     expect(html).toContain('Release details cannot be loaded');
+    expect(html).not.toContain(INSTALL_COMMAND);
   });
 });
 
