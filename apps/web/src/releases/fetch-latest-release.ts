@@ -7,7 +7,11 @@ import {
   DOWNLOAD_TARGET_IDS,
   DOWNLOAD_TARGETS,
 } from './download-targets';
-import type { ReleaseDownload, ReleaseState } from './release-state';
+import type {
+  PublishedRelease,
+  ReleaseDownload,
+  ReleaseState,
+} from './release-state';
 
 const RELEASE_FETCH_TIMEOUT_MS = 5000;
 
@@ -29,6 +33,7 @@ const githubReleaseSchema = z.object({
 const githubReleasesSchema = z.array(githubReleaseSchema);
 
 type GithubAsset = z.infer<typeof githubAssetSchema>;
+type GithubRelease = z.infer<typeof githubReleaseSchema>;
 
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -63,6 +68,38 @@ const fetchChecksums = async (
   }
 };
 
+const publishedAt = (release: GithubRelease): string =>
+  release.published_at ?? '';
+
+const toPublishedRelease = async (
+  release: GithubRelease,
+  fetcher: Fetcher,
+): Promise<PublishedRelease> => {
+  const assets = new Map(release.assets.map(asset => [asset.name, asset]));
+  const checksumsAsset = assets.get(CHECKSUMS_FILE_NAME);
+  const checksums = await fetchChecksums(checksumsAsset, fetcher);
+  const downloads: ReleaseDownload[] = DOWNLOAD_TARGET_IDS.map(target => {
+    const { fileName } = DOWNLOAD_TARGETS[target];
+    const asset = assets.get(fileName);
+    return {
+      target,
+      fileName,
+      sizeBytes: asset?.size ?? null,
+      sha256: checksums.get(fileName) ?? null,
+      isPublished: !!asset,
+    };
+  });
+  return {
+    version: release.tag_name.replace(/^v/, ''),
+    tagName: release.tag_name,
+    isPrerelease: release.prerelease,
+    publishedAt: release.published_at,
+    notesUrl: release.html_url,
+    checksumsUrl: checksumsAsset?.browser_download_url ?? null,
+    downloads,
+  };
+};
+
 export const fetchLatestRelease = async (
   config: SiteConfig,
   fetcher: Fetcher = fetch,
@@ -79,38 +116,20 @@ export const fetchLatestRelease = async (
     if (!response.ok) return { status: 'unavailable' };
     const parsed = githubReleasesSchema.safeParse(await response.json());
     if (!parsed.success) return { status: 'unavailable' };
-    const [release] = parsed.data
+    const releases = parsed.data
       .filter(item => !item.draft)
-      .sort((a, b) =>
-        (b.published_at ?? '').localeCompare(a.published_at ?? ''),
-      );
-    if (!release) return { status: 'none' };
-    const assets = new Map(release.assets.map(asset => [asset.name, asset]));
-    const checksumsAsset = assets.get(CHECKSUMS_FILE_NAME);
-    const checksums = await fetchChecksums(checksumsAsset, fetcher);
-    const downloads: ReleaseDownload[] = DOWNLOAD_TARGET_IDS.map(target => {
-      const { fileName } = DOWNLOAD_TARGETS[target];
-      const asset = assets.get(fileName);
-      return {
-        target,
-        fileName,
-        sizeBytes: asset?.size ?? null,
-        sha256: checksums.get(fileName) ?? null,
-        isPublished: !!asset,
-      };
-    });
-    return {
-      status: 'published',
-      release: {
-        version: release.tag_name.replace(/^v/, ''),
-        tagName: release.tag_name,
-        isPrerelease: release.prerelease,
-        publishedAt: release.published_at,
-        notesUrl: release.html_url,
-        checksumsUrl: checksumsAsset?.browser_download_url ?? null,
-        downloads,
-      },
-    };
+      .sort((a, b) => publishedAt(b).localeCompare(publishedAt(a)));
+    const stable = releases.find(item => !item.prerelease);
+    const preview = releases.find(item => item.prerelease);
+    const primary = stable ?? preview;
+    if (!primary) return { status: 'none' };
+    const [release, secondaryPreview] = await Promise.all([
+      toPublishedRelease(primary, fetcher),
+      stable && preview && publishedAt(preview) > publishedAt(stable)
+        ? toPublishedRelease(preview, fetcher)
+        : null,
+    ]);
+    return { status: 'published', release, secondaryPreview };
   } catch {
     return { status: 'unavailable' };
   }

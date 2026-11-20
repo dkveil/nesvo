@@ -9,6 +9,7 @@ import {
   loadReleaseState,
   RELEASE_CACHE_TTL_MS,
 } from '@/releases/load-release-state';
+import { downloadReleaseFor } from '@/releases/release-state';
 import { readSiteConfig } from '@/server/site-config';
 
 import {
@@ -44,6 +45,14 @@ const releaseBody = {
       browser_download_url: `${DOWNLOAD}/SHA256SUMS.txt`,
     },
   ],
+};
+
+const previewBody = {
+  ...releaseBody,
+  tag_name: 'v0.3.0-alpha.1',
+  html_url: 'https://github.com/dkveil/nesvo/releases/tag/v0.3.0-alpha.1',
+  published_at: '2026-11-20T11:00:00Z',
+  prerelease: true,
 };
 
 const githubFetcher =
@@ -83,6 +92,7 @@ describe('fetchLatestRelease', () => {
     if (state.status !== 'published') return;
     expect(state.release.version).toBe('0.2.0');
     expect(state.release.isPrerelease).toBe(false);
+    expect(downloadReleaseFor(state, 'preview')).toBeNull();
     expect(state.release.downloads).toEqual([
       {
         target: 'windows',
@@ -108,28 +118,74 @@ describe('fetchLatestRelease', () => {
     ]);
   });
 
-  it('chooses the most recently published release, including pre-releases', async () => {
-    const draft = {
-      ...releaseBody,
-      tag_name: 'v0.3.0',
-      published_at: null,
-      draft: true,
-    };
-    const prerelease = {
-      ...releaseBody,
-      tag_name: 'v0.3.0-alpha.1',
-      published_at: '2026-11-20T11:00:00Z',
-      prerelease: true,
-    };
+  it('makes the latest pre-release primary when no stable release exists', async () => {
     const state = await fetchLatestRelease(
       config,
-      githubFetcher(200, [draft, releaseBody, prerelease]),
+      githubFetcher(200, [previewBody]),
     );
 
     expect(state).toMatchObject({
       status: 'published',
       release: { version: '0.3.0-alpha.1', isPrerelease: true },
+      secondaryPreview: null,
     });
+    expect(downloadReleaseFor(state, null)?.tagName).toBe(previewBody.tag_name);
+    expect(downloadReleaseFor(state, 'preview')?.tagName).toBe(
+      previewBody.tag_name,
+    );
+  });
+
+  it('keeps the latest stable primary and offers the newest eligible preview separately', async () => {
+    const draft = {
+      ...releaseBody,
+      tag_name: 'v0.3.0',
+      published_at: '2026-11-20T12:00:00Z',
+      draft: true,
+    };
+    const state = await fetchLatestRelease(
+      config,
+      githubFetcher(200, [
+        draft,
+        {
+          ...releaseBody,
+          tag_name: 'v0.1.0',
+          published_at: '2026-11-20T09:00:00Z',
+        },
+        releaseBody,
+        previewBody,
+        {
+          ...previewBody,
+          tag_name: 'v0.3.0-alpha.0',
+          published_at: '2026-11-20T10:30:00Z',
+        },
+      ]),
+    );
+
+    expect(state).toMatchObject({
+      status: 'published',
+      release: { version: '0.2.0', isPrerelease: false },
+      secondaryPreview: { version: '0.3.0-alpha.1', isPrerelease: true },
+    });
+    expect(downloadReleaseFor(state, null)?.tagName).toBe(releaseBody.tag_name);
+    expect(downloadReleaseFor(state, 'preview')?.tagName).toBe(
+      previewBody.tag_name,
+    );
+  });
+
+  it('omits a pre-release when stable was published more recently', async () => {
+    const state = await fetchLatestRelease(
+      config,
+      githubFetcher(200, [
+        { ...previewBody, published_at: '2026-11-20T09:00:00Z' },
+        releaseBody,
+      ]),
+    );
+
+    expect(state).toMatchObject({
+      status: 'published',
+      secondaryPreview: null,
+    });
+    expect(downloadReleaseFor(state, 'preview')).toBeNull();
   });
 
   it('reports no release for 404, an empty list or drafts only', async () => {
@@ -194,6 +250,7 @@ describe('loadReleaseState', () => {
     ).toEqual({
       ...legacy,
       release: { ...legacy.release, isPrerelease: false },
+      secondaryPreview: null,
     });
   });
 

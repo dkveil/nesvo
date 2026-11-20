@@ -11,7 +11,7 @@ import {
   DOWNLOAD_TARGETS,
   type DownloadTargetId,
 } from '@/releases/download-targets';
-import type { ReleaseState } from '@/releases/release-state';
+import type { PublishedRelease, ReleaseState } from '@/releases/release-state';
 
 import { DownloadButton, InactiveDownloadButton } from './download-button';
 import { FirstLaunchNotes } from './first-launch-notes';
@@ -33,6 +33,9 @@ const isTargetAvailable = (release: ReleaseState, target: DownloadTargetId) =>
       item => item.target === target && item.isPublished,
     ));
 
+const versionMeta = (release: PublishedRelease) =>
+  `v${release.version} · ${release.isPrerelease ? 'Pre-release' : 'Latest'}`;
+
 const primaryMeta = (release: ReleaseState, target: DownloadTargetId) => {
   if (release.status !== 'published')
     return DOWNLOAD_TARGETS[target].buttonDetail;
@@ -40,13 +43,25 @@ const primaryMeta = (release: ReleaseState, target: DownloadTargetId) => {
     item => item.target === target,
   )?.sizeBytes;
   return [
-    `v${release.release.version}`,
-    release.release.isPrerelease ? 'Pre-release' : null,
+    versionMeta(release.release),
     DOWNLOAD_TARGETS[target].buttonDetail,
     formatMegabytes(size ?? null),
   ]
     .filter(Boolean)
     .join(' · ');
+};
+
+const ReleaseChannelNotes = ({ release }: { release: ReleaseState }) => {
+  if (release.status !== 'published') return null;
+  if (release.release.isPrerelease) {
+    return <p className="download-meta">Early build for testing.</p>;
+  }
+  const preview = release.secondaryPreview;
+  return preview ? (
+    <p className="download-meta">
+      <a href={preview.notesUrl}>Try {preview.version} (pre-release)</a>
+    </p>
+  ) : null;
 };
 
 const isMacTarget = (target: DownloadTargetId) =>
@@ -94,7 +109,12 @@ export const DownloadPanel = ({
   if (!target || !isTargetAvailable(release, target)) {
     return (
       <div className="download" data-os={system.os}>
-        <p className="download-meta">Available for macOS and Windows.</p>
+        <p className="download-meta">
+          {release.status === 'published'
+            ? versionMeta(release.release)
+            : 'Available for macOS and Windows.'}
+        </p>
+        <ReleaseChannelNotes release={release} />
         <section className="download-list" aria-labelledby="platforms-title">
           <h2 id="platforms-title" className="visually-hidden">
             All platforms
@@ -119,6 +139,7 @@ export const DownloadPanel = ({
         label={DOWNLOAD_TARGETS[target].buttonLabel}
       />
       <p className="download-meta">{primaryMeta(release, target)}</p>
+      <ReleaseChannelNotes release={release} />
       {release.status === 'unavailable' ? (
         <p className="download-meta">
           Release details cannot be loaded right now.{' '}

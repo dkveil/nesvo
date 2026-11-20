@@ -4,6 +4,7 @@ import {
   releasesUrl,
 } from '@/releases/download-targets';
 import { loadReleaseState } from '@/releases/load-release-state';
+import { downloadReleaseFor } from '@/releases/release-state';
 import { getSiteContext } from '@/server/site-context';
 
 type DownloadRouteContext = {
@@ -15,20 +16,19 @@ export const GET = async (
   { params }: DownloadRouteContext,
 ): Promise<Response> => {
   const { target } = await params;
+  const url = new URL(request.url);
   if (!isDownloadTargetId(target)) {
-    return Response.redirect(new URL('/', request.url), 302);
+    return Response.redirect(new URL('/', url), 302);
   }
   const { db, config } = await getSiteContext();
   const state = await loadReleaseState({ db, config });
-  if (state.status === 'published') {
-    const asset = state.release.downloads.find(
+  const release = downloadReleaseFor(state, url.searchParams.get('channel'));
+  if (release) {
+    const asset = release.downloads.find(
       item => item.target === target && item.isPublished,
     );
     if (asset) {
-      const base = releaseAssetsUrl(
-        config.releaseRepository,
-        state.release.tagName,
-      );
+      const base = releaseAssetsUrl(config.releaseRepository, release.tagName);
       return Response.redirect(
         `${base}/${encodeURIComponent(asset.fileName)}`,
         302,

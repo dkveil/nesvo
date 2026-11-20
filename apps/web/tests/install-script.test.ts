@@ -24,6 +24,9 @@ describe('install.sh', () => {
     expect(script).toContain('arm64) ASSET="Nesvo-macOS-arm64.dmg"');
     expect(script).toContain('ASSET="Nesvo-macOS-x64.dmg"');
     expect(script).toContain('sysctl.proc_translated');
+    expect(renderInstallScript('dkveil/nesvo', 'v0.2.0')).toContain(
+      'BASE_URL="https://github.com/dkveil/nesvo/releases/download/v0.2.0"',
+    );
   });
 
   it('escapes shell metacharacters in the tag URL', () => {

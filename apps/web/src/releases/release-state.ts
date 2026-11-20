@@ -24,7 +24,11 @@ export const publishedReleaseSchema = z.object({
 });
 
 export const releaseStateSchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('published'), release: publishedReleaseSchema }),
+  z.object({
+    status: z.literal('published'),
+    release: publishedReleaseSchema,
+    secondaryPreview: publishedReleaseSchema.nullable().default(null),
+  }),
   z.object({ status: z.literal('none') }),
   z.object({ status: z.literal('unavailable') }),
 ]);
@@ -32,3 +36,12 @@ export const releaseStateSchema = z.discriminatedUnion('status', [
 export type ReleaseDownload = z.infer<typeof releaseDownloadSchema>;
 export type PublishedRelease = z.infer<typeof publishedReleaseSchema>;
 export type ReleaseState = z.infer<typeof releaseStateSchema>;
+
+export const downloadReleaseFor = (
+  state: ReleaseState,
+  channel: string | null,
+): PublishedRelease | null => {
+  if (state.status !== 'published') return null;
+  if (channel !== 'preview' || state.release.isPrerelease) return state.release;
+  return state.secondaryPreview;
+};

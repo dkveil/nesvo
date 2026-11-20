@@ -4,15 +4,15 @@
 
 ## What it serves
 
-| Path                                                        | What                                                                                |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `/`                                                         | Download page, rendered per request                                                 |
-| `/download/windows`, `/download/mac`, `/download/mac-intel` | `302` to the matching asset of the newest published release or to the releases page |
-| `/releases`, `/github`                                      | `302` to the releases page and the repository                                       |
-| `/install.sh`                                               | macOS install script                                                                |
-| `/w/<id>`                                                   | Shared workflow page                                                                |
-| `/api/shares`, `/api/shares/<id>`                           | Share API                                                                           |
-| `/robots.txt`                                               | Disallows everything                                                                |
+| Path                              | What                                                       |
+| --------------------------------- | ---------------------------------------------------------- |
+| `/`                               | Download page, rendered per request                        |
+| `/download/<target>`              | `302` to the primary release asset or to the releases page |
+| `/releases`, `/github`            | `302` to the releases page and the repository              |
+| `/install.sh`                     | macOS install script                                       |
+| `/w/<id>`                         | Shared workflow page                                       |
+| `/api/shares`, `/api/shares/<id>` | Share API                                                  |
+| `/robots.txt`                     | Disallows everything                                       |
 
 ## Not indexed
 
@@ -26,13 +26,13 @@ The wordmark carries a static scanline texture and a short slice glitch, CSS onl
 
 The system is detected twice. The server reads User-Agent Client Hints (`Sec-CH-UA-Platform`, `Sec-CH-UA-Arch`, `Sec-CH-UA-Mobile`) and falls back to the User-Agent string; every response sends `Accept-CH` so supporting browsers include the architecture on later requests. After hydration the page asks `navigator.userAgentData.getHighEntropyValues` for the architecture and corrects the choice, which is how an Intel Mac on a Chromium browser gets the Intel disk image on the first visit. Browsers without Client Hints report every Mac as Intel, so a Mac with an unknown architecture gets the Apple silicon build with an "Intel Mac?" link under the button. Phones, tablets and Linux get no primary button; the platform list is shown directly instead.
 
-The site reads `/repos/<repo>/releases?per_page=10` from the GitHub API and selects the most recently published release in that list. Pre-releases are eligible and drafts are skipped. The site reads the selected release's `SHA256SUMS.txt` and caches the result in D1 for ten minutes per repository. When GitHub cannot be reached, the last cached result is used.
+The site reads `/repos/<repo>/releases?per_page=10` from the GitHub API and skips drafts. The most recently published stable release is the primary download and carries the **Latest** label. A pre-release published after that stable version appears as a secondary link to its release page with downloads and notes. If there is no stable version, the newest pre-release is the primary download with a **Pre-release** label and a short testing note. The site reads the selected releases' `SHA256SUMS.txt` files and caches the result in D1 for ten minutes per repository. When GitHub cannot be reached, the last cached result is used.
 
-- **Published** shows the download button, version, sizes and checksums. A pre-release is noted alongside the version.
+- **Published** shows the primary download, version, channel, sizes and checksums.
 - **No release yet** applies when GitHub returns 404 or the list contains no published releases. The button stays visible but inactive, with the line "The first build is on its way."
 - **Unavailable** applies when GitHub fails and there is no cached result. Downloads lead to the GitHub releases page and the site explains that release details could not be loaded.
 
-The download buttons use the short `/download/*` paths. Each redirect resolves the release through the same D1 cache and uses its tag with the stable file name (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`). If the release or the requested asset is unknown, the redirect leads to the GitHub releases page.
+The download buttons use `/download/windows`, `/download/mac` and `/download/mac-intel`. Each redirect resolves the primary release through the same D1 cache and uses its tag with the stable file name (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`). Adding `?channel=preview` selects the eligible pre-release, including when it is the primary release. If the selected release or the requested asset is unknown, the redirect leads to the GitHub releases page.
 
 ### macOS install script
 
@@ -40,7 +40,7 @@ On a Mac the page also offers `curl -fsSL https://nesvo.dev/install.sh | sh` as 
 
 1. refuses anything but macOS and picks the disk image by processor, treating a shell running under Rosetta as Apple silicon;
 2. stops when `/Applications` is not writable or Nesvo is running;
-3. downloads the disk image and `SHA256SUMS.txt` from the tag resolved when `/install.sh` is requested and compares the SHA-256 with `shasum -a 256`; on a mismatch nothing is installed;
+3. downloads the disk image and `SHA256SUMS.txt` from the primary release tag resolved when `/install.sh` is requested and compares the SHA-256 with `shasum -a 256`; on a mismatch nothing is installed;
 4. mounts the image read-only, copies `Nesvo.app` to `/Applications` (replacing an older copy) and unmounts it;
 5. prints the first-launch steps: Control-click Nesvo in Applications and choose Open, or System Settings › Privacy & Security › Open Anyway.
 

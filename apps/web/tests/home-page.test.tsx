@@ -12,6 +12,7 @@ const CHECKSUM = 'a'.repeat(64);
 
 const PUBLISHED: ReleaseState = {
   status: 'published',
+  secondaryPreview: null,
   release: {
     version: '0.2.0',
     tagName: 'v0.2.0',
@@ -46,6 +47,14 @@ const PUBLISHED: ReleaseState = {
   },
 };
 
+const PREVIEW = {
+  ...PUBLISHED.release,
+  version: '0.0.1-alpha.1',
+  tagName: 'v0.0.1-alpha.1',
+  isPrerelease: true,
+  notesUrl: 'https://github.com/dkveil/nesvo/releases/tag/v0.0.1-alpha.1',
+};
+
 const INSTALL_COMMAND = 'curl -fsSL https://nesvo.dev/install.sh | sh';
 
 const renderHome = (
@@ -69,29 +78,48 @@ describe('Home page', () => {
 
     expect(primaryHref(html)).toBe('/download/windows');
     expect(html).toContain('Download for Windows');
-    expect(html).toContain('v0.2.0 · Windows 10 and 11 · x64 · 100.0 MB');
+    expect(html).toContain(
+      'v0.2.0 · Latest · Windows 10 and 11 · x64 · 100.0 MB',
+    );
     expect(html).not.toContain('Pre-release');
     expect(html).toContain('Other platforms');
     expect(html).toContain('Run anyway');
   });
 
   it('offers a pre-release with the same platform downloads', () => {
-    const release: ReleaseState = {
-      status: 'published',
-      release: {
-        ...PUBLISHED.release,
-        version: '0.0.1-alpha.1',
-        tagName: 'v0.0.1-alpha.1',
-        isPrerelease: true,
-      },
-    };
+    const release: ReleaseState = { ...PUBLISHED, release: PREVIEW };
     const html = renderHome({ os: 'windows', architecture: 'x86' }, release);
 
     expect(primaryHref(html)).toBe('/download/windows');
     expect(html).toContain('v0.0.1-alpha.1 · Pre-release');
+    expect(html).toContain('Early build for testing.');
     expect(html).toContain('href="/download/mac"');
     expect(html).toContain('href="/download/mac-intel"');
     expect(html).not.toContain('aria-disabled="true"');
+  });
+
+  it('keeps the stable primary and links to preview release notes when both exist', () => {
+    const html = renderHome(
+      { os: 'windows', architecture: 'x86' },
+      { ...PUBLISHED, secondaryPreview: PREVIEW },
+    );
+
+    expect(primaryHref(html)).toBe('/download/windows');
+    expect(html).toContain('v0.2.0 · Latest');
+    expect(html).toContain('href="' + PREVIEW.notesUrl + '"');
+    expect(html).toContain('Try 0.0.1-alpha.1 (pre-release)');
+    expect(html).not.toContain('Early build for testing.');
+  });
+
+  it('shows the pre-release version above the installers on phones', () => {
+    const html = renderHome(
+      { os: 'mobile', architecture: 'arm' },
+      { ...PUBLISHED, release: PREVIEW },
+    );
+
+    expect(html).toContain('v0.0.1-alpha.1 · Pre-release');
+    expect(html).toContain('Early build for testing.');
+    expect(html).toContain('href="/download/mac"');
   });
 
   it('puts the matching disk image and the Terminal command first on a Mac', () => {
@@ -100,12 +128,12 @@ describe('Home page', () => {
     const unknown = renderHome({ os: 'macos', architecture: null });
 
     expect(primaryHref(arm)).toBe('/download/mac');
-    expect(arm).toContain('v0.2.0 · Apple silicon · .dmg');
+    expect(arm).toContain('v0.2.0 · Latest · Apple silicon · .dmg');
     expect(arm).toContain(INSTALL_COMMAND);
     expect(arm).not.toContain('macOS from Terminal');
     expect(arm).not.toContain('Intel Mac?');
     expect(primaryHref(intel)).toBe('/download/mac-intel');
-    expect(intel).toContain('v0.2.0 · Intel · .dmg');
+    expect(intel).toContain('v0.2.0 · Latest · Intel · .dmg');
     expect(unknown).toContain('Intel Mac?');
   });
 
