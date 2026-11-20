@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { ArrowLeft, ArrowRight, SquarePen } from 'lucide-react';
 import {
   managerImportSources,
   type ManagerImportSource,
   type SetupScan,
 } from '@nesvo/contracts';
-import type { Provider } from '@/entities/session';
+import { providers, providerUsable, type Provider } from '@/entities/session';
+import { ConfigurationChangeRow } from '@/features/configuration/change-row';
+import { useConfigurationChanges } from '@/features/configuration/use-configuration-changes';
 import { useDefaultSessionFolders } from '@/features/default-session-folder';
 import {
   ManagerImportPicker,
@@ -13,8 +15,10 @@ import {
 } from '@/features/import-manager';
 import { managerImportSummary } from '@/features/import-manager/summary';
 import { Button } from '@/shared/ui/button';
+import { PanelBody } from '@/shared/ui/panel';
 import { Progress } from '@/shared/ui/progress';
 import { SectionLabel } from '@/shared/ui/section-label';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { ComputersStep } from './computers-step';
 import { FinishStep } from './finish-step';
 import { InboxStep } from './inbox-step';
@@ -81,6 +85,7 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   const [setupImports, setSetupImports] = useState(false);
   const [profileReviewOpen, setProfileReviewOpen] = useState(false);
   const [findingsReviewOpen, setFindingsReviewOpen] = useState(false);
+  const [approvalsOpen, setApprovalsOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [setupError, setSetupError] = useState('');
   const { computers, local, error, statuses, checkProviders } =
@@ -107,6 +112,20 @@ export function Onboarding({ onStartSession, onClose }: Props) {
         : undefined;
   const last = step.id === 'finish';
   const folder = defaultFolders.folders.local ?? null;
+  const setupComputer =
+    last &&
+    local?.status === 'connected' &&
+    local.capabilities.includes('setup-profile-v1')
+      ? local
+      : undefined;
+  const approvals = useConfigurationChanges(
+    setupComputer ? [setupComputer] : [],
+    'pending',
+    'setup-review',
+  );
+  const reviewing = approvalsOpen && approvals.length > 0;
+  if (approvalsOpen && !reviewing) setApprovalsOpen(false);
+
   useEffect(() => {
     document.getElementById('onboarding-step')?.focus();
   }, [stepId]);
@@ -181,195 +200,250 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   return (
     <main
       aria-label="Getting started"
-      className="flex h-dvh flex-col bg-background font-onboarding text-foreground"
+      className="relative flex h-dvh bg-background font-onboarding text-foreground"
     >
-      <div className="drag-region h-10 shrink-0" />
-      <div className="mx-auto my-auto flex max-h-[min(46rem,calc(100dvh-2.5rem))] min-h-0 w-full max-w-3xl flex-col">
-        <header className="mx-auto w-full max-w-3xl shrink-0 space-y-2 px-10 pt-2">
-          <div className="flex items-center justify-between gap-4">
-            <SectionLabel as="p" className="px-0">
-              Getting started
-            </SectionLabel>
-            <p className="text-2xs text-muted-foreground tabular-nums">
-              Step {index + 1} of {visibleSteps.length}
-            </p>
-          </div>
-          <Progress
-            label="Getting started progress"
-            value={((index + 1) / visibleSteps.length) * 100}
-          />
-        </header>
-        <OnboardingStepLayout key={step.id} step={step.id} heading={heading}>
-          {step.id === 'welcome' && <WelcomeStep />}
-          {step.id === 'providers' && (
-            <ProvidersStep
-              statuses={statuses}
-              computerName={local?.name ?? 'this computer'}
-              onCheckAgain={checkProviders}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="drag-region h-10 shrink-0" />
+        <div className="mx-auto my-auto flex max-h-[min(46rem,calc(100dvh-2.5rem))] min-h-0 w-full max-w-3xl flex-col">
+          <header className="mx-auto w-full max-w-3xl shrink-0 space-y-2 px-10 pt-2">
+            <div className="flex items-center justify-between gap-4">
+              <SectionLabel as="p" className="px-0">
+                Getting started
+              </SectionLabel>
+              <p className="text-2xs text-muted-foreground tabular-nums">
+                Step {index + 1} of {visibleSteps.length}
+              </p>
+            </div>
+            <Progress
+              label="Getting started progress"
+              value={((index + 1) / visibleSteps.length) * 100}
             />
-          )}
-          {step.id === 'import' && (
-            <ManagerImportPicker
-              api={api}
-              computer={local}
-              detected={detected}
-              initialSource={foundSource}
-              onBusyChange={setImporting}
-              onImported={() => setImportCompleted(true)}
-              onSourceChange={setImportSource}
-            />
-          )}
-          {step.id === 'computers' && (
-            <ComputersStep
-              computers={computers}
-              defaultFolders={defaultFolders}
-              api={api}
-              error={error}
-              onEditingChange={setEditingComputer}
-            />
-          )}
-          {step.id === 'setup' && (
-            <div className="space-y-6">
-              <SetupProfileSettings
-                computer={local}
-                onboarding
-                onReviewOpenChange={setProfileReviewOpen}
-              />
-              <SetupFindings
-                computer={local}
-                onboarding
-                onReviewOpenChange={setFindingsReviewOpen}
+          </header>
+          <OnboardingStepLayout key={step.id} step={step.id} heading={heading}>
+            {step.id === 'welcome' && <WelcomeStep />}
+            {step.id === 'providers' && (
+              <ProvidersStep
                 statuses={statuses}
-                onCompleteScan={setSetupScan}
-                openImport={
-                  local?.capabilities.includes('manager-import')
-                    ? () => setSetupImports(!setupImports)
-                    : undefined
-                }
+                computerName={local?.name ?? 'this computer'}
+                onCheckAgain={checkProviders}
               />
-              {setupImports && (
-                <ManagerImportPicker
-                  api={api}
+            )}
+            {step.id === 'import' && (
+              <ManagerImportPicker
+                api={api}
+                computer={local}
+                detected={detected}
+                initialSource={foundSource}
+                onBusyChange={setImporting}
+                onImported={() => setImportCompleted(true)}
+                onSourceChange={setImportSource}
+              />
+            )}
+            {step.id === 'computers' && (
+              <ComputersStep
+                computers={computers}
+                defaultFolders={defaultFolders}
+                api={api}
+                error={error}
+                onEditingChange={setEditingComputer}
+              />
+            )}
+            {step.id === 'setup' && (
+              <div className="space-y-6">
+                <SetupProfileSettings
                   computer={local}
-                  detected={detected}
-                  initialSource={foundSource}
-                  onBusyChange={setImporting}
+                  onboarding
+                  onReviewOpenChange={setProfileReviewOpen}
                 />
-              )}
-            </div>
-          )}
-          {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
-          {step.id === 'routines' && (
-            <RoutinesStep
-              api={api}
-              computer={local}
-              statuses={statuses}
-              defaultFolder={folder}
-              outcomes={outcomes}
-              setOutcomes={setOutcomes}
-              onCheckProviders={checkProviders}
-              onChooseComputer={() => setStepId('computers')}
-              onSetupAgents={() => setStepId('providers')}
-            />
-          )}
-          {last && (
-            <FinishStep
-              computers={computers}
-              statuses={statuses}
-              folder={folder}
-              routines={Object.values(outcomes).flatMap(item =>
-                item.status === 'added' ? [item.name] : [],
-              )}
-              setup={setupScan}
-              pending={finishing}
-              error={setupError}
-              onReviewSetup={() => {
-                setSetupError('');
-                setSetupScan(null);
-                setStepId('setup');
-              }}
-              onClose={() => void finish(onClose)}
-              onStartSession={provider =>
-                void finish(() => onStartSession(provider))
-              }
-            />
-          )}
-        </OnboardingStepLayout>
-        <footer
-          hidden={step.id === 'computers' && editingComputer}
-          className="mx-auto w-full max-w-3xl shrink-0 px-10 pb-6"
-        >
-          <nav
-            aria-label="Guide navigation"
-            className="flex items-center justify-between gap-2 border-t pt-4"
+                <SetupFindings
+                  computer={local}
+                  onboarding
+                  onReviewOpenChange={setFindingsReviewOpen}
+                  statuses={statuses}
+                  onCompleteScan={setSetupScan}
+                  openImport={
+                    local?.capabilities.includes('manager-import')
+                      ? () => setSetupImports(!setupImports)
+                      : undefined
+                  }
+                />
+                {setupImports && (
+                  <ManagerImportPicker
+                    api={api}
+                    computer={local}
+                    detected={detected}
+                    initialSource={foundSource}
+                    onBusyChange={setImporting}
+                  />
+                )}
+              </div>
+            )}
+            {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
+            {step.id === 'routines' && (
+              <RoutinesStep
+                api={api}
+                computer={local}
+                statuses={statuses}
+                defaultFolder={folder}
+                outcomes={outcomes}
+                setOutcomes={setOutcomes}
+                onCheckProviders={checkProviders}
+                onChooseComputer={() => setStepId('computers')}
+                onSetupAgents={() => setStepId('providers')}
+              />
+            )}
+            {last && (
+              <FinishStep
+                computers={computers}
+                statuses={statuses}
+                folder={folder}
+                routines={Object.values(outcomes).flatMap(item =>
+                  item.status === 'added' ? [item.name] : [],
+                )}
+                setup={setupScan}
+                error={setupError}
+                approvalCount={approvals.length}
+                approvalsOpen={reviewing}
+                onReviewApprovals={() => setApprovalsOpen(true)}
+                onReviewSetup={() => {
+                  setSetupError('');
+                  setSetupScan(null);
+                  setStepId('setup');
+                }}
+              />
+            )}
+          </OnboardingStepLayout>
+          <footer
+            hidden={step.id === 'computers' && editingComputer}
+            className="mx-auto w-full max-w-3xl shrink-0 px-10 pb-6"
           >
-            <div className="flex gap-2">
-              {index > 0 && (
-                <Button
-                  variant="ghost"
-                  size="md"
-                  disabled={checkingImports || importing}
-                  onClick={() => setStepId(visibleSteps[index - 1]!.id)}
-                >
-                  <ArrowLeft />
-                  Back
-                </Button>
-              )}
-            </div>
-            {!last && (
+            <nav
+              aria-label="Guide navigation"
+              className="flex items-center justify-between gap-2 border-t pt-4"
+            >
               <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="md"
-                  onClick={onClose}
-                  disabled={checkingImports || importing}
-                >
-                  Finish setup later
-                </Button>
-                {!['welcome', 'import'].includes(stepId) && (
+                {index > 0 && (
                   <Button
                     variant="ghost"
                     size="md"
                     disabled={checkingImports || importing}
-                    onClick={() => {
-                      if (stepId === 'setup') {
-                        setSetupScan(null);
-                        setSetupImports(false);
-                      }
-                      if (stepId === 'providers') setStepId('computers');
-                      else void advance();
-                    }}
+                    onClick={() => setStepId(visibleSteps[index - 1]!.id)}
                   >
-                    Skip this step
+                    <ArrowLeft />
+                    Back
                   </Button>
                 )}
-                <Button
-                  variant={
-                    stepId === 'import' && !importCompleted
-                      ? 'ghost'
-                      : stepId === 'setup' &&
-                          (profileReviewOpen || findingsReviewOpen)
-                        ? 'outline'
-                        : 'default'
-                  }
-                  size="md"
-                  disabled={checkingImports || importing}
-                  onClick={() => void advance()}
-                >
-                  {checkingImports
-                    ? 'Checking for imports…'
-                    : index === 0
-                      ? 'Get started'
-                      : stepId === 'import' && !importCompleted
-                        ? 'Skip import'
-                        : 'Continue'}
-                  <ArrowRight />
-                </Button>
               </div>
-            )}
-          </nav>
-        </footer>
+              {last ? (
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="md"
+                    disabled={finishing}
+                    onClick={() => void finish(onClose)}
+                  >
+                    Open workspace
+                  </Button>
+                  <Button
+                    size="md"
+                    disabled={finishing}
+                    onClick={() =>
+                      void finish(() =>
+                        onStartSession(
+                          providers.find(provider =>
+                            providerUsable(statuses[provider]),
+                          ) ?? null,
+                        ),
+                      )
+                    }
+                  >
+                    <SquarePen />
+                    Start your first session
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="md"
+                    onClick={onClose}
+                    disabled={checkingImports || importing}
+                  >
+                    Finish setup later
+                  </Button>
+                  {!['welcome', 'import'].includes(stepId) && (
+                    <Button
+                      variant="ghost"
+                      size="md"
+                      disabled={checkingImports || importing}
+                      onClick={() => {
+                        if (stepId === 'setup') {
+                          setSetupScan(null);
+                          setSetupImports(false);
+                        }
+                        if (stepId === 'providers') setStepId('computers');
+                        else void advance();
+                      }}
+                    >
+                      Skip this step
+                    </Button>
+                  )}
+                  <Button
+                    variant={
+                      stepId === 'import' && !importCompleted
+                        ? 'ghost'
+                        : stepId === 'setup' &&
+                            (profileReviewOpen || findingsReviewOpen)
+                          ? 'outline'
+                          : 'default'
+                    }
+                    size="md"
+                    disabled={checkingImports || importing}
+                    onClick={() => void advance()}
+                  >
+                    {checkingImports
+                      ? 'Checking for imports…'
+                      : index === 0
+                        ? 'Get started'
+                        : stepId === 'import' && !importCompleted
+                          ? 'Skip import'
+                          : 'Continue'}
+                    <ArrowRight />
+                  </Button>
+                </div>
+              )}
+            </nav>
+          </footer>
+        </div>
       </div>
+      {reviewing && setupComputer && (
+        <SidePanel
+          id="onboarding-local-approvals"
+          kind="details"
+          aria-label="Local approvals"
+          resizeLabel="Resize local approvals"
+          className="max-[1199px]:relative max-[1199px]:inset-auto max-[1199px]:w-(--panel-width) max-[1199px]:shrink-0"
+          focusOnOpen
+          onEscape={() => setApprovalsOpen(false)}
+        >
+          <SidePanelHeader
+            title="Local approvals"
+            closeLabel="Close local approvals"
+            onClose={() => setApprovalsOpen(false)}
+          />
+          <PanelBody className="px-2">
+            {approvals.map(change => (
+              <ConfigurationChangeRow
+                key={change.id}
+                change={change}
+                computer={setupComputer.name}
+                online
+                compact
+              />
+            ))}
+          </PanelBody>
+        </SidePanel>
+      )}
     </main>
   );
 }

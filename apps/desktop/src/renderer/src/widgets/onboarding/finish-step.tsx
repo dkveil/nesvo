@@ -1,19 +1,5 @@
-import { useState } from 'react';
-import {
-  ArrowRight,
-  Bot,
-  FolderOpen,
-  Monitor,
-  SquarePen,
-  Workflow,
-} from 'lucide-react';
 import type { Computer, SetupScan } from '@nesvo/contracts';
-import {
-  providers,
-  providerUsable,
-  type Provider,
-  type ProviderStates,
-} from '@/entities/session';
+import { providers, type ProviderStates } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -26,12 +12,15 @@ type Props = {
   folder: string | null;
   routines: string[];
   setup?: SetupScan | null;
-  pending?: boolean;
   error?: string;
-  onStartSession: (provider: Provider | null) => void;
-  onClose: () => void;
+  approvalCount: number;
+  approvalsOpen: boolean;
+  onReviewApprovals: () => void;
   onReviewSetup: () => void;
 };
+
+const summaryRow =
+  'grid grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-4 px-3';
 
 export function FinishStep({
   computers,
@@ -39,15 +28,13 @@ export function FinishStep({
   folder,
   routines,
   setup,
-  pending,
   error,
-  onStartSession,
-  onClose,
+  approvalCount,
+  approvalsOpen,
+  onReviewApprovals,
   onReviewSetup,
 }: Props) {
-  const [reviewing, setReviewing] = useState(false);
   const local = computers.find(computer => computer.id === 'local');
-  const ready = providers.find(provider => providerUsable(statuses[provider]));
   const detected = providers.filter(provider => {
     const status = statuses[provider].status?.status;
     return (
@@ -58,7 +45,6 @@ export function FinishStep({
   });
   const summary = [
     {
-      icon: Bot,
       label: 'Agents detected',
       value:
         detected.join(', ') ||
@@ -67,34 +53,21 @@ export function FinishStep({
           : 'None detected'),
     },
     {
-      icon: Monitor,
       label: 'Computers',
       value: computers.map(computer => computer.name).join(', ') || 'Local',
     },
     {
-      icon: FolderOpen,
       label: 'Local default folder',
       value: folder ?? 'Isolated folder',
       path: folder,
     },
     {
-      icon: Workflow,
       label: 'Routines added',
       value: routines.join(', ') || 'None added',
     },
     ...(setup
       ? [
           {
-            icon: Bot,
-            label: 'Setup awaiting local review',
-            value: String(
-              setup.choices?.filter(item => item.choice === 'use').length ??
-                setup.findings.filter(item => item.readiness === 'withheld')
-                  .length,
-            ),
-          },
-          {
-            icon: Workflow,
             label: 'Setup skipped',
             value: String(
               setup.choices?.filter(item => item.choice === 'skip').length ?? 0,
@@ -114,15 +87,9 @@ export function FinishStep({
         </h1>
       </header>
       <dl className="mx-auto max-w-lg divide-y text-left">
-        {summary.map(({ icon: Icon, label, value, path }) => (
-          <div
-            key={label}
-            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-4 px-3 py-2"
-          >
-            <dt className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Icon aria-hidden="true" className="size-4 shrink-0" />
-              {label}
-            </dt>
+        {summary.map(({ label, value, path }) => (
+          <div key={label} className={`${summaryRow} py-2`}>
+            <dt className="text-xs text-muted-foreground">{label}</dt>
             <dd className="min-w-0 text-right text-ui">
               {path ? (
                 <MiddleTruncatedText
@@ -138,6 +105,27 @@ export function FinishStep({
             </dd>
           </div>
         ))}
+        {approvalCount > 0 && (
+          <div className={`${summaryRow} py-1`}>
+            <dt className="text-xs text-muted-foreground">
+              {approvalCount} local{' '}
+              {approvalCount === 1 ? 'approval' : 'approvals'} to review
+            </dt>
+            <dd className="flex justify-end">
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-controls={
+                  approvalsOpen ? 'onboarding-local-approvals' : undefined
+                }
+                aria-expanded={approvalsOpen}
+                onClick={onReviewApprovals}
+              >
+                Review
+              </Button>
+            </dd>
+          </div>
+        )}
       </dl>
       {error && (
         <div className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-2">
@@ -149,34 +137,10 @@ export function FinishStep({
       )}
       {local?.status === 'connected' &&
         local.capabilities.includes('setup-profile-v1') && (
-          <SetupActivation
-            key={local.instanceId}
-            computer={local}
-            onReviewOpenChange={setReviewing}
-          />
+          <SetupActivation key={local.instanceId} computer={local} />
         )}
       <div className="flex justify-center">
         <SetupProfileSettings computer={local} saveOnly />
-      </div>
-      <div className="flex flex-wrap justify-center gap-2">
-        <Button
-          size="md"
-          variant={reviewing ? 'outline' : 'default'}
-          disabled={pending}
-          onClick={() => onStartSession(ready ?? null)}
-        >
-          <SquarePen />
-          Start your first session
-        </Button>
-        <Button
-          variant="outline"
-          size="md"
-          onClick={onClose}
-          disabled={pending}
-        >
-          <ArrowRight />
-          Open workspace
-        </Button>
       </div>
     </div>
   );

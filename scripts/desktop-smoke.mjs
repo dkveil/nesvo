@@ -149,7 +149,7 @@ const launchApplication = (overrides = {}) =>
     timeout: 30000,
   });
 let smokeFailure;
-async function setupShot(app, page, name, ready) {
+async function setupShot(app, page, name, ready, verify) {
   if (!setupScreenshots) return;
   await mkdir(setupScreenshots, { recursive: true });
   for (const size of [
@@ -179,6 +179,7 @@ async function setupShot(app, page, name, ready) {
         },
       ),
     );
+    await verify?.();
     const capture = () =>
       app.evaluate(async ({ BrowserWindow }) =>
         (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
@@ -587,14 +588,67 @@ async function smokeSetupDetection() {
   await guide
     .getByRole('heading', { name: 'This is how Nesvo will work', exact: true })
     .waitFor();
+  const approvalCount = guide.getByText('2 local approvals to review', {
+    exact: true,
+  });
+  await approvalCount.waitFor();
+  assert.equal(
+    await guide
+      .getByText('Setup awaiting local review', { exact: true })
+      .count(),
+    0,
+  );
   await setupShot(application, page, 'stage-b-setup-summary');
-  await guide.getByRole('button', { name: /Review local approvals/ }).click();
+  await approvalCount
+    .locator('..')
+    .getByRole('button', { name: 'Review', exact: true })
+    .click();
   const localApprovals = guide.getByRole('region', {
     name: 'Local approvals',
     exact: true,
   });
   await localApprovals.waitFor();
-  await setupShot(application, page, 'stage-b-local-approvals', localApprovals);
+  const finish = guide
+    .getByRole('navigation', { name: 'Guide navigation' })
+    .getByRole('button', { name: 'Start your first session', exact: true });
+  const verifyApprovalLayout = async () => {
+    assert.equal(await finish.getAttribute('data-variant'), 'default');
+    await page.waitForFunction(() => {
+      const drawer = document.getElementById('onboarding-local-approvals');
+      const primary = document.querySelector(
+        'nav[aria-label="Guide navigation"] [data-variant="default"]',
+      );
+      if (!drawer || !primary) return false;
+      const panel = drawer.getBoundingClientRect();
+      const action = primary.getBoundingClientRect();
+      return (
+        Math.abs(panel.top) <= 1 &&
+        Math.abs(panel.right - innerWidth) <= 1 &&
+        Math.abs(panel.bottom - innerHeight) <= 1 &&
+        action.bottom <= innerHeight &&
+        action.right <= panel.left
+      );
+    });
+    const timestamps = localApprovals.locator('article time');
+    assert.equal(await timestamps.count(), 2);
+    assert.equal(
+      await timestamps.evaluateAll(times =>
+        times.every(
+          time =>
+            time.parentElement.scrollWidth <= time.parentElement.clientWidth,
+        ),
+      ),
+      true,
+    );
+  };
+  await verifyApprovalLayout();
+  await setupShot(
+    application,
+    page,
+    'stage-b-local-approvals',
+    localApprovals,
+    verifyApprovalLayout,
+  );
   for (const label of ['Guide automation', 'Guide watcher']) {
     const row = localApprovals.getByRole('article', {
       name: `Configuration change ${label}`,
@@ -611,7 +665,12 @@ async function smokeSetupDetection() {
       .getByRole('button', { name: 'Confirm and accept' })
       .click();
     await confirmation.waitFor({ state: 'hidden' });
+    if (label === 'Guide automation')
+      await guide
+        .getByText('1 local approval to review', { exact: true })
+        .waitFor();
   }
+  await localApprovals.waitFor({ state: 'hidden' });
   const activation = guide.getByRole('region', {
     name: 'Automations and watchers',
   });

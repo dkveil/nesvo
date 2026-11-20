@@ -53,11 +53,13 @@ export function ConfigurationChangeRow({
   change,
   computer,
   online,
+  compact = false,
   onOpenSession,
 }: {
   change: HostedConfigurationChange;
   computer: string;
   online: boolean;
+  compact?: boolean;
   onOpenSession?: (sessionId: string) => void;
 }) {
   const [working, setWorking] = useState<Action | null>(null);
@@ -352,17 +354,34 @@ export function ConfigurationChangeRow({
         leading={<FilePenLine />}
         title={name}
         meta={statuses[change.status]}
-        description={[
-          computer,
-          scope,
-          origin,
-          change.operation,
-          new Date(change.updatedAt).toLocaleString(),
-          change.decidedBy ? `Decided by ${change.decidedBy}` : '',
-          change.outcome?.description,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
+        description={
+          compact ? (
+            <>
+              {origin} ·{' '}
+              <time
+                title={new Date(change.updatedAt).toLocaleString()}
+                dateTime={change.updatedAt}
+              >
+                {new Date(change.updatedAt).toLocaleTimeString('en', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </time>
+            </>
+          ) : (
+            [
+              computer,
+              scope,
+              origin,
+              change.operation,
+              new Date(change.updatedAt).toLocaleString(),
+              change.decidedBy ? `Decided by ${change.decidedBy}` : '',
+              change.outcome?.description,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          )
+        }
         trailing={
           onOpenSession &&
           (source.kind === 'assistant' || permission) && (
@@ -432,6 +451,7 @@ export function ConfigurationChangeRow({
             {change.status === 'pending' && !withheldSetup && (
               <Button
                 size="sm"
+                variant={compact ? 'outline' : 'default'}
                 disabled={!online || !!working || change.diff.truncated}
                 onClick={() => {
                   if (effect) void reviewAuthority();
