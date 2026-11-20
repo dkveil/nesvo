@@ -112,7 +112,7 @@ bun apps/host/dist/cli.js --help
 
 ## Standalone host
 
-Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run host.
+Run `bun run --cwd apps/host build` from the repository root before using the standalone host or its workflow definition commands. `bun run dev` bundles the desktop's own host and does not produce `apps/host/dist/main.js`. To start the standalone host, set `NESVO_DATA_DIR` to a dedicated directory and run `bun run host`.
 
 The host runs SQLite `quick_check` at startup and reports the database path if it detects corruption. Before migrating an existing `nesvo.sqlite`, it takes a consistent SQLite snapshot named `nesvo.sqlite.v<oldVersion>.bak` in the same directory. It keeps the three most recent migration backups. A host that encounters a newer schema refuses to open it and lists the available backups. Use a compatible version of Nesvo to inspect a backup in a separate data directory. Backups contain session data and need the same access controls as the live database.
 

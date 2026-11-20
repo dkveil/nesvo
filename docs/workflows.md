@@ -528,6 +528,7 @@ Only links of the form `nesvo://import-workflow?share=<id>&origin=<site>` are ac
 The host bundle edits the same files as the editor, with no running host and no database:
 
 ```text
+bun run --cwd apps/host build
 node apps/host/dist/main.js workflows validate --directory <project>
 node apps/host/dist/main.js workflows list --directory <project> --json
 node apps/host/dist/main.js workflows add-step --directory <project> --scope project --file step.md [--expected-hash <hash>]
