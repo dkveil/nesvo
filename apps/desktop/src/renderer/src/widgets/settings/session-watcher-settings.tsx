@@ -11,6 +11,7 @@ import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import {
   Dialog,
   DialogCancel,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -208,7 +209,9 @@ export function SessionWatcherSettings({
                   )}
                   {error && <StatusMessage tone="error">{error}</StatusMessage>}
                   <DialogFooter>
-                    <DialogCancel disabled={busy} />
+                    <DialogClose asChild>
+                      <DialogCancel disabled={busy} />
+                    </DialogClose>
                     {review && (
                       <Button
                         size="lg"

@@ -10,6 +10,7 @@ import { CodeBlock } from '@/shared/ui/code-block';
 import {
   Dialog,
   DialogCancel,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -152,7 +153,9 @@ export function ClaudePlanHookDialog({
         )}
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
         <DialogFooter>
-          <DialogCancel disabled={busy} />
+          <DialogClose asChild>
+            <DialogCancel disabled={busy} />
+          </DialogClose>
           <Button
             size="lg"
             disabled={busy || !sessionId}

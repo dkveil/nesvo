@@ -2692,10 +2692,16 @@ async function smokeDesktop() {
     name: 'Repository trust',
     exact: true,
   });
-  await trustSettings.getByRole('button', { name: 'Add pattern' }).click();
+  const addPatternButton = trustSettings.getByRole('button', {
+    name: 'Add pattern',
+  });
+  await addPatternButton.click();
   const addPattern = page.getByRole('dialog', {
     name: 'Add repository pattern',
   });
+  await addPattern.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await addPattern.waitFor({ state: 'hidden' });
+  await addPatternButton.click();
   await addPattern
     .getByLabel('Repository pattern')
     .fill('git.example.test/team/*');
