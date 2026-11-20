@@ -87,6 +87,7 @@ export function NavigationRail({
       <div className="drag-region flex h-(--shell-topbar-height) w-full shrink-0 items-center justify-center">
         <RailButton
           ref={sidebarToggleRef}
+          className="relative z-20 left-(--titlebar-inset-left)"
           label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           shortcut={shortcutKeys('toggleSidebar')}
           aria-pressed={sidebarOpen}

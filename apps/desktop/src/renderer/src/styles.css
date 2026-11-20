@@ -338,13 +338,7 @@
 }
 
 :root[data-platform='mac'] {
-  --titlebar-inset-left: 1.5rem;
-}
-
-@media (max-width: 767px) {
-  :root[data-platform='mac'] {
-    --titlebar-inset-left: 4.5rem;
-  }
+  --titlebar-inset-left: 5rem;
 }
 
 @property --sidebar-extent {
