@@ -103,13 +103,16 @@ jobs:
                   codesign --verify --strict -R "$requirement" "$binary"
                 fi
               done < <(find "$app/Contents" -type f -print0)
-              if ! assessment="$(spctl -a -vv -t exec "$app" 2>&1)" ||
+              xcrun stapler validate "$app"
+              spctl --status
+              local assessment_status=0
+              assessment="$(LC_ALL=C spctl -a -vv -t exec --ignore-cache --no-cache "$PWD/$app" 2>&1)" || assessment_status=$?
+              sed '/^origin=/d' <<< "$assessment"
+              if [[ "$assessment_status" != 0 ]] ||
                 ! grep -Fxq 'source=Notarized Developer ID' <<< "$assessment"; then
-                printf 'Gatekeeper did not accept the notarized app: %s\n' "$app" >&2
+                printf 'Gatekeeper did not confirm notarized Developer ID for %s (exit %s).\n' "$app" "$assessment_status" >&2
                 exit 1
               fi
-              printf '%s: source=Notarized Developer ID\n' "$app"
-              xcrun stapler validate "$app"
               codesign --verify --strict -R "$requirement" "$dmg"
               if ! xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" \
                 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
