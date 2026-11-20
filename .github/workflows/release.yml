@@ -73,11 +73,16 @@ jobs:
               printf 'Invalid Apple Developer Team ID format.\n' >&2
               exit 1
             fi
+            if [[ ! "$APPLE_API_KEY_ID" =~ ^[A-Za-z0-9]+$ ]]; then
+              printf 'Invalid App Store Connect API Key ID format.\n' >&2
+              exit 1
+            fi
 
             key_dir="$(mktemp -d "$RUNNER_TEMP/nesvo-notary.XXXXXX")"
-            trap 'rm -f "$key_dir/AuthKey.p8"; rmdir "$key_dir"' EXIT
-            (umask 077; printf '%s\n' "$APPLE_API_KEY" > "$key_dir/AuthKey.p8")
-            export APPLE_API_KEY="$key_dir/AuthKey.p8"
+            key_path="$key_dir/AuthKey_${APPLE_API_KEY_ID}.p8"
+            trap 'rm -f "$key_path"; rmdir "$key_dir"' EXIT
+            (umask 077; printf '%s\n' "$APPLE_API_KEY" > "$key_path")
+            export APPLE_API_KEY="$key_path"
             export CSC_NAME="($APPLE_TEAM_ID)"
             config=electron-builder.macos-signed.yml
             signed=true
@@ -87,7 +92,7 @@ jobs:
           fi
 
           build_image() {
-            local arch="$1" mach_arch="$2" app="$3" binary
+            local arch="$1" mach_arch="$2" app="$3" binary assessment
             local dmg="apps/desktop/release/Nesvo-macOS-$arch.dmg"
             bun run --cwd apps/desktop electron-builder --config "$config" --mac dmg "--$arch" --publish never
             lipo "$app/Contents/MacOS/Nesvo" -verify_arch "$mach_arch"
@@ -98,7 +103,12 @@ jobs:
                   codesign --verify --strict -R "$requirement" "$binary"
                 fi
               done < <(find "$app/Contents" -type f -print0)
-              spctl -a -vv -t exec "$app"
+              if ! assessment="$(spctl -a -vv -t exec "$app" 2>&1)" ||
+                ! grep -Fxq 'source=Notarized Developer ID' <<< "$assessment"; then
+                printf 'Gatekeeper did not accept the notarized app: %s\n' "$app" >&2
+                exit 1
+              fi
+              printf '%s: source=Notarized Developer ID\n' "$app"
               xcrun stapler validate "$app"
               codesign --verify --strict -R "$requirement" "$dmg"
               if ! xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" \
