@@ -28,7 +28,7 @@ const defaultWidths: Record<PanelKind, (viewport: number) => number> = {
   skills: viewport => (viewport >= 1600 ? 440 : 380),
   'pull-request': wideWidth,
   'pull-request-review': viewport => Math.min(820, viewport * 0.45),
-  inspector: viewport => Math.min(536, viewport * 0.42),
+  inspector: viewport => Math.min(536, viewport * 0.25),
   details: compactWidth,
   context: compactWidth,
   terminal: viewport => Math.min(576, viewport * 0.42),
@@ -54,7 +54,10 @@ export function SidePanel({
   children,
   ...props
 }: SidePanelProps) {
-  const docked = kind === 'pull-request' || kind === 'pull-request-review';
+  const docked =
+    kind === 'pull-request' ||
+    kind === 'pull-request-review' ||
+    kind === 'inspector';
   const focusRef = useRef<HTMLElement>(null);
   const { attach, style, resizing, resizer } = usePanelWidth(
     kind,

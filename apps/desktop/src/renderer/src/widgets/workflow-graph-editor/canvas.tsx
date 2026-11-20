@@ -95,20 +95,18 @@ export function EditorCanvas({
       (width - fitPadding * 2) / bounds.width,
       (height - fitPadding * 2) / bounds.height,
     );
-    if (fitZoom >= minFitZoom) {
-      void setCenter(
-        bounds.x + bounds.width / 2,
-        bounds.y + bounds.height / 2,
-        { zoom: fitZoom },
-      );
-    } else {
-      void setViewport({
-        x: fitPadding - bounds.x * minFitZoom,
-        y: fitPadding - bounds.y * minFitZoom,
-        zoom: minFitZoom,
-      });
-    }
-  }, [getNodes, getNodesBounds, height, setCenter, setViewport, width]);
+    const zoom = Math.max(minFitZoom, fitZoom);
+    const horizontalSpace = width - bounds.width * zoom;
+    const verticalSpace = height - bounds.height * zoom;
+    void setViewport({
+      x:
+        (horizontalSpace >= 0 ? horizontalSpace / 2 : fitPadding) -
+        bounds.x * zoom,
+      y:
+        (verticalSpace >= 0 ? verticalSpace / 2 : fitPadding) - bounds.y * zoom,
+      zoom,
+    });
+  }, [getNodes, getNodesBounds, height, setViewport, width]);
   useEffect(() => {
     if (!initialized || width <= 0 || height <= 0 || initiallyFitted.current)
       return;
