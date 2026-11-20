@@ -29002,15 +29002,14 @@ test('image, PDF and file attachments reach both providers, reject invalid uploa
   assert.equal(deletion.type, 'session-deletion', JSON.stringify(deletion));
   const blob = (attachment, extension) =>
     join(directory, 'attachments', `${attachment.id}.${extension}`);
+  const deletedFolder = sessionFolder('Codex');
+  const deletedBlob = blob(stagedCodexNotes.upload.attachment, 'bin');
   for (let attempt = 0; attempt < 400; attempt++) {
-    if (!existsSync(sessionFolder('Codex'))) break;
+    if (!existsSync(deletedFolder) && !existsSync(deletedBlob)) break;
     await delay(50);
   }
-  assert.equal(existsSync(sessionFolder('Codex')), false);
-  assert.equal(
-    existsSync(blob(stagedCodexNotes.upload.attachment, 'bin')),
-    false,
-  );
+  assert.equal(existsSync(deletedFolder), false);
+  assert.equal(existsSync(deletedBlob), false);
   assert.ok(existsSync(blob(stagedPdf.upload.attachment, 'pdf')));
   assert.ok(existsSync(blob(stagedPng.upload.attachment, 'png')));
   assert.ok(existsSync(claudeNotesPath));
