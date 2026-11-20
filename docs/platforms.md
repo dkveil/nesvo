@@ -6,12 +6,12 @@ The native workflow runs the host suite, the unpackaged desktop smoke and the un
 
 Earlier native macOS runner evidence is recorded below. Evidence for the new per-push workflow is pending the first push to master that includes this change. The owner’s interactive macOS scenarios and acceptance on a managed laptop are separate evidence.
 
-## Owner checklist for signed releases
+## Signed release verification
 
-D75 publishes unsigned builds. Each item below needs a separate owner decision and release evidence.
+Damian approved Developer ID signing and notarization for macOS on November 20, 2026. See [macOS signing](development.md#macos-signing) for credential setup. Record the evidence from the first signed release here.
 
-- [ ] Authorize Developer ID distribution, obtain the Developer ID Application identity and provision signing access and hardened-runtime entitlements for release CI. Verify the signatures on the application and bundled executables for both Mac architectures.
-- [ ] Authorize notarization, provision the notarization credential in release CI, submit the disk images, staple the tickets and verify a download on a clean Mac with Gatekeeper.
+- [ ] Provision the Developer ID and App Store Connect credentials. Verify signatures and stapled tickets on the app and disk image for both Mac architectures.
+- [ ] Verify first launch from a downloaded disk image on a clean Mac with Gatekeeper.
 - [ ] Decide whether to enable signed updates. Define who controls the signing keys and update channel, and verify that the updater rejects invalid signatures before distribution.
 - [ ] Install the release on a managed laptop and record the endpoint monitoring result separately from native runner evidence.
 

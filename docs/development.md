@@ -44,7 +44,7 @@ Remove-Item Env:NESVO_PACKAGED_EXECUTABLE
 
 The packaged check launches with a fresh temporary profile, verifies the renderer's connection to the local host, and exercises `ELECTRON_RUN_AS_NODE`. It connects to the renderer over loopback because packaged builds disable the Node inspector.
 
-Packaging refreshes the macOS ad hoc signature after changing the Electron fuses so Apple silicon can load the modified binary. The release uses no developer signing identity.
+Unsigned packaging refreshes the macOS ad hoc signature after changing the Electron fuses so Apple silicon can load the modified binary.
 
 Optional NESVO_SCREENSHOT saves the smoke scenario's visible state to an explicit path.
 The scenario starts a hidden window, uses an isolated temporary directory and explicitly selects the CLI fixture. It never uses a provider account. Fixture text is test evidence, not proof of model availability.
@@ -69,10 +69,31 @@ Electron-builder writes these installers to `apps/desktop/release`. The workflow
 
 Download the checksum file alongside your installer. On Windows, run `Get-FileHash .\Nesvo-Windows-Setup.exe -Algorithm SHA256`. On macOS, run `shasum -a 256 Nesvo-macOS-arm64.dmg`, substituting the Intel filename if needed. Compare the output with the matching line in `SHA256SUMS.txt` before opening the installer.
 
-Download the installers from [nesvo.dev](https://nesvo.dev/) or [GitHub Releases](https://github.com/dkveil/nesvo/releases). Builds are unsigned, macOS builds are not notarized, and updates require downloading a new installer.
+Download the installers from [nesvo.dev](https://nesvo.dev/) or [GitHub Releases](https://github.com/dkveil/nesvo/releases). The first pre-release is unsigned on both platforms. Updates require downloading a new installer.
 
 - **Windows.** Microsoft Defender SmartScreen may warn that the installer is unrecognized. Verify the download source before continuing if Windows offers that choice. [Microsoft guidance](https://support.microsoft.com/en-us/windows/security/windows-security/app-browser-control-in-the-windows-security-app)
 - **macOS.** Use the Terminal installer to verify and install the release. For a manual disk image install, follow the [macOS first-launch steps](web.md#macos-install-script).
+
+### macOS signing
+
+The release job uses the signed configuration when `CSC_LINK` is set. It requires the other five secrets in that case. Each app and disk image is signed, notarized and checked before upload. The app check verifies bundled Mach-O files against the same Developer ID team and starts the packaged app on the runner's architecture. The host uses Electron's built-in SQLite, and the bundled Inbox launcher uses the app's Electron executable in Node mode. The signing entitlements keep library validation enabled.
+
+1. Create a **Developer ID Application** certificate from a certificate signing request made on your Mac. Install the certificate and export it with its private key from Keychain Access as a password-protected `cert.p12`. [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates)
+2. In App Store Connect, open **Users and Access → Integrations → Team Keys**. Create a team API key with notarization access and download its private `.p8` file. Record its Key ID and the Issuer ID shown there. [App Store Connect API keys](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/)
+3. Copy the Apple Developer Team ID from **Membership details** for the team that issued the certificate. [Apple Team ID](https://developer.apple.com/help/glossary/team-id/)
+
+From a private directory outside the repository, upload the files to GitHub Actions. Store the certificate export password, Key ID, Issuer ID and Team ID in their respective single-line input files.
+
+```sh
+base64 -i cert.p12 | gh secret set CSC_LINK -R dkveil/nesvo
+gh secret set CSC_KEY_PASSWORD -R dkveil/nesvo < cert-password.txt
+gh secret set APPLE_API_KEY -R dkveil/nesvo < AuthKey_KEYID.p8
+gh secret set APPLE_API_KEY_ID -R dkveil/nesvo < key-id.txt
+gh secret set APPLE_API_ISSUER -R dkveil/nesvo < issuer-id.txt
+gh secret set APPLE_TEAM_ID -R dkveil/nesvo < team-id.txt
+```
+
+Keep the credential files outside Git. The macOS release job writes the private key to a temporary file and removes it when the step exits. Without `CSC_LINK`, it builds both unsigned Mac images. Windows uses its unsigned build path.
 
 ## External Inbox CLI from source
 
