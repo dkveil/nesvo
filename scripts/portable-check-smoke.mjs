@@ -680,6 +680,15 @@ export async function smokePortableCheck({
             await assistant
               .getByText(/dismissed suggestion will stay hidden/)
               .waitFor();
+            await smokeGateSplit({
+              editor,
+              list,
+              page,
+              home,
+              project: join(directory, 'gate-split-project'),
+              settled,
+              screenshots,
+            });
           }
         }
       }
@@ -697,4 +706,138 @@ export async function smokePortableCheck({
       }),
     );
   }
+}
+
+async function smokeGateSplit({
+  editor,
+  list,
+  page,
+  home,
+  project,
+  settled,
+  screenshots,
+}) {
+  const workflow = 'release-trust';
+  const gate = 'approve-release';
+  const specPath = '.agents/tasks/release-trust.md';
+  await write(
+    home,
+    'steps/release-check.md',
+    '---\nname: release-check\ntype: command\nphase: pre-done\n---\necho Checked.\n',
+  );
+  await write(
+    home,
+    'steps/optional-review.md',
+    '---\nname: optional-review\ntype: agent\nphase: pre-done\n---\nfixture:verdict-pass\n',
+  );
+  await write(
+    home,
+    `steps/${gate}.md`,
+    `---\nname: ${gate}\ntype: human\nphase: pre-done\njoin: reached\n---\nReview the release changes.\n`,
+  );
+  await write(
+    home,
+    `workflows/${workflow}.md`,
+    `---\nname: ${workflow}\nsteps: [release-check, optional-review, ${gate}]\nedges:\n  - release-check -> optional-review\n  - release-check -> ${gate}\n  - optional-review -> ${gate}\nlanes: { light: { omit: optional-review }, full: {} }\ndecision_memory: review\n---\n`,
+  );
+  await write(
+    project,
+    specPath,
+    `---\nworkflow: ${workflow}\n---\nfixture:workflow-release-notes Update the release notes.\n`,
+  );
+  const target = { directory: project, workflow, gate };
+  const configureRecommendation = async revision =>
+    page.evaluate(
+      ({ target, revision }) =>
+        window.nesvo.gateRules(
+          {
+            action: 'autonomy-set',
+            input: {
+              target,
+              revision,
+              level: revision,
+              minimum: 1,
+              windowDays: 30,
+              confirmed: true,
+            },
+          },
+          'local',
+        ),
+      { target, revision },
+    );
+  const runGate = async (forceFullLane, recommendation) => {
+    await write(project, 'release-notes.txt', 'Old release notes.\n');
+    const task = await page.evaluate(
+      ({ directory, specPath, workflowName, forceFullLane }) =>
+        window.nesvo.workflows.startTask('local', {
+          directory,
+          specPath,
+          workflowName,
+          forceFullLane: forceFullLane || undefined,
+          provider: 'Codex',
+          model: 'default',
+          mode: 'supervised',
+          isolation: 'none',
+          gateProvider: 'Claude Code',
+          gateModel: 'sonnet',
+        }),
+      { directory: project, specPath, workflowName: workflow, forceFullLane },
+    );
+    const pending = await settled(task.id);
+    assert.equal(pending.run.status, 'awaiting-human', JSON.stringify(pending));
+    assert.equal(pending.run.lane.effective, forceFullLane ? 'full' : 'light');
+    const step = pending.steps.find(item => item.name === gate);
+    if (recommendation)
+      assert.equal(step.recommendation?.outcome, 'would-approve');
+    await page.evaluate(
+      input => window.nesvo.workflows.decideGate('local', input),
+      {
+        runId: task.id,
+        stepId: step.id,
+        reviewId: step.reviewId,
+        version: step.reviewVersion,
+        decisionId: crypto.randomUUID(),
+        decision: 'accept',
+        comment: '',
+      },
+    );
+    assert.equal((await settled(task.id)).run.status, 'passed');
+  };
+  await runGate(true, false);
+  assert.equal((await configureRecommendation(0)).autonomy.proposal, 1);
+  await configureRecommendation(1);
+  await runGate(false, true);
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await list.getByLabel('Project folder', { exact: true }).fill(project);
+  await list.getByRole('button', { name: 'Read', exact: true }).click();
+  await list
+    .getByRole('button', { name: `Edit ${workflow}`, exact: true })
+    .click();
+  await editor.locator(`[data-editor-node="${gate}"]`).click();
+  await editor.getByRole('button', { name: 'Open assistant' }).click();
+  const trust = page
+    .locator('[data-assistant-dock]')
+    .getByRole('region', { name: 'Gate trust' });
+  await trust
+    .getByRole('button', {
+      name: 'What would I need to make this gate more autonomous?',
+    })
+    .click();
+  await trust
+    .getByText('1 past cases in the trusted branch, 1 in the human branch.')
+    .waitFor();
+  await screenshots('d90-split-proposal');
+  await trust
+    .getByRole('button', { name: 'Accept split', exact: true })
+    .click();
+  await trust.getByText('Accepted split', { exact: true }).waitFor();
+  const saved = await page.evaluate(
+    target => window.nesvo.gateRules({ action: 'trust-read', target }, 'local'),
+    target,
+  );
+  assert.equal(saved.trust.current, true);
+  assert.equal(saved.trust.record.split.condition.when, 'lane == "light"');
+  await screenshots('d90-split-accepted');
 }

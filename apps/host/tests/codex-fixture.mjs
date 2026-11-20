@@ -1394,6 +1394,16 @@ if (args.length === 1 && args[0] === '--version') {
             },
           });
         } else complete(`Codex worker ${worker[2]} completed its scoped task.`);
+      } else if (
+        requestPrompt.includes('fixture:workflow-release-notes') &&
+        requestPrompt.endsWith('Implement the task as planned.')
+      ) {
+        assert.equal(thread.supervised, true);
+        writeFileSync(
+          join(thread.cwd, 'release-notes.txt'),
+          'Updated notes.\n',
+        );
+        complete('Updated the release notes.');
       } else if (requestPrompt.includes('fixture:review-binary')) {
         assert.equal(thread.supervised, true);
         writeFileSync(

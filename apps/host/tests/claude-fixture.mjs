@@ -918,7 +918,8 @@ if (args.length === 1 && args[0] === '--version') {
   const turn = resumed
     ? JSON.parse(readFileSync(sourcePath, 'utf8')).turn + 1
     : 1;
-  if (!summaryMode) writeFileSync(statePath, JSON.stringify({ turn }));
+  if (!values.has('--no-session-persistence'))
+    writeFileSync(statePath, JSON.stringify({ turn }));
   emit({
     type: 'system',
     subtype: 'init',
