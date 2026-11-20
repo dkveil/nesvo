@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   ArrowRight,
   Bot,
@@ -44,6 +45,7 @@ export function FinishStep({
   onClose,
   onReviewSetup,
 }: Props) {
+  const [reviewing, setReviewing] = useState(false);
   const local = computers.find(computer => computer.id === 'local');
   const ready = providers.find(provider => providerUsable(statuses[provider]));
   const detected = providers.filter(provider => {
@@ -147,7 +149,11 @@ export function FinishStep({
       )}
       {local?.status === 'connected' &&
         local.capabilities.includes('setup-profile-v1') && (
-          <SetupActivation key={local.instanceId} computer={local} />
+          <SetupActivation
+            key={local.instanceId}
+            computer={local}
+            onReviewOpenChange={setReviewing}
+          />
         )}
       <div className="flex justify-center">
         <SetupProfileSettings computer={local} saveOnly />
@@ -155,6 +161,7 @@ export function FinishStep({
       <div className="flex flex-wrap justify-center gap-2">
         <Button
           size="md"
+          variant={reviewing ? 'outline' : 'default'}
           disabled={pending}
           onClick={() => onStartSession(ready ?? null)}
         >

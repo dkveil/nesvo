@@ -7,6 +7,7 @@ import type {
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { Disclosure } from '@/shared/ui/disclosure';
 import {
   Dialog,
   DialogCancel,
@@ -26,7 +27,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
+import {
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+} from '@/shared/ui/settings-section';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { PanelBody } from '@/shared/ui/panel';
 import { Textarea } from '@/shared/ui/textarea';
@@ -49,6 +54,11 @@ const profileStates: Record<SetupProfileReview['status'], string> = {
   invalid: 'Profile contains errors',
   unsupported: 'Unsupported profile version',
 };
+const layerLabels = {
+  entry: 'Main profile',
+  machine: 'This computer',
+  shared: 'Shared profile',
+} as const;
 
 export function SetupProfileSettings({
   computer,
@@ -56,12 +66,14 @@ export function SetupProfileSettings({
   initialEdit = false,
   onboarding = false,
   saveOnly = false,
+  onReviewOpenChange,
 }: {
   computer?: Computer;
   openHistory?: () => void;
   initialEdit?: boolean;
   onboarding?: boolean;
   saveOnly?: boolean;
+  onReviewOpenChange?: (open: boolean) => void;
 }) {
   const hostId = computer?.id;
   const connected = computer?.status === 'connected';
@@ -71,7 +83,7 @@ export function SetupProfileSettings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [releaseReviewRequested, setReleaseReviewRequested] = useState(false);
-  const [details, setDetails] = useState(false);
+  const [details, setDetails] = useState<'changes' | 'sources' | null>(null);
   const [skip, setSkip] = useState(false);
   const [saving, setSaving] = useState(false);
   const [destinationFile, setDestinationFile] = useState('');
@@ -81,6 +93,14 @@ export function SetupProfileSettings({
   const [route, setRoute] = useState<keyof typeof routeLabels>('inbox');
   const [layer, setLayer] = useState<'machine' | 'shared'>('machine');
   const id = useId();
+  const ready = review?.status === 'candidate' || review?.status === 'changed';
+  const reviewing = details === 'changes' && ready;
+
+  useEffect(() => {
+    if (!reviewing) return;
+    onReviewOpenChange?.(true);
+    return () => onReviewOpenChange?.(false);
+  }, [reviewing, onReviewOpenChange]);
 
   useEffect(() => {
     if (!hostId || !connected || !supported) return;
@@ -124,7 +144,7 @@ export function SetupProfileSettings({
         throw new Error('The profile changed. Refresh the preview.');
       if (input.action === 'edit-routing') setEditing(false);
       if (input.action === 'save-as') setSaving(false);
-      if (input.action === 'apply') setDetails(false);
+      if (input.action === 'apply') setDetails(null);
       if (input.action === 'edit-fragment') setFragment(undefined);
       if (input.action === 'review-repository-denials')
         setReleaseReviewRequested(true);
@@ -153,7 +173,14 @@ export function SetupProfileSettings({
         </SettingsRow>
       </SettingsSection>
     );
-  const ready = review?.status === 'candidate' || review?.status === 'changed';
+  const drawerTitle = reviewing ? 'Review profile changes' : 'Profile sources';
+  const editorOpen = editing || !!fragment;
+  const settingChanges =
+    review?.changes?.filter(change => change.effect !== 'keep') ?? [];
+  const routeChange = settingChanges.find(
+    change => change.key === 'inbox.defaultRoute',
+  );
+  const otherChanges = settingChanges.filter(change => change !== routeChange);
   const pending =
     review?.declarations.filter(item => item.state === 'pending').length ?? 0;
   const shared = review?.files.find(item => item.layer === 'shared');
@@ -166,7 +193,7 @@ export function SetupProfileSettings({
   };
   const openFragment = (layer: NonNullable<typeof fragment>['layer']) => {
     if (!review?.instanceId || !review.revision) return;
-    setDetails(false);
+    setDetails(null);
     void request({
       action: 'inspect-fragment',
       instanceId: review.instanceId,
@@ -202,7 +229,7 @@ export function SetupProfileSettings({
               ) : undefined
             }
           >
-            {error && !editing && (
+            {error && !editorOpen && !details && !saving && (
               <StatusMessage tone="error">{error}</StatusMessage>
             )}
             {!review && !error && (
@@ -212,7 +239,15 @@ export function SetupProfileSettings({
               <>
                 <SettingsRow
                   title={profileStates[review.status]}
-                  description={<MiddleTruncatedText path value={review.path} />}
+                  description={
+                    review.status === 'absent' ? undefined : (
+                      <MiddleTruncatedText
+                        value={
+                          review.path.split(/[\\/]/u).at(-1) ?? review.path
+                        }
+                      />
+                    )
+                  }
                 >
                   <Button
                     variant="ghost"
@@ -266,20 +301,18 @@ export function SetupProfileSettings({
                     )}
                   </SettingsRow>
                 )}
-                {(ready || review.routing.managed) && (
+                {!ready && review.routing.managed && (
                   <SettingsRow
                     title="Default Inbox route"
-                    description={
-                      ready && review.routing.desired
-                        ? `${routeLabels[review.routing.effective]} → ${routeLabels[review.routing.desired]}`
-                        : `From profile · ${routeLabels[review.routing.effective]}`
-                    }
+                    description={`From profile · ${routeLabels[review.routing.effective]}`}
                   >
                     {review.status === 'current' && review.routing.managed && (
                       <Button
                         variant="outline"
                         size="sm"
+                        disabled={editorOpen}
                         onClick={() => {
+                          setDetails(null);
                           setRoute(review.routing.effective);
                           setLayer('machine');
                           setEditing(true);
@@ -301,7 +334,9 @@ export function SetupProfileSettings({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDetails(true)}
+                      disabled={editorOpen}
+                      aria-expanded={details === 'sources'}
+                      onClick={() => setDetails('sources')}
                     >
                       Review sources
                     </Button>
@@ -311,12 +346,12 @@ export function SetupProfileSettings({
                   computer.capabilities.includes('setup-profile-values-v1') && (
                     <SettingsRow
                       title="Profile settings"
-                      description="Change a YAML layer on this computer."
+                      description="Edit this profile’s source files."
                     >
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled={busy}
+                        disabled={busy || editorOpen}
                         onClick={() =>
                           openFragment(
                             review.files.some(file => file.layer === 'machine')
@@ -333,8 +368,12 @@ export function SetupProfileSettings({
                   <div className="flex flex-wrap gap-2 px-3 py-2">
                     <Button
                       size="sm"
+                      variant={
+                        details ? 'ghost' : onboarding ? 'outline' : 'default'
+                      }
                       disabled={busy}
-                      onClick={() => setDetails(true)}
+                      aria-expanded={reviewing}
+                      onClick={() => setDetails('changes')}
                     >
                       Load profile
                     </Button>
@@ -353,10 +392,14 @@ export function SetupProfileSettings({
               </>
             )}
             {!onboarding && (
-              <div className="flex items-end gap-2 px-3 pt-2">
+              <Disclosure
+                title="Open another profile"
+                className="px-1 pt-2"
+                contentClassName="flex items-end gap-2 px-2"
+              >
                 <Field
                   id={id}
-                  label="Another profile on this computer"
+                  label="Profile file on this computer"
                   className="min-w-0 flex-1"
                 >
                   <PathInput
@@ -368,14 +411,14 @@ export function SetupProfileSettings({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!file.trim() || busy}
+                  disabled={!file.trim() || busy || editorOpen}
                   onClick={() =>
                     void request({ action: 'inspect', file: file.trim() })
                   }
                 >
                   Preview
                 </Button>
-              </div>
+              </Disclosure>
             )}
           </SettingsSection>
         )}
@@ -388,74 +431,88 @@ export function SetupProfileSettings({
       {details && review && (
         <SidePanel
           kind="details"
-          title="Profile sources"
+          aria-label={drawerTitle}
           resizeLabel="Resize profile sources"
-          onEscape={() => setDetails(false)}
+          onEscape={() => setDetails(null)}
           focusOnOpen
         >
           <SidePanelHeader
             titleBar={false}
-            title={ready ? 'Review profile changes' : 'Profile sources'}
-            onClose={() => setDetails(false)}
-            closeLabel="Close profile sources"
+            title={drawerTitle}
+            onClose={() => setDetails(null)}
+            closeLabel={
+              reviewing ? 'Close profile review' : 'Close profile sources'
+            }
           />
           <PanelBody className="space-y-3 p-3">
-            {ready && (
-              <SettingsSection title="Effective settings">
-                <SettingsRow
-                  title="Default Inbox route"
-                  description={
-                    <>
-                      <p>Current · {routeLabels[review.routing.effective]}</p>
-                      <p>
-                        Profile ·{' '}
-                        {review.routing.desired
-                          ? routeLabels[review.routing.desired]
-                          : 'Undeclared'}
-                      </p>
-                      <p>Detected · No suggested route</p>
-                    </>
-                  }
-                />
-                {review.changes
-                  ?.filter(
-                    change =>
-                      change.effect !== 'keep' &&
-                      change.key !== 'inbox.defaultRoute',
-                  )
-                  .map(change => (
+            {reviewing ? (
+              <SettingsRows>
+                {(routeChange ||
+                  (review.routing.desired &&
+                    review.routing.desired !== review.routing.effective)) && (
+                  <SettingsRow
+                    title="Default Inbox route"
+                    description={
+                      review.routing.desired === review.routing.effective
+                        ? `${routeLabels[review.routing.effective]} · Managed by this profile`
+                        : `${routeLabels[review.routing.effective]} → ${review.routing.desired ? routeLabels[review.routing.desired] : 'Removed from profile'}`
+                    }
+                  />
+                )}
+                {otherChanges.map(change => (
+                  <SettingsRow
+                    key={change.key}
+                    title={change.label}
+                    description={`${change.before ?? 'Undeclared'} → ${change.after ?? 'Removed'}`}
+                  />
+                ))}
+                {(!review.routing.desired ||
+                  review.routing.desired === review.routing.effective) &&
+                  !settingChanges.length && (
+                    <SettingsRow title="No setting changes" />
+                  )}
+              </SettingsRows>
+            ) : (
+              <>
+                <SettingsSection title="Source files">
+                  {review.files.map(item => (
                     <SettingsRow
-                      key={change.key}
-                      title={change.label}
-                      description={`${change.before ?? 'Undeclared'} → ${change.after ?? 'Removed'}`}
+                      key={item.layer}
+                      title={layerLabels[item.layer]}
+                      description={
+                        <MiddleTruncatedText path value={item.path} />
+                      }
                     />
                   ))}
-              </SettingsSection>
+                </SettingsSection>
+                {review.declarations.length > 0 && (
+                  <SettingsSection title="Declared settings">
+                    {review.declarations.map(item => (
+                      <SettingsRow
+                        key={item.key}
+                        title={item.label}
+                        description={
+                          item.state === 'pending'
+                            ? (item.preview ??
+                              'Awaiting review on this computer')
+                            : item.state === 'reviewed'
+                              ? 'Reviewed on this computer'
+                              : item.state === 'masked'
+                                ? 'Disabled by profile'
+                                : item.key === 'inbox.defaultRoute' &&
+                                    review.routing.desired
+                                  ? routeLabels[review.routing.desired]
+                                  : item.preview
+                        }
+                      />
+                    ))}
+                  </SettingsSection>
+                )}
+              </>
             )}
-            {review.files.map(item => (
-              <SettingsRow
-                key={item.layer}
-                title={item.layer}
-                description={<MiddleTruncatedText path value={item.path} />}
-              />
-            ))}
-            {review.declarations.map(item => (
-              <SettingsRow
-                key={item.key}
-                title={item.label}
-                description={
-                  item.state === 'pending'
-                    ? (item.preview ?? 'Awaiting review on this computer')
-                    : item.state === 'reviewed'
-                      ? 'Reviewed on this computer'
-                      : item.state === 'masked'
-                        ? 'Disabled by profile'
-                        : (item.preview ?? item.field)
-                }
-              />
-            ))}
+            {error && <StatusMessage tone="error">{error}</StatusMessage>}
           </PanelBody>
-          {ready && review.revision && (
+          {reviewing && review.revision && (
             <SidePanelFooter label="Profile review actions">
               <Button
                 size="sm"
@@ -479,19 +536,23 @@ export function SetupProfileSettings({
         </SidePanel>
       )}
       {fragment && review && (
-        <Dialog
-          open
-          onOpenChange={open => {
-            if (!open && !busy) setFragment(undefined);
+        <SidePanel
+          kind="details"
+          aria-label="Edit profile values"
+          resizeLabel="Resize profile editor"
+          focusOnOpen
+          onEscape={() => {
+            if (!busy) setFragment(undefined);
           }}
         >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Edit profile values</DialogTitle>
-              <DialogDescription>
-                Executable definitions still require separate local approval.
-              </DialogDescription>
-            </DialogHeader>
+          <SidePanelHeader
+            titleBar={false}
+            title="Edit profile values"
+            closeLabel="Close profile editor"
+            closeDisabled={busy}
+            onClose={() => setFragment(undefined)}
+          />
+          <PanelBody className="space-y-3 p-3">
             <Field id={id + '-fragment-layer'} label="Profile layer">
               <Select
                 value={fragment.layer}
@@ -508,7 +569,7 @@ export function SetupProfileSettings({
                 <SelectContent>
                   {review.files.map(file => (
                     <SelectItem key={file.layer} value={file.layer}>
-                      {file.layer}
+                      {layerLabels[file.layer]}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -531,50 +592,57 @@ export function SetupProfileSettings({
               />
             </Field>
             {error && <StatusMessage tone="error">{error}</StatusMessage>}
-            <DialogFooter>
-              <DialogCancel
-                disabled={busy}
-                onClick={() => setFragment(undefined)}
-              >
-                Cancel
-              </DialogCancel>
-              <Button
-                disabled={
-                  busy || !fragmentText.trim() || fragmentText === fragment.text
-                }
-                onClick={() => {
-                  if (!review.instanceId || !review.revision) return;
-                  void request({
-                    action: 'edit-fragment',
-                    instanceId: review.instanceId,
-                    revision: review.revision,
-                    effectiveRevision: review.effectiveRevision,
-                    layer: fragment.layer,
-                    text: fragmentText,
-                    actionId: crypto.randomUUID(),
-                  });
-                }}
-              >
-                Save profile fragment
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </PanelBody>
+          <SidePanelFooter label="Profile editor actions">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setFragment(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                busy || !fragmentText.trim() || fragmentText === fragment.text
+              }
+              onClick={() => {
+                if (!review.instanceId || !review.revision) return;
+                void request({
+                  action: 'edit-fragment',
+                  instanceId: review.instanceId,
+                  revision: review.revision,
+                  effectiveRevision: review.effectiveRevision,
+                  layer: fragment.layer,
+                  text: fragmentText,
+                  actionId: crypto.randomUUID(),
+                });
+              }}
+            >
+              Save changes
+            </Button>
+          </SidePanelFooter>
+        </SidePanel>
       )}
       {editing && review && (
-        <Dialog
-          open
-          onOpenChange={open => {
-            if (!open && !busy) setEditing(false);
+        <SidePanel
+          kind="details"
+          aria-label="Edit profile setting"
+          resizeLabel="Resize Inbox route editor"
+          focusOnOpen
+          onEscape={() => {
+            if (!busy) setEditing(false);
           }}
         >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Edit profile setting</DialogTitle>
-              <DialogDescription>
-                Default Inbox route on {computer.name}
-              </DialogDescription>
-            </DialogHeader>
+          <SidePanelHeader
+            titleBar={false}
+            title="Edit profile setting"
+            closeLabel="Close Inbox route editor"
+            closeDisabled={busy}
+            onClose={() => setEditing(false)}
+          />
+          <PanelBody className="space-y-3 p-3">
             <Field id={id + '-route'} label="Default Inbox route">
               <Select
                 value={route}
@@ -622,33 +690,39 @@ export function SetupProfileSettings({
               />
             )}
             {error && <StatusMessage tone="error">{error}</StatusMessage>}
-            <DialogFooter>
-              <DialogCancel disabled={busy} onClick={() => setEditing(false)}>
-                Cancel
-              </DialogCancel>
-              <Button
-                disabled={
-                  busy || route === review.routing.effective || !destination
-                }
-                onClick={() => {
-                  if (!review.instanceId || !review.revision) return;
-                  void request({
-                    action: 'edit-routing',
-                    instanceId: review.instanceId,
-                    file: review.path,
-                    revision: review.revision,
-                    effectiveRevision: review.effectiveRevision,
-                    route,
-                    layer,
-                    actionId: crypto.randomUUID(),
-                  });
-                }}
-              >
-                Save profile setting
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </PanelBody>
+          <SidePanelFooter label="Inbox route editor actions">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                busy || route === review.routing.effective || !destination
+              }
+              onClick={() => {
+                if (!review.instanceId || !review.revision) return;
+                void request({
+                  action: 'edit-routing',
+                  instanceId: review.instanceId,
+                  file: review.path,
+                  revision: review.revision,
+                  effectiveRevision: review.effectiveRevision,
+                  route,
+                  layer,
+                  actionId: crypto.randomUUID(),
+                });
+              }}
+            >
+              Save changes
+            </Button>
+          </SidePanelFooter>
+        </SidePanel>
       )}
       {saving && review && (
         <Dialog
@@ -661,8 +735,7 @@ export function SetupProfileSettings({
             <DialogHeader>
               <DialogTitle>Save as profile</DialogTitle>
               <DialogDescription>
-                Save a portable snapshot of the profile settings on{' '}
-                {computer.name}.
+                Save settings from {computer.name} to a new profile.
               </DialogDescription>
             </DialogHeader>
             <SettingsRow
@@ -671,12 +744,9 @@ export function SetupProfileSettings({
             />
             <SettingsRow
               title="Local approvals"
-              description="Executable definitions stay subject to verification on the computer using this file."
+              description="Each computer reviews executable definitions locally."
             />
-            <Field
-              id={id + '-new-profile'}
-              label="New YAML file on this computer"
-            >
+            <Field id={id + '-new-profile'} label="New profile file">
               <PathInput
                 id={id + '-new-profile'}
                 value={destinationFile}

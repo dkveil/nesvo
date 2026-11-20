@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   setupGroups,
   type Computer,
@@ -8,7 +8,6 @@ import {
 } from '@nesvo/contracts';
 import { Button } from '@/shared/ui/button';
 import { Disclosure } from '@/shared/ui/disclosure';
-import { InlineNotice } from '@/shared/ui/inline-notice';
 import { PanelBody } from '@/shared/ui/panel';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import {
@@ -38,6 +37,7 @@ export function SetupFindings({
   onCompleteScan,
   statuses,
   directory,
+  onReviewOpenChange,
 }: {
   computer?: Computer;
   onboarding?: boolean;
@@ -45,6 +45,7 @@ export function SetupFindings({
   onCompleteScan?: (scan: SetupScan) => void;
   statuses?: ProviderStates;
   directory?: string;
+  onReviewOpenChange?: (open: boolean) => void;
 }) {
   const detection = useSetupDetection(computer, {
     trigger: onboarding ? 'onboarding' : 'manual',
@@ -74,6 +75,12 @@ export function SetupFindings({
   const diagnosticTitle = useId();
   const diagnostics =
     panel === 'diagnostics' ? detection.diagnostics : undefined;
+  const reviewing = panel === 'choices' || !!diagnostics?.tools.length;
+  useEffect(() => {
+    if (!reviewing) return;
+    onReviewOpenChange?.(true);
+    return () => onReviewOpenChange?.(false);
+  }, [reviewing, onReviewOpenChange]);
   const panelRows =
     scan?.findings.filter(row =>
       panel === 'changed' ? scan.changes.includes(row.id) : row.id === panel,
@@ -88,6 +95,10 @@ export function SetupFindings({
     ) ?? [];
   const groupRows = (group: SetupFinding['group']) =>
     rows.filter(row => row.group === group);
+  const openReview = (id: string) => {
+    setAssistant(false);
+    setPanel(id);
+  };
 
   return (
     <div className="relative flex min-w-0 gap-4">
@@ -177,21 +188,17 @@ export function SetupFindings({
                 )}
               </SettingsRow>
               {scan.changes.length > 0 && (
-                <InlineNotice tone="warning">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <span>
-                      Setup changed · {scan.changes.length}{' '}
-                      {scan.changes.length === 1 ? 'finding' : 'findings'}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setPanel('changed')}
-                    >
-                      Review changes
-                    </Button>
-                  </div>
-                </InlineNotice>
+                <SettingsRow
+                  title={`Setup changed · ${scan.changes.length} ${scan.changes.length === 1 ? 'finding' : 'findings'}`}
+                >
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => openReview('changed')}
+                  >
+                    Review changes
+                  </Button>
+                </SettingsRow>
               )}
               {setupGroups.map(group => {
                 const items = groupRows(group);
@@ -208,7 +215,11 @@ export function SetupFindings({
                       <SettingsRow
                         key={item.id}
                         title={item.label}
-                        description={`${item.source} · ${item.description}`}
+                        description={
+                          item.action === 'review' || group === 'Providers'
+                            ? item.source
+                            : item.description
+                        }
                       >
                         {item.action === 'review' && canChoose ? (
                           <div className="flex items-center gap-2">
@@ -240,7 +251,7 @@ export function SetupFindings({
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => setPanel(item.id)}
+                              onClick={() => openReview(item.id)}
                             >
                               Review
                             </Button>
@@ -249,7 +260,7 @@ export function SetupFindings({
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => setPanel(item.id)}
+                            onClick={() => openReview(item.id)}
                           >
                             Review
                           </Button>
@@ -262,9 +273,21 @@ export function SetupFindings({
                             Open import
                           </Button>
                         ) : (
-                          <StatusMessage>
-                            {readiness[item.readiness]}
-                          </StatusMessage>
+                          <>
+                            <StatusMessage>
+                              {readiness[item.readiness]}
+                            </StatusMessage>
+                            {group === 'Providers' && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                aria-label={`Details for ${item.label}`}
+                                onClick={() => openReview(item.id)}
+                              >
+                                Details
+                              </Button>
+                            )}
+                          </>
                         )}
                       </SettingsRow>
                     ))}
@@ -274,7 +297,7 @@ export function SetupFindings({
               {!!choices.length && canChoose && (
                 <SettingsRow
                   title="Setup choices"
-                  description="Selected definitions stay withheld until separately verified on this computer."
+                  description="Review selections before applying them."
                 >
                   <Button
                     size="sm"

@@ -229,19 +229,37 @@ async function smokeSetupProfile() {
   hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
   await page.getByRole('button', { name: 'Your setup', exact: true }).click();
   await page.getByText('Profile ready to review').waitFor();
-  await page.getByText('Inbox → Parent session').waitFor();
   const stagePrefix = `stage-${setupStage.toLowerCase()}`;
-  await setupShot(application, page, `${stagePrefix}-profile-review`);
+  if (setupStage === 'A') {
+    await page.getByRole('button', { name: 'Details for Claude Code' }).click();
+    await page
+      .getByText(/Executable found\. Version, account and capabilities/)
+      .waitFor();
+    await page.getByRole('button', { name: 'Close setup review' }).click();
+  }
   await page.getByRole('button', { name: 'Review sources' }).click();
-  await page
+  const sources = page.getByRole('region', { name: 'Profile sources' });
+  await sources
     .locator('[data-slot="settings-row"]')
     .filter({ hasText: 'Prepare checkout' })
     .getByText('Awaiting review on this computer')
     .waitFor();
   await setupShot(application, page, `${stagePrefix}-profile-sources`);
+  assert.equal(
+    await sources.getByRole('button', { name: 'Apply profile' }).count(),
+    0,
+  );
   await page.getByRole('button', { name: 'Close profile sources' }).click();
   await page.getByRole('button', { name: 'Load profile' }).click();
-  await page
+  const review = page.getByRole('region', { name: 'Review profile changes' });
+  await review.getByText('Inbox → Parent session').waitFor();
+  await review.getByText('Prepare checkout', { exact: true }).waitFor();
+  assert.equal(
+    await review.getByText('Prepare checkout', { exact: true }).count(),
+    1,
+  );
+  await setupShot(application, page, `${stagePrefix}-profile-review`);
+  await review
     .getByRole('button', { name: 'Apply profile', exact: true })
     .click();
   await page.getByText('Active profile', { exact: true }).waitFor();
@@ -369,7 +387,7 @@ async function smokeSetupProfile() {
   await page
     .getByRole('button', { name: 'Edit profile values', exact: true })
     .click();
-  const fragment = page.getByRole('dialog', { name: 'Edit profile values' });
+  const fragment = page.getByRole('region', { name: 'Edit profile values' });
   assert.equal(
     await fragment.getByRole('textbox', { name: 'Profile YAML' }).inputValue(),
     machineDocument,
@@ -378,12 +396,12 @@ async function smokeSetupProfile() {
   await fragment.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Inbox rules', exact: true }).click();
   await page.getByRole('button', { name: 'Edit profile setting' }).click();
-  const editor = page.getByRole('dialog', { name: 'Edit profile setting' });
+  const editor = page.getByRole('region', { name: 'Edit profile setting' });
   await editor.getByRole('combobox', { name: 'Default Inbox route' }).click();
   await page.getByRole('option', { name: 'Inbox and parent session' }).click();
   await page.getByRole('listbox').waitFor({ state: 'hidden' });
   await setupShot(application, page, 'stage-a-managed-routing');
-  await editor.getByRole('button', { name: 'Save profile setting' }).click();
+  await editor.getByRole('button', { name: 'Save changes' }).click();
   await editor.waitFor({ state: 'hidden' });
   assert.match(await readFile(machine, 'utf8'), /defaultRoute: both/);
   await page.getByRole('button', { name: 'Open Change history' }).click();
@@ -462,7 +480,12 @@ async function smokeSetupDetection() {
   await guide
     .getByRole('button', { name: 'Apply choices', exact: true })
     .click();
-  await setupShot(application, page, 'stage-b-guide-without-profile');
+  await setupShot(
+    application,
+    page,
+    'stage-b-guide-without-profile',
+    guide.getByRole('heading', { name: 'Your setup', exact: true }),
+  );
   assert.deepEqual(await page.evaluate(() => window.nesvo.listSessions()), []);
   const session = await page.evaluate(async folder => {
     await window.nesvo.enrollExternalInboxDevice(
@@ -566,8 +589,14 @@ async function smokeSetupDetection() {
     .waitFor();
   await setupShot(application, page, 'stage-b-setup-summary');
   await guide.getByRole('button', { name: /Review local approvals/ }).click();
+  const localApprovals = guide.getByRole('region', {
+    name: 'Local approvals',
+    exact: true,
+  });
+  await localApprovals.waitFor();
+  await setupShot(application, page, 'stage-b-local-approvals', localApprovals);
   for (const label of ['Guide automation', 'Guide watcher']) {
-    const row = guide.getByRole('article', {
+    const row = localApprovals.getByRole('article', {
       name: `Configuration change ${label}`,
       exact: true,
     });
@@ -697,12 +726,11 @@ async function smokeOlderSetupHost() {
   hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Your setup', exact: true }).click();
-  await page
-    .getByText(/Update the Nesvo host on Local to view its setup/)
-    .waitFor();
-  await page
-    .getByText(/Update this computer’s Nesvo host to detect setup/)
-    .waitFor();
+  const upgrade = page.getByText('Update this Nesvo host to use Your setup.', {
+    exact: true,
+  });
+  await upgrade.waitFor();
+  assert.equal(await upgrade.count(), 1);
   assert.equal(
     await page
       .getByRole('button', { name: 'Verify tools', exact: true })

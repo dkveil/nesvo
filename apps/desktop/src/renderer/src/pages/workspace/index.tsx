@@ -6577,22 +6577,34 @@ ${text}`
             ) : page === 'your-setup' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}
-                <SetupProfileSettings
-                  key={`profile:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
-                  computer={settingsComputer}
-                  initialEdit={editProfileRouting}
-                  openHistory={() => {
-                    setEditProfileRouting(false);
-                    setSettingsPage('change-history');
-                  }}
-                />
-                <SetupFindings
-                  key={`detection:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
-                  computer={settingsComputer}
-                  statuses={store.providerStates(settingsHostId)}
-                  directory={setupReviewDirectory}
-                  openImport={() => setSettingsPage('import')}
-                />
+                {settingsComputer?.status === 'connected' &&
+                !settingsComputer.capabilities.includes('setup-profile-v1') &&
+                !settingsComputer.capabilities.includes(
+                  'setup-detection-v1',
+                ) ? (
+                  <StatusMessage>
+                    Update this Nesvo host to use Your setup.
+                  </StatusMessage>
+                ) : (
+                  <>
+                    <SetupProfileSettings
+                      key={`profile:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                      computer={settingsComputer}
+                      initialEdit={editProfileRouting}
+                      openHistory={() => {
+                        setEditProfileRouting(false);
+                        setSettingsPage('change-history');
+                      }}
+                    />
+                    <SetupFindings
+                      key={`detection:${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                      computer={settingsComputer}
+                      statuses={store.providerStates(settingsHostId)}
+                      directory={setupReviewDirectory}
+                      openImport={() => setSettingsPage('import')}
+                    />
+                  </>
+                )}
               </div>
             ) : page === 'change-history' ? (
               <div className="space-y-4">

@@ -79,6 +79,8 @@ export function Onboarding({ onStartSession, onClose }: Props) {
   const [outcomes, setOutcomes] = useState<RoutineOutcomes>({});
   const [setupScan, setSetupScan] = useState<SetupScan | null>(null);
   const [setupImports, setSetupImports] = useState(false);
+  const [profileReviewOpen, setProfileReviewOpen] = useState(false);
+  const [findingsReviewOpen, setFindingsReviewOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [setupError, setSetupError] = useState('');
   const { computers, local, error, statuses, checkProviders } =
@@ -228,10 +230,15 @@ export function Onboarding({ onStartSession, onClose }: Props) {
           )}
           {step.id === 'setup' && (
             <div className="space-y-6">
-              <SetupProfileSettings computer={local} onboarding />
+              <SetupProfileSettings
+                computer={local}
+                onboarding
+                onReviewOpenChange={setProfileReviewOpen}
+              />
               <SetupFindings
                 computer={local}
                 onboarding
+                onReviewOpenChange={setFindingsReviewOpen}
                 statuses={statuses}
                 onCompleteScan={setSetupScan}
                 openImport={
@@ -240,11 +247,6 @@ export function Onboarding({ onStartSession, onClose }: Props) {
                     : undefined
                 }
               />
-              {setupScan && (
-                <p className="text-xs text-muted-foreground">
-                  Scan selected for review at Finish.
-                </p>
-              )}
               {setupImports && (
                 <ManagerImportPicker
                   api={api}
@@ -345,7 +347,10 @@ export function Onboarding({ onStartSession, onClose }: Props) {
                   variant={
                     stepId === 'import' && !importCompleted
                       ? 'ghost'
-                      : 'default'
+                      : stepId === 'setup' &&
+                          (profileReviewOpen || findingsReviewOpen)
+                        ? 'outline'
+                        : 'default'
                   }
                   size="md"
                   disabled={checkingImports || importing}
