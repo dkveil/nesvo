@@ -428,6 +428,10 @@ export async function smokePortableCheck({
     await editor
       .getByRole('button', { name: 'Fit graph', exact: true })
       .click();
+    const canvasControls = editor.getByRole('toolbar', {
+      name: 'Canvas controls',
+    });
+    await canvasControls.getByText(/^(7[5-9]|[89]\d|100)%$/).waitFor();
     await screenshots('d83-2-conditional-route');
     if (['3', '4', '5', '6', '7'].includes(process.env.NESVO_D90_STAGE)) {
       await editor

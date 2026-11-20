@@ -6012,13 +6012,18 @@ async function smokeDesktop() {
     box.x + box.width <= frame.x + frame.width &&
     box.y + box.height <= frame.y + frame.height;
   const revealGraphControls = async controls => {
+    const zoomOut = editor.getByRole('button', {
+      name: 'Zoom out',
+      exact: true,
+    });
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const frame = await canvas.boundingBox();
       const boxes = await Promise.all(
         controls.map(control => control.boundingBox()),
       );
       if (boxes.every(box => inside(box, frame))) return;
-      await fitGraph();
+      if (attempt === 0) await fitGraph();
+      else await zoomOut.click();
       await delay(250);
     }
     throw new Error('Graph editor controls stay outside the canvas.');
@@ -6152,9 +6157,11 @@ async function smokeDesktop() {
   await editor.locator('[data-editor-inspector="node"]').waitFor();
   await closeInspector();
   await fitGraph();
-  await editor
-    .locator('[data-editor-edge="smoke-check -> smoke-lint"]')
-    .hover({ force: true });
+  const checkToLint = editor.locator(
+    '[data-editor-edge="smoke-check -> smoke-lint"]',
+  );
+  await revealGraphControls([checkToLint]);
+  await checkToLint.hover({ force: true });
   await editor
     .locator('[data-edge-insert="smoke-check -> smoke-lint"]')
     .click();
@@ -6170,7 +6177,9 @@ async function smokeDesktop() {
   assert.equal(await edgeCount('smoke-check -> smoke-lint'), 0);
   await editorShot('insert-dark');
   await closeInspector();
-  await editor.locator('[data-editor-node="smoke-format"]').hover();
+  const formatNode = editor.locator('[data-editor-node="smoke-format"]');
+  await revealGraphControls([formatNode]);
+  await formatNode.hover();
   await editor.locator('[data-node-delete="smoke-format"]').click();
   await editor
     .locator('[data-editor-node="smoke-format"]')

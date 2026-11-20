@@ -10,6 +10,8 @@ import { Plus, Trash2 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { IconButton } from '@/shared/ui/icon-button';
 import {
+  NODE_HEIGHT_PX,
+  NODE_WIDTH_PX,
   edgeTones,
   edgeWhenLabels,
   toneColor,
@@ -52,6 +54,12 @@ export function ConditionEdgeView({
   });
   const color = selected ? 'var(--foreground)' : toneColor[edgeTones[when]];
   const active = hovered || selected;
+  const labelTop =
+    data?.predicate &&
+    Math.abs(targetX - sourceX) < NODE_WIDTH_PX &&
+    Math.abs(targetY - sourceY) < NODE_HEIGHT_PX / 2
+      ? Math.min(sourceY, targetY) - NODE_HEIGHT_PX / 2 - 14
+      : labelY;
   return (
     <>
       <BaseEdge
@@ -69,7 +77,7 @@ export function ConditionEdgeView({
       <EdgeLabelRenderer>
         <div
           className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
-          style={{ left: labelX, top: labelY }}
+          style={{ left: labelX, top: labelTop }}
           onMouseEnter={() => data?.onHover?.(true)}
           onMouseLeave={() => data?.onHover?.(false)}
         >
@@ -112,7 +120,7 @@ export function ConditionEdgeView({
           {(when !== 'success' || data?.predicate) && (
             <span
               data-editor-edge-label={id}
-              className="pointer-events-none rounded-full border bg-card px-1.5 text-2xs leading-4 font-medium whitespace-nowrap"
+              className="pointer-events-none w-max max-w-56 rounded-surface border bg-info-panel px-1.5 text-center text-2xs leading-4 font-medium [overflow-wrap:anywhere]"
               style={{ color, borderColor: color }}
             >
               {data?.predicate

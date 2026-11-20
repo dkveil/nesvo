@@ -78,7 +78,7 @@ export function EditorCanvas({
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [minimap, setMinimap] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { fitView } = useReactFlow();
+  const { fitView, setCenter } = useReactFlow();
   const width = useStore(state => state.width);
   const height = useStore(state => state.height);
   useEffect(() => {
@@ -99,12 +99,15 @@ export function EditorCanvas({
     const node = nodeLookup.get(id);
     if (!node) return;
     const [offsetX, offsetY, zoom] = transform;
-    const left = node.internals.positionAbsolute.x * zoom + offsetX;
-    const top = node.internals.positionAbsolute.y * zoom + offsetY;
-    const right = left + (node.measured.width ?? 0) * zoom;
-    const bottom = top + (node.measured.height ?? 0) * zoom;
+    const { x, y } = node.internals.positionAbsolute;
+    const nodeWidth = node.measured.width ?? 0;
+    const nodeHeight = node.measured.height ?? 0;
+    const left = x * zoom + offsetX;
+    const top = y * zoom + offsetY;
+    const right = left + nodeWidth * zoom;
+    const bottom = top + nodeHeight * zoom;
     if (left < 0 || top < 0 || right > width || bottom > height)
-      void fitView(fitViewOptions);
+      void setCenter(x + nodeWidth / 2, y + nodeHeight / 2, { zoom });
   };
   const outgoing = useMemo(() => {
     const map = new Map<string, Set<EdgeCondition>>();

@@ -13,7 +13,6 @@ import type {
   TaskSpecSummary,
 } from '@nesvo/contracts';
 import {
-  phaseLabels,
   workflowSteps,
   type WorkflowRun,
   type WorkflowStepRecord,
@@ -199,12 +198,8 @@ export function InspectorPanel({
               )}
               <div className="flex items-center gap-2 text-ui">
                 <StepStateIcon state={runStep.state} className="size-4" />
-                <span className="min-w-0 flex-1 truncate font-medium">
+                <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
                   {node.id}
-                </span>
-                <span className="shrink-0 text-ui text-muted-foreground">
-                  {phaseLabels[node.step.phase]}
-                  {runStep.attempts > 1 ? ` · attempt ${runStep.attempts}` : ''}
                 </span>
               </div>
               <StepResult
