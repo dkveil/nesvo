@@ -137,6 +137,7 @@ export function GateTrust({
         <Textarea
           id={id}
           rows={2}
+          resize="none"
           maxLength={2000}
           value={reasons}
           placeholder="Critical paths, missing evidence, or review policy"
@@ -146,7 +147,7 @@ export function GateTrust({
       <Field
         id={`${id}-required`}
         label="Always require a person"
-        layout="inline"
+        layout="switch"
       >
         <Checkbox
           id={`${id}-required`}
@@ -249,7 +250,7 @@ export function GateTrust({
               ? 'Accepted split'
               : 'Split needs review after a definition change'}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             Trusted branch {conditionText(record.split.condition)} Other cases
             ask a person.
           </p>
@@ -283,13 +284,13 @@ export function GateTrust({
       {proposal && (
         <div className="space-y-2 border-t border-border pt-2">
           <SectionLabel>Trust conditions</SectionLabel>
-          <ul className="space-y-1 text-xs text-muted-foreground">
+          <ul className="space-y-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {proposal.findings.map(finding => (
               <li key={finding}>{finding}</li>
             ))}
           </ul>
           {proposal.candidate && (
-            <p className="text-ui">
+            <p className="text-ui [overflow-wrap:anywhere]">
               Trusted branch {conditionText(proposal.candidate)}
             </p>
           )}

@@ -52,6 +52,7 @@ export function PolicyOverride({
       >
         <Textarea
           id={id}
+          resize="none"
           value={reason}
           maxLength={1000}
           onChange={event => setReason(event.target.value)}
