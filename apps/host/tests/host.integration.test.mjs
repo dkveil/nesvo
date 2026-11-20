@@ -17212,7 +17212,7 @@ test(
     await step(
       'worker',
       'session',
-      `session: ${session('nested', '{{ steps.prepare.outputs.stage }}', true)}`,
+      `on_fail: fix\nsession: ${session('nested', '{{ steps.prepare.outputs.stage }}', true)}`,
       '{{ steps.prepare.outputs.task }}',
     );
     await workflow('single', ['prepare', 'worker']);
@@ -17251,6 +17251,7 @@ test(
       'empty-batch',
       'fan-out',
       [
+        'on_fail: fix',
         `session: ${session('worker-gates', '{{ item.id }}')}`,
         'items: { kind: file, path: empty-stages.md }',
         `policy: ${policy(1)}`,
@@ -17305,6 +17306,18 @@ test(
       return instance;
     };
     let host = boot();
+    const definitions = await host.request('list-workflow-definitions', {
+      directory: project,
+    });
+    assert.equal(definitions.type, 'workflow-definitions');
+    assert.equal(
+      definitions.catalog.issues.some(issue =>
+        /"(worker|empty-batch)" uses on_fail fix with retries 0/.test(
+          issue.message,
+        ),
+      ),
+      false,
+    );
     const start = async name => {
       const response = await host.request('run-workflow-steps', {
         directory: project,

@@ -7,6 +7,7 @@ import {
   workflowDefinitionSchema,
   resolveGraph,
   stepDefinitionSchema,
+  isChildWorkflowStep,
   stepNameSchema,
   taskSpecSchema,
   type DefinitionCatalog,
@@ -1029,7 +1030,12 @@ async function readRoot(
 function stepWarnings(steps: Map<string, ResolvedStep>): DefinitionIssue[] {
   return [...steps.values()]
     .filter(
-      step => step.on_fail === 'fix' && step.retries === 0 && step.type !== 'human',
+      step =>
+        step.on_fail === 'fix' &&
+        step.retries === 0 &&
+        step.type !== 'human' &&
+        step.type !== 'until' &&
+        !isChildWorkflowStep(step.type),
     )
     .map(step =>
       issue(
