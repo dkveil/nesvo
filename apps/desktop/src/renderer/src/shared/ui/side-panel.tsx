@@ -54,6 +54,7 @@ export function SidePanel({
   children,
   ...props
 }: SidePanelProps) {
+  const docked = kind === 'pull-request' || kind === 'pull-request-review';
   const focusRef = useRef<HTMLElement>(null);
   const { attach, style, resizing, resizer } = usePanelWidth(
     kind,
@@ -91,9 +92,11 @@ export function SidePanel({
       }}
       style={{ ...style, ...props.style }}
       className={cn(
-        'absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-background [--panel-edge-inset:var(--titlebar-inset-right)] min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-(--panel-width) min-[1200px]:shrink-0',
-        'duration-slow ease-out motion-safe:animate-in motion-safe:slide-in-from-right-full',
-        !resizing && 'transition-[width]',
+        'z-10 flex min-h-0 min-w-0 flex-col border-l bg-background [--panel-edge-inset:var(--titlebar-inset-right)]',
+        docked
+          ? 'relative w-(--panel-width) shrink-0'
+          : 'absolute inset-0 duration-slow ease-out motion-safe:animate-in motion-safe:slide-in-from-right-full min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-(--panel-width) min-[1200px]:shrink-0',
+        !docked && !resizing && 'transition-[width]',
         focusOnOpen && 'outline-none',
         className,
       )}

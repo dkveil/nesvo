@@ -26,6 +26,7 @@ type TabsProps<T extends string> = {
   onChange: (value: T) => void;
   onClose?: (value: T) => void;
   variant?: 'underline' | 'editor';
+  keepLabelsVisible?: boolean;
   className?: string;
 };
 
@@ -66,6 +67,7 @@ export function Tabs<T extends string>({
   onChange,
   onClose,
   variant = 'underline',
+  keepLabelsVisible = false,
   className,
 }: TabsProps<T>) {
   const layoutKey = options
@@ -119,6 +121,7 @@ export function Tabs<T extends string>({
         'relative flex shrink-0 items-stretch',
         variant === 'underline' && 'h-8 gap-1 border-b px-2',
         variant === 'editor' && 'h-8 overflow-x-auto border-b bg-card',
+        keepLabelsVisible && 'overflow-x-auto',
         className,
       )}
     >
@@ -131,6 +134,7 @@ export function Tabs<T extends string>({
             data-selected={selected ? '' : undefined}
             className={cn(
               'group/tab relative flex min-w-0 items-stretch',
+              keepLabelsVisible && 'shrink-0',
               variant === 'editor' &&
                 'max-w-48 border-r text-muted-foreground transition-colors duration-fast hover:text-foreground data-selected:bg-background data-selected:text-foreground',
             )}
@@ -151,6 +155,7 @@ export function Tabs<T extends string>({
                 'focus-ring flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap transition-colors duration-fast ease-out [&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-3.5',
                 variant === 'underline' &&
                   'rounded-sm px-2 text-muted-foreground hover:text-foreground aria-selected:text-foreground',
+                variant === 'underline' && keepLabelsVisible && 'px-1.5',
                 variant === 'editor' && 'pl-3',
                 variant === 'editor' && (closable ? 'pr-1' : 'pr-3'),
               )}

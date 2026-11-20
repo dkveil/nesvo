@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useLayoutEffect, useState, type CSSProperties } from 'react';
 
 const PANEL_KINDS = [
   'files-tree',
@@ -116,7 +116,7 @@ export function usePanelWidth(
   const [sharedWidth, setSharedWidth] = useState(() => window.innerWidth);
   const [resizing, setResizing] = useState(false);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const row = panel?.parentElement;
     if (!panel || !row) return;
     const measure = () => setSharedWidth(sharedWidthOf(panel));

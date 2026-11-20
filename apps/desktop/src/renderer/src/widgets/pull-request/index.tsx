@@ -33,7 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import { PanelAction } from '@/shared/ui/panel';
+import { PanelAction, Toolbar } from '@/shared/ui/panel';
 import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -165,7 +165,7 @@ export default function PullRequestPanel({
     onRefresh: refreshAll,
   });
   useEffect(() => {
-    closeButton.current?.focus();
+    closeButton.current?.focus({ preventScroll: true });
     const escape = (event: KeyboardEvent) => {
       if (
         event.key === 'Escape' &&
@@ -369,6 +369,10 @@ export default function PullRequestPanel({
             </>
           )
         }
+      />
+      <Toolbar
+        label="Pull request actions"
+        className="h-auto min-h-9 flex-wrap justify-end py-0.5"
       >
         {inSession && files.data && (
           <span
@@ -479,7 +483,7 @@ export default function PullRequestPanel({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-      </SidePanelHeader>
+      </Toolbar>
       {notice && (
         <StatusMessage
           tone={notice.tone}
@@ -562,65 +566,68 @@ export default function PullRequestPanel({
               )}
             </div>
           </div>
-          <div className="flex shrink-0 items-center border-b">
-            <Tabs
-              label="Pull request sections"
-              idPrefix={PANEL_ID_PREFIX}
-              value={tab}
-              onChange={changeTab}
-              options={
-                inSession
-                  ? [
-                      { value: 'summary', label: 'Summary' },
-                      {
-                        value: 'code',
-                        label: 'Code',
-                        count: data.changedFiles,
-                      },
-                      {
-                        value: 'threads',
-                        label: 'Threads',
-                        count: threads.data?.threads.filter(
-                          thread => !thread.isResolved,
-                        ).length,
-                      },
-                    ]
-                  : [
-                      { value: 'summary', label: 'Summary' },
-                      {
-                        value: 'timeline',
-                        label: 'Timeline',
-                        count: data.timeline.length,
-                      },
-                      {
-                        value: 'code',
-                        label: 'Code',
-                        count: data.changedFiles,
-                      },
-                      { value: 'agent-review', label: 'Agent review' },
-                    ]
-              }
-              className="min-w-0 flex-1 border-b-0"
-            />
-            <div className="flex shrink-0 items-center gap-2 pr-2">
-              {!inSession && tab === 'code' && files.data && (
-                <span
-                  className="text-2xs text-muted-foreground tabular-nums"
-                  aria-live="polite"
-                >
-                  {viewedCount} / {changedPaths.length} viewed
-                </span>
-              )}
-              {!inSession && data.state === 'open' && (
-                <ReviewControl
-                  events={allowedReviewEvents}
-                  draft={reviewDraft}
-                  blockedReason={blockedReason}
-                  state={actions.states.review}
-                  onDraftChange={editReview}
-                  onSubmit={submitReview}
-                />
-              )}
+          <div className="@container shrink-0 border-b">
+            <div className="flex flex-col @min-[28rem]:flex-row @min-[28rem]:items-center">
+              <Tabs
+                label="Pull request sections"
+                idPrefix={PANEL_ID_PREFIX}
+                value={tab}
+                onChange={changeTab}
+                keepLabelsVisible
+                options={
+                  inSession
+                    ? [
+                        { value: 'summary', label: 'Summary' },
+                        {
+                          value: 'code',
+                          label: 'Code',
+                          count: data.changedFiles,
+                        },
+                        {
+                          value: 'threads',
+                          label: 'Threads',
+                          count: threads.data?.threads.filter(
+                            thread => !thread.isResolved,
+                          ).length,
+                        },
+                      ]
+                    : [
+                        { value: 'summary', label: 'Summary' },
+                        {
+                          value: 'timeline',
+                          label: 'Timeline',
+                          count: data.timeline.length,
+                        },
+                        {
+                          value: 'code',
+                          label: 'Code',
+                          count: data.changedFiles,
+                        },
+                        { value: 'agent-review', label: 'Agent review' },
+                      ]
+                }
+                className="min-w-0 border-b-0 @min-[28rem]:flex-1"
+              />
+              <div className="flex shrink-0 items-center justify-end gap-2 pr-2 not-empty:pb-1 @min-[28rem]:not-empty:pb-0">
+                {!inSession && tab === 'code' && files.data && (
+                  <span
+                    className="text-2xs text-muted-foreground tabular-nums"
+                    aria-live="polite"
+                  >
+                    {viewedCount} / {changedPaths.length} viewed
+                  </span>
+                )}
+                {!inSession && data.state === 'open' && (
+                  <ReviewControl
+                    events={allowedReviewEvents}
+                    draft={reviewDraft}
+                    blockedReason={blockedReason}
+                    state={actions.states.review}
+                    onDraftChange={editReview}
+                    onSubmit={submitReview}
+                  />
+                )}
+              </div>
             </div>
           </div>
           <TabPanel

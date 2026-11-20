@@ -18,6 +18,8 @@ import Markdown, {
   type Options,
 } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { InlineFileCode, MessageLink } from './message-links';
 import { MessageLinkContext } from './message-link-context';
@@ -142,6 +144,22 @@ const rehypePlugins: Options['rehypePlugins'] = [
   markLargeCodeAsPlain,
   linkBareUrls,
   [rehypeHighlight, { detect: false }],
+];
+
+const githubRehypePlugins: Options['rehypePlugins'] = [
+  rehypeRaw,
+  [
+    rehypeSanitize,
+    {
+      ...defaultSchema,
+      tagNames: defaultSchema.tagNames?.filter(
+        tag => tag !== 'picture' && tag !== 'source',
+      ),
+      protocols: { ...defaultSchema.protocols, href: ['http', 'https'] },
+      strip: ['script', 'style', 'iframe'],
+    },
+  ],
+  ...rehypePlugins,
 ];
 
 const languageOf = (className: unknown) =>
@@ -358,20 +376,25 @@ export const MessageBody = memo(function MessageBody({
   attachments,
   renderAttachment,
   streaming = false,
+  githubPullRequestUrl,
 }: {
   body: string;
   className?: string;
   attachments?: readonly MessageAttachment[];
   renderAttachment?: (attachment: MessageAttachment) => ReactNode;
   streaming?: boolean;
+  githubPullRequestUrl?: string;
 }) {
-  const directory = useContext(MessageLinkContext)?.directory;
+  const linkContext = useContext(MessageLinkContext);
+  const directory = githubPullRequestUrl ? undefined : linkContext?.directory;
   const plugins = useMemo<Options['rehypePlugins']>(
     () =>
-      directory
-        ? [...rehypePlugins, [tightenInlinePunctuation, directory]]
-        : rehypePlugins,
-    [directory],
+      githubPullRequestUrl
+        ? githubRehypePlugins
+        : directory
+          ? [...rehypePlugins, [tightenInlinePunctuation, directory]]
+          : rehypePlugins,
+    [directory, githubPullRequestUrl],
   );
   const readyForMarkdown = useDeferredValue(!streaming);
   const inline = !!renderAttachment && hasPlacedAttachments(attachments);
@@ -395,18 +418,26 @@ export const MessageBody = memo(function MessageBody({
         <p className="whitespace-pre-wrap">{body}</p>
       ) : (
         <InlineAttachmentContext.Provider value={renderIndex}>
-          <Markdown
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={plugins}
-            components={components}
-            urlTransform={(url, key, node) =>
-              node.tagName === 'a' && key === 'href'
-                ? url
-                : defaultUrlTransform(url)
-            }
+          <MessageLinkContext.Provider
+            value={githubPullRequestUrl ? null : linkContext}
           >
-            {markdown}
-          </Markdown>
+            <Markdown
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={plugins}
+              components={components}
+              urlTransform={(url, key, node) => {
+                if (node.tagName !== 'a' || key !== 'href')
+                  return defaultUrlTransform(url);
+                if (!githubPullRequestUrl) return url;
+                if (!url || !URL.canParse(url, githubPullRequestUrl)) return '';
+                return (
+                  externalUrl(new URL(url, githubPullRequestUrl).href) ?? ''
+                );
+              }}
+            >
+              {markdown}
+            </Markdown>
+          </MessageLinkContext.Provider>
         </InlineAttachmentContext.Provider>
       )}
     </div>

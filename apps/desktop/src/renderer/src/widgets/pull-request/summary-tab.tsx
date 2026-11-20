@@ -30,20 +30,10 @@ type SummaryTabProps = {
   onReview: () => void;
 };
 
-function Section({
-  title,
-  aside,
-  children,
-}: {
-  title: string;
-  aside?: ReactNode;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-1.5">
-      <SectionLabel action={aside} className="px-0">
-        {title}
-      </SectionLabel>
+      <SectionLabel className="px-0">{title}</SectionLabel>
       {children}
     </section>
   );
@@ -78,26 +68,22 @@ export function SummaryTab({
 }: SummaryTabProps) {
   const decision = REVIEW_DECISION_LABELS[pullRequest.reviewDecision];
   return (
-    <div className="space-y-5 px-4 py-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Section
-          title="Reviewers"
-          aside={
-            decision && (
-              <span
-                className={cn(
-                  'text-2xs',
-                  pullRequest.reviewDecision === 'approved' &&
-                    'text-success-foreground',
-                  pullRequest.reviewDecision === 'changes-requested' &&
-                    'text-error-foreground',
-                )}
-              >
-                {decision}
-              </span>
-            )
-          }
-        >
+    <div className="@container space-y-5 px-4 py-4">
+      <div className="grid gap-4 @min-[24rem]:grid-cols-2">
+        <Section title="Reviewers">
+          {decision && (
+            <span
+              className={cn(
+                'block text-xs',
+                pullRequest.reviewDecision === 'approved' &&
+                  'text-success-foreground',
+                pullRequest.reviewDecision === 'changes-requested' &&
+                  'text-error-foreground',
+              )}
+            >
+              {decision}
+            </span>
+          )}
           {pullRequest.reviewers.length > 0 ? (
             <ul className="flex flex-wrap gap-1">
               {pullRequest.reviewers.map(reviewer => (
@@ -159,7 +145,11 @@ export function SummaryTab({
       )}
       <Section title="Description">
         {pullRequest.body.trim() ? (
-          <MessageBody body={pullRequest.body} className="text-ui leading-6" />
+          <MessageBody
+            body={pullRequest.body}
+            githubPullRequestUrl={pullRequest.url}
+            className="text-ui leading-6 [&_details]:space-y-2 [&_summary]:cursor-pointer [&_summary]:font-medium"
+          />
         ) : (
           <p className="text-xs text-muted-foreground">No description.</p>
         )}

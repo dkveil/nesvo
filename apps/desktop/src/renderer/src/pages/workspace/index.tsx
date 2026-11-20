@@ -1494,7 +1494,9 @@ export function Workspace({
     (panel === 'diff' && !diffReview ? null : panel);
   const cardSession = !browsing && !creating && selected ? selected : null;
   const panelBesideSession =
-    !!cardSession && !!visiblePanel && viewportWidth >= 1200;
+    !!cardSession &&
+    !!visiblePanel &&
+    (visiblePanel === 'pull-request' || viewportWidth >= 1200);
   const compactSessionHeader = panelBesideSession && narrowHeader;
   const headerIconSize = compactSessionHeader ? 24 : 32;
   const cardRun = cardSession ? selectedRun : undefined;
@@ -4348,20 +4350,15 @@ ${text}`
       <div className="pointer-events-none absolute top-0 left-(--rail-width) hidden h-(--shell-topbar-height) items-center pl-(--shell-brand-start) select-none md:flex">
         <BrandWordmark />
       </div>
-      <div
-        className={cn(
-          'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background',
-          pullRequestsView &&
-            visiblePanel === 'pull-request' &&
-            'min-[1200px]:max-[1440px]:hidden',
-        )}
-      >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <header
           ref={headerRef}
           className={cn(
             'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))] md:pl-[max(0.5rem,calc(var(--shell-brand-end)-var(--sidebar-extent)))]',
-            visiblePanel &&
-              'min-[1200px]:gap-0.5 min-[1200px]:pr-(--shell-gutter)',
+            visiblePanel === 'pull-request'
+              ? 'gap-0.5 pr-(--shell-gutter)'
+              : visiblePanel &&
+                  'min-[1200px]:gap-0.5 min-[1200px]:pr-(--shell-gutter)',
           )}
         >
           <div className="md:hidden">
@@ -5068,14 +5065,7 @@ ${text}`
               </div>
             </Suspense>
           ) : pullRequestsView ? (
-            <div
-              className={cn(
-                'flex min-h-0 min-w-0 flex-1',
-                panel === 'pull-request' &&
-                  pullRequestTarget &&
-                  'max-[1440px]:hidden',
-              )}
-            >
+            <div className="flex min-h-0 min-w-0 flex-1">
               <PullRequestsView
                 key={
                   pullRequestHandoff
@@ -5240,7 +5230,9 @@ ${text}`
             <div
               className={cn(
                 'flex min-h-0 min-w-0 flex-1',
-                visiblePanel && 'max-[1200px]:hidden',
+                visiblePanel &&
+                  visiblePanel !== 'pull-request' &&
+                  'max-[1200px]:hidden',
               )}
             >
               <Conversation
