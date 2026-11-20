@@ -124,18 +124,19 @@ export function SummaryTab({
                   }
                   title={check.name}
                   trailing={
-                    <span className="capitalize">{checkLabel(check)}</span>
-                  }
-                  actions={
-                    check.url && (
-                      <IconButton
-                        label={`Open check ${check.name}`}
-                        size={20}
-                        onClick={() => check.url && openExternal(check.url)}
-                      >
-                        <ExternalLink />
-                      </IconButton>
-                    )
+                    <>
+                      {check.url && (
+                        <IconButton
+                          label={`Open check ${check.name}`}
+                          size={20}
+                          className="opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100"
+                          onClick={() => check.url && openExternal(check.url)}
+                        >
+                          <ExternalLink />
+                        </IconButton>
+                      )}
+                      <span className="capitalize">{checkLabel(check)}</span>
+                    </>
                   }
                 />
               </li>
