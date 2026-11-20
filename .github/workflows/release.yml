@@ -103,5 +103,9 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --generate-notes
+            flags=(--verify-tag --generate-notes)
+            if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" "${assets[@]}" "${flags[@]}"
           fi
