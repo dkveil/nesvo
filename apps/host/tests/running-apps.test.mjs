@@ -6,6 +6,7 @@ import {
   parseProcTcp,
   parseTasklist,
 } from '../src/running-apps/listeners.ts';
+import { selectListenerAncestry } from '../src/running-apps/windows-processes.ts';
 
 test('Windows listener discovery reads both families and excludes non-loopback or connected sockets', () => {
   const netstat = [
@@ -64,3 +65,84 @@ test('Linux TCP tables decode loopback and wildcard listeners with their kernel 
     { address: '0.0.0.0', port: 5432, inode: '1236' },
   ]);
 });
+
+test('Windows process snapshot keeps the contract fields and the listener ancestry walk', () => {
+  const recordedSnapshot =
+    '[{"pid":0,"parent":0,"name":"System Idle Process","startedAt":null},' +
+    '{"pid":4,"parent":0,"name":"System","startedAt":null},' +
+    '{"pid":700,"parent":4,"name":"services.exe","startedAt":1763712000123},' +
+    '{"pid":4500,"parent":700,"name":"Zażółć app.exe","startedAt":1763712001000},' +
+    '{"pid":8804,"parent":4500,"name":"node.exe","startedAt":1763712005500},' +
+    '{"pid":9012,"parent":8804,"name":"db.exe","startedAt":null},' +
+    '{"pid":9100,"parent":9999,"name":"orphan.exe","startedAt":1763712009000}]';
+  const processes = JSON.parse(recordedSnapshot);
+  assert.deepEqual(selectListenerAncestry(processes, [9012, 9100, 8804, 12]), [
+    { pid: 9012, parent: 8804, name: 'db.exe', startedAt: null },
+    {
+      pid: 8804,
+      parent: 4500,
+      name: 'node.exe',
+      startedAt: 1763712005500,
+    },
+    {
+      pid: 4500,
+      parent: 700,
+      name: 'Zażółć app.exe',
+      startedAt: 1763712001000,
+    },
+    {
+      pid: 700,
+      parent: 4,
+      name: 'services.exe',
+      startedAt: 1763712000123,
+    },
+    { pid: 4, parent: 0, name: 'System', startedAt: null },
+    { pid: 9100, parent: 9999, name: 'orphan.exe', startedAt: 1763712009000 },
+  ]);
+});
+
+test('Windows process ancestry stops at the depth limit and on cycles', () => {
+  const chain = Array.from({ length: 40 }, (_, index) => ({
+    pid: index + 1,
+    parent: index + 2,
+    name: 'p' + (index + 1),
+    startedAt: null,
+  }));
+  assert.equal(selectListenerAncestry(chain, [1]).length, 32);
+  const cycle = [
+    { pid: 1, parent: 2, name: 'a', startedAt: null },
+    { pid: 2, parent: 1, name: 'b', startedAt: null },
+  ];
+  assert.deepEqual(
+    selectListenerAncestry(cycle, [1]).map(entry => entry.pid),
+    [1, 2],
+  );
+});
+
+test(
+  'Windows scan reads a live listener through the CIM process query',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const { createServer } = await import('node:net');
+    const { scanRunningApps } = await import('../src/running-apps/scan.ts');
+    const server = createServer();
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address();
+      const result = await scanRunningApps(AbortSignal.timeout(15_000));
+      assert.ok(
+        result.sockets.some(
+          socket => socket.port === port && socket.pid === process.pid,
+        ),
+      );
+      const entry = result.processes.get(process.pid);
+      assert.equal(typeof entry?.name, 'string');
+      assert.ok(entry && entry.name.length > 0);
+      assert.equal(typeof entry.parent, 'number');
+      assert.equal(typeof entry.startedAt, 'number');
+      assert.equal(entry.directory, null);
+    } finally {
+      server.close();
+    }
+  },
+);

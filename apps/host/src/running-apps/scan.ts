@@ -12,7 +12,10 @@ import {
   parseTasklist,
   type ListeningSocket,
 } from './listeners';
-import { WINDOWS_PROCESS_SNAPSHOT } from './windows-processes';
+import {
+  selectListenerAncestry,
+  WINDOWS_PROCESS_SNAPSHOT,
+} from './windows-processes';
 
 export type { ListeningSocket } from './listeners';
 
@@ -70,7 +73,6 @@ async function runScan(
   args: readonly string[],
   signal: AbortSignal,
   acceptedCodes: readonly number[] = [0],
-  stdin?: string,
 ): Promise<string> {
   const result = await runOwnedProcess({
     command,
@@ -79,7 +81,6 @@ async function runScan(
     env: scanEnvironment(),
     timeoutMs: SCAN_TIMEOUT_MS,
     maxOutputBytes: MAX_SCAN_OUTPUT_BYTES,
-    stdin,
     signal,
   }).catch(() => {
     throw new RunningAppsError(
@@ -126,15 +127,16 @@ async function scanWindows(signal: AbortSignal): Promise<ScanResult> {
         Buffer.from(WINDOWS_PROCESS_SNAPSHOT, 'utf16le').toString('base64'),
       ],
       signal,
-      [0],
-      listeners.join(',') + '\n',
     ),
     runScan(join(system, 'tasklist.exe'), ['/FO', 'CSV', '/NH'], signal).catch(
       () => '',
     ),
   ]);
   const names = parseTasklist(tasks);
-  const entries = windowsProcessesSchema.parse(JSON.parse(snapshot));
+  const entries = selectListenerAncestry(
+    windowsProcessesSchema.parse(JSON.parse(snapshot)),
+    listeners,
+  );
   return {
     sockets,
     processes: new Map(
