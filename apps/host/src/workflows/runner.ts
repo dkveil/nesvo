@@ -222,6 +222,20 @@ export const fileDefinitions: RunnerDefinitions = {
   resolveWorkflow,
 };
 
+export const nextRetryDelayMs = (
+  steps: readonly WorkflowStepRecord[],
+  now: number,
+): number | null => {
+  const due = Math.min(
+    ...[...latestAttempts(steps).values()].flatMap(step => {
+      const time =
+        step.state === 'pending' && step.retryAt ? Date.parse(step.retryAt) : 0;
+      return time > now ? [time] : [];
+    }),
+  );
+  return Number.isFinite(due) ? due - now : null;
+};
+
 const systemClock: RunnerClock = {
   now: () => new Date(),
   setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -1194,6 +1208,7 @@ export class WorkflowRunner {
           )
             this.executeStep(run, steps, step);
       const author = this.author;
+      const now = this.clock.now().getTime();
       const move = nextMove(run, steps, {
         turnState: messageId =>
           run.sessionId && author ? author.turnState(run, messageId) : 'none',
@@ -1201,11 +1216,12 @@ export class WorkflowRunner {
           ? messageId => author?.failedSkillTurn?.(run, messageId) ?? null
           : undefined,
         hasAuthor: Boolean(author),
-        now: this.clock.now().getTime(),
+        now,
       });
       if (this.closed) return;
       if (move.kind === 'wait') {
-        if (run.status === 'checking') this.scheduleRetry(runId, steps);
+        if (run.status === 'checking')
+          this.scheduleRetry(runId, steps, now);
         return;
       }
       if (!this.perform(run, steps, move)) return;
@@ -1341,24 +1357,16 @@ export class WorkflowRunner {
   private scheduleRetry(
     runId: string,
     steps: readonly WorkflowStepRecord[],
+    now: number,
   ): void {
-    const now = this.clock.now().getTime();
-    const due = Math.min(
-      ...[...latestAttempts(steps).values()].flatMap(step => {
-        const time =
-          step.state === 'pending' && step.retryAt
-            ? Date.parse(step.retryAt)
-            : 0;
-        return time > now ? [time] : [];
-      }),
-    );
-    if (!Number.isFinite(due)) return;
+    const delay = nextRetryDelayMs(steps, now);
+    if (delay === null) return;
     this.retryTimers.set(
       runId,
       setTimeout(() => {
         this.retryTimers.delete(runId);
         this.track(this.advanceRun(runId));
-      }, due - now),
+      }, delay),
     );
   }
 

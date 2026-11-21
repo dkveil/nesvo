@@ -12883,7 +12883,11 @@ test(
 const loadWorkflowStoreModules = async directory => {
   const source = fileURLToPath(new URL('../src/', import.meta.url));
   const outdir = join(directory, 'workflow-store-modules');
-  const entries = ['workflows/store.ts', 'sessions/store.ts'];
+  const entries = [
+    'workflows/store.ts',
+    'workflows/runner.ts',
+    'sessions/store.ts',
+  ];
   await promisify(execFile)('bun', [
     'build',
     ...entries.map(entry => join(source, entry)),
@@ -12901,6 +12905,33 @@ const loadWorkflowStoreModules = async directory => {
   );
   return Object.assign({}, ...modules);
 };
+
+test(
+  'a retry due within the next millisecond still gets a timer and an exact delay',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-retry-delay-')),
+    );
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const { nextRetryDelayMs } = await loadWorkflowStoreModules(directory);
+    const retryAt = Date.parse('2026-11-21T10:00:01.000Z');
+    const steps = [
+      { index: 0, attempt: 1, state: 'failed' },
+      {
+        index: 0,
+        attempt: 2,
+        state: 'pending',
+        retryAt: new Date(retryAt).toISOString(),
+      },
+      { index: 1, attempt: 1, state: 'pending' },
+    ];
+    assert.equal(nextRetryDelayMs(steps, retryAt - 1000), 1000);
+    assert.equal(nextRetryDelayMs(steps, retryAt - 1), 1);
+    assert.equal(nextRetryDelayMs(steps, retryAt), null);
+    assert.equal(nextRetryDelayMs(steps.slice(0, 1), retryAt - 1000), null);
+  },
+);
 
 const createVersion7Database = (path, extra = '') => {
   const database = new DatabaseSync(path);
