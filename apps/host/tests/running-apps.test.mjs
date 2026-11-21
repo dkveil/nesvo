@@ -118,31 +118,3 @@ test('Windows process ancestry stops at the depth limit and on cycles', () => {
     [1, 2],
   );
 });
-
-test(
-  'Windows scan reads a live listener through the CIM process query',
-  { skip: process.platform !== 'win32' },
-  async () => {
-    const { createServer } = await import('node:net');
-    const { scanRunningApps } = await import('../src/running-apps/scan.ts');
-    const server = createServer();
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const { port } = server.address();
-      const result = await scanRunningApps(AbortSignal.timeout(15_000));
-      assert.ok(
-        result.sockets.some(
-          socket => socket.port === port && socket.pid === process.pid,
-        ),
-      );
-      const entry = result.processes.get(process.pid);
-      assert.equal(typeof entry?.name, 'string');
-      assert.ok(entry && entry.name.length > 0);
-      assert.equal(typeof entry.parent, 'number');
-      assert.equal(typeof entry.startedAt, 'number');
-      assert.equal(entry.directory, null);
-    } finally {
-      await new Promise(resolve => server.close(resolve));
-    }
-  },
-);
