@@ -18849,6 +18849,138 @@ test(
         events.release();
       },
     );
+
+    await t.test(
+      'an automatic retry waits for its backoff on the injected clock and fires once',
+      async subtest => {
+        const isolated = join(directory, 'in-process');
+        const bootstrap = launch(
+          isolated,
+          join(directory, 'pids-bootstrap-retry.json'),
+        );
+        hosts.push(bootstrap);
+        assert.equal((await bootstrap.request('health')).type, 'health');
+        await bootstrap.stop();
+        const { WorkflowRunner, WorkflowRunStore } = taskModules;
+        const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
+        subtest.after(() => database.close());
+        const store = new WorkflowRunStore(database);
+        const clock = createFakeClock('2026-11-21T10:00:00.000Z', () => {});
+        const attempts = [];
+        const command = ({ step }) => {
+          attempts.push(step.attempt);
+          return Promise.resolve({
+            kind: 'result',
+            result: {
+              name: step.name,
+              type: step.type,
+              phase: step.phase,
+              status: attempts.length === 1 ? 'fail' : 'pass',
+              summary: 'Fixture result.',
+              evidence: [],
+              outputs: {},
+              startedAt: step.startedAt,
+              finishedAt: clock.now().toISOString(),
+              durationMs: 0,
+              cost: {
+                usd: null,
+                inputTokens: null,
+                outputTokens: null,
+                provider: null,
+              },
+              attempt: step.attempt,
+            },
+          });
+        };
+        const skip = () =>
+          Promise.resolve({
+            kind: 'skipped',
+            reason: 'Executor not available',
+          });
+        const runner = new WorkflowRunner({
+          store,
+          clock,
+          emit: () => undefined,
+          evidence: { write: () => Promise.resolve('attempt-1.log') },
+          stepExecutors: { command, action: command, human: skip, agent: skip },
+        });
+        subtest.after(() => runner.close());
+        const now = clock.now().toISOString();
+        const run = {
+          id: randomUUID(),
+          revision: 1,
+          workflow: {
+            name: 'retrying',
+            description: '',
+            body: '',
+            source: {
+              scope: 'project',
+              path: join(isolated, 'retrying.md'),
+              contentHash: 'b'.repeat(64),
+            },
+            notes: [],
+            steps: [
+              {
+                name: 'flaky',
+                type: 'command',
+                phase: 'pre-done',
+                skill: null,
+                timeout: '15m',
+                retries: 1,
+                retry_backoff: '5s',
+                on_fail: 'stop',
+                needs: [],
+                body: 'true',
+                source: {
+                  scope: 'project',
+                  path: join(isolated, 'flaky.md'),
+                  contentHash: 'a'.repeat(64),
+                },
+                notes: [],
+              },
+            ],
+          },
+          specPath: join(isolated, 'task.md'),
+          specHash: 'c'.repeat(64),
+          specTitle: 'Retrying',
+          sessionId: null,
+          directory: isolated,
+          projectRoot: join(isolated, 'retrying'),
+          isolation: null,
+          gateProvider: 'Claude Code',
+          gateModel: 'default',
+          status: 'pending',
+          phase: 'pre-done',
+          currentStepIndex: null,
+          attention: null,
+          createdAt: now,
+          updatedAt: now,
+          finishedAt: null,
+        };
+        assert.equal(store.insertRun(run), true);
+        await runner.advanceRun(run.id);
+        await waitUntil(
+          () => clock.pending().length === 1,
+          'The retry timer was not armed on the injected clock',
+        );
+        assert.deepEqual(attempts, [1]);
+        assert.deepEqual(
+          clock.pending().map(timer => timer.delayMs),
+          [5000],
+        );
+        await runner.advanceRun(run.id);
+        assert.deepEqual(attempts, [1]);
+        assert.equal(clock.pending().length, 1);
+        assert.equal(store.getRun(run.id).status, 'checking');
+        clock.fire();
+        await waitUntil(
+          () => store.getRun(run.id).status === 'passed',
+          'The retry did not pass after the timer fired',
+        );
+        assert.deepEqual(attempts, [1, 2]);
+        assert.deepEqual(clock.pending(), []);
+      },
+    );
   },
 );
 
