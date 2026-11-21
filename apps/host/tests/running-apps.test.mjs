@@ -66,7 +66,7 @@ test('Linux TCP tables decode loopback and wildcard listeners with their kernel 
   ]);
 });
 
-test('Windows process snapshot keeps the contract fields and the listener ancestry walk', () => {
+test('Windows listener ancestry maps recorded CIM output to the scan contract', () => {
   const recordedSnapshot =
     '[{"pid":0,"parent":0,"name":"System Idle Process","startedAt":null},' +
     '{"pid":4,"parent":0,"name":"System","startedAt":null},' +
@@ -142,7 +142,7 @@ test(
       assert.equal(typeof entry.startedAt, 'number');
       assert.equal(entry.directory, null);
     } finally {
-      server.close();
+      await new Promise(resolve => server.close(resolve));
     }
   },
 );
