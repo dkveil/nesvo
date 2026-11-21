@@ -6,7 +6,10 @@ import {
   parseProcTcp,
   parseTasklist,
 } from '../src/running-apps/listeners.ts';
-import { selectListenerAncestry } from '../src/running-apps/windows-processes.ts';
+import {
+  selectListenerAncestry,
+  WINDOWS_PROCESS_SNAPSHOT,
+} from '../src/running-apps/windows-processes.ts';
 
 test('Windows listener discovery reads both families and excludes non-loopback or connected sockets', () => {
   const netstat = [
@@ -117,4 +120,9 @@ test('Windows process ancestry stops at the depth limit and on cycles', () => {
     selectListenerAncestry(cycle, [1]).map(entry => entry.pid),
     [1, 2],
   );
+});
+
+test('Windows process snapshot avoids cmdlets that trigger PowerShell module discovery', () => {
+  assert.doesNotMatch(WINDOWS_PROCESS_SNAPSHOT, /\b[a-z]+-[a-z]+\b/i);
+  assert.match(WINDOWS_PROCESS_SNAPSHOT, /\[wmisearcher\]/);
 });

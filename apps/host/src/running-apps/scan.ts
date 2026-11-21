@@ -134,7 +134,7 @@ async function scanWindows(signal: AbortSignal): Promise<ScanResult> {
   ]);
   const names = parseTasklist(tasks);
   const entries = selectListenerAncestry(
-    windowsProcessesSchema.parse(JSON.parse(snapshot)),
+    windowsProcessesSchema.parse(JSON.parse(snapshot.replace(/^\uFEFF/, ''))),
     listeners,
   );
   return {
