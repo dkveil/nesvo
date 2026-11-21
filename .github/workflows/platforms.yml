@@ -40,7 +40,21 @@ jobs:
       - name: Measure Windows PowerShell compilation under the host scan environment
         if: failure() && runner.os == 'Windows'
         shell: bash
-        run: node scripts/ci-powershell-probe.mjs
+        run: |
+          cat > "$RUNNER_TEMP/probe.mjs" <<'EOF'
+          import { spawnSync } from 'node:child_process';
+          const env = { LC_ALL: 'C', LANG: 'C' };
+          for (const name of ['PATH', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'HOME', 'USERPROFILE'])
+            if (process.env[name]) env[name] = process.env[name];
+          const started = Date.now();
+          const result = spawnSync(
+            process.env.SystemRoot + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', 'Add-Type -TypeDefinition "public class Probe { }"; "compiled"'],
+            { env, encoding: 'utf8', timeout: 60000, windowsHide: true },
+          );
+          console.log(JSON.stringify({ elapsedMs: Date.now() - started, status: result.status, error: String(result.error ?? ''), stdout: result.stdout, stderr: result.stderr }));
+          EOF
+          node "$RUNNER_TEMP/probe.mjs"
       - run: bun run package:dir
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
