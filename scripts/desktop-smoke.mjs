@@ -2184,6 +2184,7 @@ async function smokeDesktop() {
     assert.equal(
       await skillsOpener.evaluate(node => node === document.activeElement),
       true,
+      `Focus returned to ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 200))}`,
     );
   };
   const screenshot = async suffix => {

@@ -36,6 +36,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
         if: runner.os == 'macOS' || github.event_name == 'workflow_dispatch'
+        shell: bash
+      - name: Measure Windows PowerShell compilation under the host scan environment
+        if: failure() && runner.os == 'Windows'
+        shell: bash
+        run: node scripts/ci-powershell-probe.mjs
       - run: bun run package:dir
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
