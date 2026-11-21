@@ -17,7 +17,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(github.event_name == 'push' && '["windows-latest", "macos-latest"]' || github.event_name == 'schedule' && '["macos-latest"]' || '["windows-latest", "macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 50 || 35 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
