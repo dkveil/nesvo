@@ -1696,8 +1696,11 @@ export function Workspace({
     setPanel(null);
     setDiffTarget(null);
     const trigger = diffTrigger.current;
+    const restoresSkillsOpener = panel === 'skills';
     requestAnimationFrame(() => {
       if (trigger?.isConnected) trigger.focus();
+      else if (restoresSkillsOpener)
+        document.querySelector<HTMLElement>('[data-skills-trigger]')?.focus();
     });
   };
   const guardEditor = (proceed: () => void) => {
@@ -4716,6 +4719,7 @@ ${text}`
               size={headerIconSize}
               label="Open skills"
               pressed={panel === 'skills'}
+              data-skills-trigger
               onClick={openSkills}
             >
               <BookOpen />
