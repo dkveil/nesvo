@@ -846,10 +846,7 @@ export class WorkflowRunner {
   private readonly projectMappingApproved: RunnerPorts['projectMappingApproved'];
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
-  private readonly retryTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
+  private readonly retryTimers = new Map<string, unknown>();
   private readonly busy = new Map<string, BusyTurn>();
   private readonly pending = new Set<Promise<unknown>>();
   private readonly observingRecoveredChildren = new Set<string>();
@@ -1144,7 +1141,7 @@ export class WorkflowRunner {
 
   async close(): Promise<void> {
     this.closed = true;
-    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    for (const timer of this.retryTimers.values()) this.clearTimer(timer);
     this.retryTimers.clear();
     for (const runId of [...this.busy.keys()]) this.clearBusy(runId);
     for (const controller of this.triaging.values())
@@ -1163,7 +1160,7 @@ export class WorkflowRunner {
       const run = this.store.getRun(runId);
       if (!run) return;
       const timer = this.retryTimers.get(runId);
-      if (timer) clearTimeout(timer);
+      if (timer) this.clearTimer(timer);
       this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
       else if (
@@ -1363,7 +1360,7 @@ export class WorkflowRunner {
     if (delay === null) return;
     this.retryTimers.set(
       runId,
-      setTimeout(() => {
+      this.setTimer(() => {
         this.retryTimers.delete(runId);
         this.track(this.advanceRun(runId));
       }, delay),
@@ -1461,13 +1458,17 @@ export class WorkflowRunner {
       : setTimeout(callback, delayMs);
   }
 
+  private clearTimer(timer: unknown): void {
+    if (this.clock.setTimer && this.clock.clearTimer)
+      this.clock.clearTimer(timer);
+    else clearTimeout(timer as ReturnType<typeof setTimeout>);
+  }
+
   private clearBusy(runId: string): void {
     const entry = this.busy.get(runId);
     if (!entry) return;
     this.busy.delete(runId);
-    if (this.clock.setTimer && this.clock.clearTimer)
-      this.clock.clearTimer(entry.timer);
-    else clearTimeout(entry.timer as ReturnType<typeof setTimeout>);
+    this.clearTimer(entry.timer);
   }
 
   private beginPhase(run: WorkflowRun, phase: StepPhase): void {
