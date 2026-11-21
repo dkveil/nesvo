@@ -141,6 +141,8 @@ else if (d83CdpPort)
   );
 else if (inboxOutcomeScreenshots)
   launchArgs.push('--remote-debugging-port=9244');
+const secondInstanceArgs =
+  process.platform === 'linux' ? ['--no-sandbox', ...launchArgs] : launchArgs;
 const launchApplication = (overrides = {}) =>
   electron.launch({
     executablePath,
@@ -3466,17 +3468,11 @@ async function smokeDesktop() {
     reviews: await window.nesvo.listReviews(),
   }));
   const refuseSecondInstance = async () => {
-    const duplicateApp = spawn(
-      executablePath,
-      process.platform === 'linux'
-        ? ['--no-sandbox', ...launchArgs]
-        : launchArgs,
-      {
-        env,
-        stdio: ['ignore', 'ignore', 'pipe'],
-        windowsHide: true,
-      },
-    );
+    const duplicateApp = spawn(executablePath, secondInstanceArgs, {
+      env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
     let duplicateStderr = '';
     duplicateApp.stderr.setEncoding('utf8');
     duplicateApp.stderr.on('data', value => {
@@ -6680,7 +6676,7 @@ async function smokeDesktop() {
     );
   };
   const deliverLink = async link => {
-    const second = spawn(executablePath, [...launchArgs, link], {
+    const second = spawn(executablePath, [...secondInstanceArgs, link], {
       env,
       stdio: 'ignore',
       windowsHide: true,
