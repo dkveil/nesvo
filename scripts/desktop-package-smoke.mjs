@@ -47,11 +47,17 @@ try {
   assert.equal(node.status, 0, node.stderr);
   assert.match(node.stdout.trim(), /^\d+\.\d+\.\d+/);
 
-  child = spawn(executable, ['--remote-debugging-port=0'], {
-    env,
-    stdio: ['ignore', 'ignore', 'pipe'],
-    windowsHide: true,
-  });
+  child = spawn(
+    executable,
+    process.platform === 'linux'
+      ? ['--no-sandbox', '--remote-debugging-port=0']
+      : ['--remote-debugging-port=0'],
+    {
+      env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    },
+  );
   let failure;
   exited = new Promise(resolve => {
     child.once('error', error => {
