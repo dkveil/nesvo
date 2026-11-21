@@ -1273,7 +1273,9 @@ test(
   'manager import reads WAL-only rows and adopts a verified native thread once',
   { timeout: 60000 },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'nesvo-manager-import-'));
+    const directory = await mkdtemp(
+      join(await realpath(tmpdir()), 'nesvo-manager-import-'),
+    );
     const root = join(directory, 't3');
     const pidFile = join(directory, 'provider.pid');
     const fixture = await t3ImportFixture(
@@ -29401,7 +29403,9 @@ test('running apps classify owned web and TCP ports within the watched session',
 });
 
 test('the default session folder is validated, cleared and used for sessions without a folder', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nesvo-default-folder-'));
+  const directory = await mkdtemp(
+    join(await realpath(tmpdir()), 'nesvo-default-folder-'),
+  );
   const pidFile = join(directory, 'fixture.pid');
   const project = join(directory, 'development');
   await mkdir(project);
